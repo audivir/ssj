@@ -49,11 +49,9 @@ fn server_frames() -> Vec<ServerFrame> {
 }
 
 /// Feeds `stream` in chunks of `step` bytes, like a socket would, and collects all frames.
-fn decode_in_chunks<F>(
-    stream: &[u8],
-    step: usize,
-    decode: fn(&[u8]) -> Result<Option<(F, usize)>, DecodeError>,
-) -> Vec<F> {
+type Decode<F> = fn(&[u8]) -> Result<Option<(F, usize)>, DecodeError>;
+
+fn decode_in_chunks<F>(stream: &[u8], step: usize, decode: Decode<F>) -> Vec<F> {
     let (mut buf, mut frames) = (Vec::new(), Vec::new());
     for chunk in stream.chunks(step) {
         buf.extend_from_slice(chunk);
