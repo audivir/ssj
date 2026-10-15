@@ -230,7 +230,7 @@ fn base_transport() -> quinn::TransportConfig {
 }
 
 /// Receive limits of the server, which only gets small input from the client.
-pub const SERVER_RECEIVE_WINDOW: u32 = 256 * 1024;
+pub const SERVER_RECEIVE_WINDOW: u32 = 2 * 1024 * 1024;
 /// Receive limits of the client, which gets the (large) output of the shell.
 pub const CLIENT_RECEIVE_WINDOW: u32 = 4 * 1024 * 1024;
 

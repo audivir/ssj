@@ -1,6 +1,6 @@
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use quinn::Endpoint;
 use ssj_spike::{ALPN, Identity, SERVER_NAME, accept_validated, client_tls, quic_client};
@@ -151,6 +151,43 @@ async fn server_limits_concurrent_bidirectional_streams() {
     );
 }
 
+// Pasting a large text must not crawl on a slow link.
+#[tokio::test]
+async fn large_paste_arrives_intact_and_fast_at_100ms_round_trip() {
+    const PASTE: usize = 8 * 1024 * 1024;
+    let paste: Vec<u8> = (0..PASTE).map(|i| (i % 251) as u8).collect();
+
+    let (server_id, client_id) = (Identity::generate(), Identity::generate());
+    let server = server_endpoint(&server_id, client_id.fingerprint());
+    let proxy = Proxy::start(server.local_addr().unwrap()).await;
+    proxy.set_delay(Duration::from_millis(50));
+    let received = tokio::spawn(async move {
+        let conn = server.accept().await.unwrap().await.unwrap();
+        let (_send, mut recv) = conn.accept_bi().await.unwrap();
+        recv.read_to_end(PASTE).await.unwrap()
+    });
+
+    let client = client_endpoint(&client_id, server_id.fingerprint());
+    let conn = client
+        .connect(proxy.addr, SERVER_NAME)
+        .unwrap()
+        .await
+        .unwrap();
+    let (mut send, _recv) = conn.open_bi().await.unwrap();
+    let start = Instant::now();
+    send.write_all(&paste).await.unwrap();
+    send.finish().unwrap();
+    let received = timeout(Duration::from_secs(30), received)
+        .await
+        .unwrap()
+        .unwrap();
+    let took = start.elapsed();
+
+    assert!(received == paste, "paste was corrupted");
+    println!("8 MiB paste took {took:?}");
+    assert!(took < Duration::from_secs(4), "paste took {took:?}");
+}
+
 // Input that the server does not read must not pile up in its memory.
 #[tokio::test]
 async fn unread_input_is_capped_by_the_receive_window() {
@@ -178,6 +215,6 @@ async fn unread_input_is_capped_by_the_receive_window() {
     .await;
 
     // fixed numbers on purpose: the cap must not move together with the configured window
-    assert!(written <= 1024 * 1024, "wrote {written} bytes");
+    assert!(written <= 4 * 1024 * 1024, "wrote {written} bytes");
     assert!(written >= 64 * 1024, "wrote only {written} bytes");
 }

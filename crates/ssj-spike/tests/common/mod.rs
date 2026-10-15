@@ -3,7 +3,8 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use quinn::Endpoint;
 use ssj_spike::{Fingerprint, Identity, client_tls, quic_client, quic_server, server_tls};
@@ -29,18 +30,21 @@ pub struct Proxy {
     pub addr: SocketAddr,
     blackhole: Arc<AtomicBool>,
     drop_replies: Arc<AtomicBool>,
+    delay_ms: Arc<AtomicU64>,
 }
 
 impl Proxy {
     pub async fn start(server: SocketAddr) -> Self {
-        let front = UdpSocket::bind(localhost()).await.unwrap();
-        let back = UdpSocket::bind(localhost()).await.unwrap();
+        let front = Arc::new(UdpSocket::bind(localhost()).await.unwrap());
+        let back = Arc::new(UdpSocket::bind(localhost()).await.unwrap());
         back.connect(server).await.unwrap();
         let addr = front.local_addr().unwrap();
         let blackhole = Arc::new(AtomicBool::new(false));
         let dropping = blackhole.clone();
         let drop_replies = Arc::new(AtomicBool::new(false));
         let dropping_replies = drop_replies.clone();
+        let delay_ms = Arc::new(AtomicU64::new(0));
+        let delay = delay_ms.clone();
         tokio::spawn(async move {
             let mut client = None;
             let mut from_client = vec![0u8; 65536];
@@ -50,13 +54,25 @@ impl Proxy {
                     Ok((n, peer)) = front.recv_from(&mut from_client) => {
                         client = Some(peer);
                         if !dropping.load(Ordering::Relaxed) {
-                            let _ = back.send(&from_client[..n]).await;
+                            let packet = from_client[..n].to_vec();
+                            let back = back.clone();
+                            let wait = Duration::from_millis(delay.load(Ordering::Relaxed));
+                            tokio::spawn(async move {
+                                tokio::time::sleep(wait).await;
+                                let _ = back.send(&packet).await;
+                            });
                         }
                     }
                     Ok(n) = back.recv(&mut from_server) => {
                         let dropped = dropping.load(Ordering::Relaxed) || dropping_replies.load(Ordering::Relaxed);
                         if let (Some(peer), false) = (client, dropped) {
-                            let _ = front.send_to(&from_server[..n], peer).await;
+                            let packet = from_server[..n].to_vec();
+                            let front = front.clone();
+                            let wait = Duration::from_millis(delay.load(Ordering::Relaxed));
+                            tokio::spawn(async move {
+                                tokio::time::sleep(wait).await;
+                                let _ = front.send_to(&packet, peer).await;
+                            });
                         }
                     }
                 }
@@ -66,11 +82,18 @@ impl Proxy {
             addr,
             blackhole,
             drop_replies,
+            delay_ms,
         }
     }
 
     pub fn set_blackhole(&self, on: bool) {
         self.blackhole.store(on, Ordering::Relaxed);
+    }
+
+    /// Delays every packet by `delay` in each direction.
+    pub fn set_delay(&self, delay: Duration) {
+        self.delay_ms
+            .store(delay.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Drops only the packets from the server to the client.
