@@ -28,6 +28,7 @@ pub fn client_endpoint(identity: &Identity, server_pin: Fingerprint) -> Endpoint
 pub struct Proxy {
     pub addr: SocketAddr,
     blackhole: Arc<AtomicBool>,
+    drop_replies: Arc<AtomicBool>,
 }
 
 impl Proxy {
@@ -38,6 +39,8 @@ impl Proxy {
         let addr = front.local_addr().unwrap();
         let blackhole = Arc::new(AtomicBool::new(false));
         let dropping = blackhole.clone();
+        let drop_replies = Arc::new(AtomicBool::new(false));
+        let dropping_replies = drop_replies.clone();
         tokio::spawn(async move {
             let mut client = None;
             let mut from_client = vec![0u8; 65536];
@@ -51,17 +54,27 @@ impl Proxy {
                         }
                     }
                     Ok(n) = back.recv(&mut from_server) => {
-                        if let (Some(peer), false) = (client, dropping.load(Ordering::Relaxed)) {
+                        let dropped = dropping.load(Ordering::Relaxed) || dropping_replies.load(Ordering::Relaxed);
+                        if let (Some(peer), false) = (client, dropped) {
                             let _ = front.send_to(&from_server[..n], peer).await;
                         }
                     }
                 }
             }
         });
-        Self { addr, blackhole }
+        Self {
+            addr,
+            blackhole,
+            drop_replies,
+        }
     }
 
     pub fn set_blackhole(&self, on: bool) {
         self.blackhole.store(on, Ordering::Relaxed);
+    }
+
+    /// Drops only the packets from the server to the client.
+    pub fn set_drop_replies(&self, on: bool) {
+        self.drop_replies.store(on, Ordering::Relaxed);
     }
 }

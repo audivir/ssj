@@ -15,6 +15,9 @@ use sha2::{Digest, Sha256};
 
 pub type Fingerprint = [u8; 32];
 
+/// ALPN identifier, which includes the protocol version.
+pub const ALPN: &[u8] = b"ssj/1";
+
 /// Name sent as SNI. Not validated, since trust comes from the pinned fingerprint.
 pub const SERVER_NAME: &str = "ssj";
 
@@ -184,6 +187,7 @@ pub fn server_tls_with(
         .with_client_cert_verifier(verifier)
         .with_single_cert(vec![identity.cert.clone()], identity.private_key())
         .expect("matching certificate and key");
+    config.alpn_protocols = vec![ALPN.to_vec()];
     config.max_early_data_size = 0;
     config.send_tls13_tickets = 0;
     config.session_storage = Arc::new(NoServerSessionStorage {});
@@ -207,29 +211,64 @@ pub fn client_tls_with(
         .with_custom_certificate_verifier(verifier)
         .with_client_auth_cert(vec![identity.cert.clone()], identity.private_key())
         .expect("matching certificate and key");
+    config.alpn_protocols = vec![ALPN.to_vec()];
     config.enable_early_data = false;
     config.resumption = Resumption::disabled();
     config
 }
 
-/// Transport settings for sessions that must outlive long network outages.
-fn transport() -> Arc<quinn::TransportConfig> {
+/// Limits shared by both roles: no datagrams, no unidirectional streams, few bidirectional ones.
+fn base_transport() -> quinn::TransportConfig {
     let mut transport = quinn::TransportConfig::default();
+    // the session must outlive long outages, and the keepalive notices a returning network
     transport.max_idle_timeout(None);
     transport.keep_alive_interval(Some(Duration::from_secs(1)));
-    Arc::new(transport)
+    transport.datagram_receive_buffer_size(None);
+    transport.max_concurrent_uni_streams(0u8.into());
+    transport.max_concurrent_bidi_streams(8u8.into());
+    transport
 }
+
+/// Receive limits of the server, which only gets small input from the client.
+pub const SERVER_RECEIVE_WINDOW: u32 = 256 * 1024;
+/// Receive limits of the client, which gets the (large) output of the shell.
+pub const CLIENT_RECEIVE_WINDOW: u32 = 4 * 1024 * 1024;
 
 pub fn quic_server(tls: rustls::ServerConfig) -> quinn::ServerConfig {
     let crypto = QuicServerConfig::try_from(tls).expect("QUIC-compatible TLS config");
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
-    config.transport_config(transport());
+    let mut transport = base_transport();
+    transport.receive_window(SERVER_RECEIVE_WINDOW.into());
+    transport.stream_receive_window((SERVER_RECEIVE_WINDOW / 2).into());
+    config.transport_config(Arc::new(transport));
+    // one session, so only a handful of handshakes may be in flight at once
+    config.max_incoming(16);
+    config.incoming_buffer_size(64 * 1024);
+    config.incoming_buffer_size_total(256 * 1024);
     config
 }
 
 pub fn quic_client(tls: rustls::ClientConfig) -> quinn::ClientConfig {
     let crypto = QuicClientConfig::try_from(tls).expect("QUIC-compatible TLS config");
     let mut config = quinn::ClientConfig::new(Arc::new(crypto));
-    config.transport_config(transport());
+    let mut transport = base_transport();
+    transport.receive_window(CLIENT_RECEIVE_WINDOW.into());
+    transport.stream_receive_window(CLIENT_RECEIVE_WINDOW.into());
+    config.transport_config(Arc::new(transport));
     config
+}
+
+/// Accepts the next connection attempt whose source address is validated.
+///
+/// Unvalidated attempts get a stateless retry, so a spoofed source address costs the server no
+/// state and no amplified response.
+pub async fn accept_validated(endpoint: &quinn::Endpoint) -> Option<quinn::Incoming> {
+    loop {
+        let incoming = endpoint.accept().await?;
+        if incoming.remote_address_validated() {
+            return Some(incoming);
+        }
+        // fails only if the attempt cannot be retried, which cannot happen when unvalidated
+        let _ = incoming.retry();
+    }
 }
