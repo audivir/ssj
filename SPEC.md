@@ -106,8 +106,8 @@ UDP phase:
 
 ## Platforms
 
-- Client: macOS and Linux.
-- Server: macOS and Linux. Server code uses only portable POSIX calls (via `rustix`), so no
+- Client: macOS (arm64 only) and Linux.
+- Server: macOS (arm64 only) and Linux. Server code uses only portable POSIX calls (via `rustix`), so no
   Linux-only APIs such as `epoll` or `/proc` outside of optional, feature-gated code.
 
 ## Out of scope for v1
