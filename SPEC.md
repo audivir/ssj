@@ -73,6 +73,30 @@ Findings of the M0 spike (`crates/ssj-spike`, removed after M1 absorbs the code)
 - The server exits when the shell exits or after a configurable detached timeout (default off
   for the shell, on for the pinned client fingerprint before the first connect).
 
+### Environment forwarding
+
+Works like `SendEnv` and `AcceptEnv` in `ssh`: the client selects variables, the server filters
+them.
+
+- Client: `--send-env PATTERN` (repeatable, shell-style `*` and `?`) selects variables from the
+  local environment. The default is `TERM`, `LANG`, and `LC_*`.
+- Server: the accepted names come from the server config file (`~/.config/ssj/server.toml`,
+  key `accept_env`), with the same default. They are never taken from the command line that the
+  client passes through `ssh`, since that would let the client override the filter.
+- The variables travel in the session start frame inside the encrypted QUIC connection, never in
+  the `ssh` bootstrap command.
+- They are applied once, when the shell is created. After a reconnect the client does not resend
+  them, because the running shell cannot change its environment.
+- Validation on the server: names match `[A-Za-z_][A-Za-z0-9_]*`, values contain no NUL byte,
+  and the limits are 64 variables, 256 bytes per name, 8 KiB per value, and 64 KiB in total. A
+  violation rejects the whole set and the session start fails with a clear message.
+- Loader and startup variables (`LD_*`, `DYLD_*`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, and
+  `SSH_*`) are never matched by a wildcard. They are accepted only when named exactly in
+  `accept_env`.
+
+The filter is protection against mistakes and unexpected variables, not a privilege boundary.
+A client with the pinned key already has a full shell as the same user.
+
 ### Scrollback
 
 Output bytes are written unchanged to the local terminal. No screen emulation on the client, so
@@ -117,7 +141,8 @@ Session and shell (server):
   the command, the environment, or the working directory.
 - The shell starts with a clean environment. `SSH_*` and `XDG_SESSION_*` variables inherited
   from the bootstrap session are removed, because they describe a connection that no longer
-  exists. The client may only set `TERM`, `LANG`, `LC_*`, and the window size, each validated.
+  exists. The only variables the client can add are the ones allowed by the rules under
+  Environment forwarding.
 - Window size, frame lengths, and offsets are range checked. An offset outside the retained
   replay buffer closes the connection.
 - When the replay buffer is full, the server stops reading from the PTY (backpressure as in
