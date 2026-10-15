@@ -73,6 +73,41 @@ Findings of the M0 spike (`crates/ssj-spike`, removed after M1 absorbs the code)
 - The server exits when the shell exits or after a configurable detached timeout (default off
   for the shell, on for the pinned client fingerprint before the first connect).
 
+### Attach and restart
+
+Cases by what restarts:
+
+- Network change, sleep, or packet loss: the same connection or a reconnect continues the
+  session, as described above.
+- Client restart (crash, reboot, closed terminal): the session is still alive on the server, but
+  the new client has a new ephemeral identity, so a plain reconnect fails the pinning check. The
+  client re-attaches through `ssh`.
+- Server process crash or host reboot: the shell is lost, since the PTY closes with the process.
+  The only protection is to run the shell inside a multiplexer such as `tmux`. This is the same
+  limit as in `mosh` and `et`.
+
+Re-attach:
+
+1. Each session has an ID and a control socket (mode `0600`, in the runtime directory). The
+   server checks the peer credentials of every connection to the socket and accepts only its own
+   uid.
+2. The client runs `ssh user@host ssj-server --attach [ID]` and sends its new fingerprint on
+   stdin, as in the normal bootstrap. Without an ID, it attaches to the only session, or fails
+   and lists the sessions if there are several.
+3. The `--attach` process connects to the control socket and asks the running server to replace
+   the pinned client fingerprint. Authorization comes from `ssh`: only a process of the same user
+   can reach the socket.
+4. The server prints `SSJ CONNECT <port> <fingerprint>` again. The old connection, if any, is
+   closed with reason `replaced`.
+5. After the handshake, the client sends its window size, so that full-screen programs redraw.
+   The server replays the unacknowledged tail of the output buffer.
+
+The client keeps the session ID and host in `$XDG_STATE_HOME/ssj/` as a hint. The ID is not a
+secret. `ssj --list user@host` shows the sessions of a host.
+
+Optional, later: on a binary upgrade the server re-executes itself and passes the PTY file
+descriptor to the new process, so an upgrade does not end sessions.
+
 ### Environment forwarding
 
 Works like `SendEnv` and `AcceptEnv` in `ssh`: the client selects variables, the server filters
@@ -105,8 +140,10 @@ Paths follow the XDG Base Directory specification, on Linux and on macOS alike.
   `client.toml`.
 - State: `$XDG_STATE_HOME/ssj/` (default `~/.local/state/ssj/`), holding the optional log file.
 - A variable with a relative path is invalid and ignored, as the specification requires.
-- Nothing is written to the runtime directory or to the cache directory. Session keys stay in
-  memory.
+- Runtime: `$XDG_RUNTIME_DIR/ssj/` holds one control socket per session. macOS has no
+  `XDG_RUNTIME_DIR`, so the fallback is `$XDG_STATE_HOME/ssj/run/`. The socket contains no
+  secret, and it is removed when the session ends.
+- Nothing is written to the cache directory. Session keys stay in memory.
 - Created directories get mode `0700` and files mode `0600`. The server refuses to read a config
   file that is writable by group or others.
 
