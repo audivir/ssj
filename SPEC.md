@@ -105,8 +105,37 @@ Re-attach:
 The client keeps the session ID and host in `$XDG_STATE_HOME/ssj/` as a hint. The ID is not a
 secret. `ssj --list user@host` shows the sessions of a host.
 
+### Surviving a server process restart (optional, later)
+
+By default the shell is a child of `ssj-server` and ends with it. Two optional backends keep it
+alive. Neither is part of v1.
+
+Multiplexer backend (`--persist zellij` or `--persist tmux`):
+
+- `ssj-server` starts the shell as `zellij attach --create ssj-<ID>` (or the `tmux` equivalent).
+  The multiplexer has its own daemon, so the shell survives a crash or upgrade of `ssj-server`.
+  Re-attach then reconnects to the multiplexer session.
+- Zellij is used as an external program and not as a library. It is an application with its own
+  client and server processes and no stable embedding interface.
+- Cost: the multiplexer redraws the screen and keeps its own scrollback. This breaks the full
+  scroll mode of the terminal (requirement 2), so the backend is opt-in and the UI of the
+  multiplexer should be reduced to the minimum (no status bar, no pane frames).
+- A host reboot still ends the session, since the multiplexer is gone too.
+
+Holder backend (`--persist holder`):
+
+- A small separate process `ssj-holder` owns the PTY and the shell. It does nothing except pass
+  bytes between the PTY and a Unix socket, with no screen emulation, so native scrollback is
+  kept.
+- `ssj-server` connects to the holder as a client. A crash or upgrade of the network-facing
+  server leaves the holder and the shell running, and the new server reconnects to it.
+- The holder has no network code and a very small attack surface. It also keeps the replay
+  buffer, so output produced while no server runs is not lost.
+- Same limit: a host reboot ends the session.
+
 Optional, later: on a binary upgrade the server re-executes itself and passes the PTY file
-descriptor to the new process, so an upgrade does not end sessions.
+descriptor to the new process. This is a cheaper variant of the holder, for upgrades only and
+not for crashes.
 
 ### Environment forwarding
 
