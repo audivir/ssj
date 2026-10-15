@@ -13,6 +13,46 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: j178/prek-action@v3.0.0
+  clippy-linux-arm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --target aarch64-unknown-linux-gnu -- -D warnings
+  clippy-musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
+  clippy-musl-arm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --target aarch64-unknown-linux-musl -- -D warnings
+  clippy-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --target aarch64-apple-darwin -- -D warnings
   tests:
     name: Test on ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -40,13 +80,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          components: clippy
       - name: Install zig and cargo-zigbuild
         if: matrix.zig
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild,zig
-      - run: cargo clippy --workspace --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
       - name: Install musl-tools
         if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
