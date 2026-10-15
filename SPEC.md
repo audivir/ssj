@@ -80,8 +80,8 @@ them.
 
 - Client: `--send-env PATTERN` (repeatable, shell-style `*` and `?`) selects variables from the
   local environment. The default is `TERM`, `LANG`, and `LC_*`.
-- Server: the accepted names come from the server config file (`~/.config/ssj/server.toml`,
-  key `accept_env`), with the same default. They are never taken from the command line that the
+- Server: the accepted names come from the server config file (`server.toml` in the config
+  directory below, key `accept_env`), with the same default. They are never taken from the command line that the
   client passes through `ssh`, since that would let the client override the filter.
 - The variables travel in the session start frame inside the encrypted QUIC connection, never in
   the `ssh` bootstrap command.
@@ -96,6 +96,19 @@ them.
 
 The filter is protection against mistakes and unexpected variables, not a privilege boundary.
 A client with the pinned key already has a full shell as the same user.
+
+### Files and paths
+
+Paths follow the XDG Base Directory specification, on Linux and on macOS alike.
+
+- Config: `$XDG_CONFIG_HOME/ssj/` (default `~/.config/ssj/`), holding `server.toml` and
+  `client.toml`.
+- State: `$XDG_STATE_HOME/ssj/` (default `~/.local/state/ssj/`), holding the optional log file.
+- A variable with a relative path is invalid and ignored, as the specification requires.
+- Nothing is written to the runtime directory or to the cache directory. Session keys stay in
+  memory.
+- Created directories get mode `0700` and files mode `0600`. The server refuses to read a config
+  file that is writable by group or others.
 
 ### Scrollback
 
@@ -150,8 +163,8 @@ Session and shell (server):
 - The server disables core dumps (`RLIMIT_CORE` 0) and zeroizes private keys after use.
 - Detach closes all inherited file descriptors and redirects stdio to `/dev/null`, so the `ssh`
   channel closes and its output cannot leak. The server ignores `SIGHUP` and calls `setsid`.
-- Log output goes to stderr only until detach, and afterwards nowhere unless a log file with mode
-  `0600` is configured. Terminal content is never logged.
+- Log output goes to stderr only until detach, and afterwards nowhere unless a log file in the state
+  directory is configured. Terminal content is never logged.
 - Port selection: random free port from the range, retried on conflict. On shared hosts the range
   is shared by all users, so exhaustion produces a clear error.
 
