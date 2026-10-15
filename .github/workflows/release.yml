@@ -6,7 +6,77 @@ on:
 permissions:
   contents: write
 env:
-  BIN_NAME: ssj
+  BIN_NAMES: ssj ssj-server
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check that the release tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          pkg_version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME (version $tag_version) does not match Cargo.toml version ($pkg_version)"
+            exit 1
+          fi
+  build:
+    needs: check-version
+    name: Build for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            zig: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            zig: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            zig: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            zig: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            zig: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install zig and cargo-zigbuild
+        if: matrix.zig
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild,zig
+      - name: Build with cargo-zigbuild
+        if: matrix.zig
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+      - name: Build natively
+        if: ${{ !matrix.zig }}
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package binaries
+        run: |
+          for bin in $BIN_NAMES; do
+            cp "target/${{ matrix.target }}/release/$bin" "$bin-${{ matrix.target }}"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: ssj-*
+          retention-days: 1
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  BIN_NAMES: ssj ssj-server
 jobs:
   check-version:
     runs-on: ubuntu-latest

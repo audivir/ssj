@@ -8,4 +8,8 @@ license.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "ssj"
+path = "src/main.rs"
+
 [dependencies]
