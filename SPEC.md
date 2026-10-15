@@ -104,9 +104,15 @@ UDP phase:
 - A local user on the remote host can occupy a UDP port before the server binds it. The client
   then fails the pin check, so the effect is a denial of service only.
 
+## Platforms
+
+- Client: macOS and Linux.
+- Server: macOS and Linux. Server code uses only portable POSIX calls (via `rustix`), so no
+  Linux-only APIs such as `epoll` or `/proc` outside of optional, feature-gated code.
+
 ## Out of scope for v1
 
 - Port forwarding, agent forwarding, and X11 forwarding.
 - `sftp` or `scp` replacements.
 - Local echo prediction.
-- Windows server.
+- Windows client and server.
