@@ -47,9 +47,10 @@ jobs:
         with:
           tool: cargo-zigbuild,zig
       - run: cargo clippy --workspace --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
-      - name: Test with cargo-zigbuild
+      - name: Install musl-tools
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo test --workspace --all-features --target ${{ matrix.target }}
+      - name: Check release build with cargo-zigbuild
         if: matrix.zig
-        run: cargo zigbuild test --workspace --all-features --target ${{ matrix.target }}
-      - name: Test natively
-        if: ${{ !matrix.zig }}
-        run: cargo test --workspace --all-features --target ${{ matrix.target }}
+        run: cargo zigbuild --release --workspace --target ${{ matrix.target }}
