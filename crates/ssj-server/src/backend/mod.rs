@@ -15,13 +15,7 @@ use std::process::ExitStatus;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pub use direct::Direct;
-
-/// Terminal dimensions in character cells.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WindowSize {
-    pub rows: u16,
-    pub cols: u16,
-}
+pub use ssj_proto::{SessionId, WindowSize};
 
 /// Command, environment, and terminal size of a shell to start.
 ///
@@ -33,31 +27,6 @@ pub struct SpawnSpec {
     pub env: Vec<(OsString, OsString)>,
     pub cwd: Option<PathBuf>,
     pub size: WindowSize,
-}
-
-/// Identifier of a session, restricted to characters that are safe in file names and commands.
-///
-/// It names control sockets and multiplexer sessions, so it must never contain path separators,
-/// dots, whitespace, or option prefixes.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SessionId(String);
-
-impl SessionId {
-    const MIN_LEN: usize = 8;
-    const MAX_LEN: usize = 64;
-
-    /// Accepts lowercase ASCII letters and digits, between 8 and 64 characters.
-    pub fn parse(id: &str) -> Option<Self> {
-        let valid = (Self::MIN_LEN..=Self::MAX_LEN).contains(&id.len())
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-        valid.then(|| Self(id.to_owned()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 /// Byte stream to a running shell, with its terminal controls.

@@ -15,7 +15,9 @@ fn spec(script: &str, size: WindowSize) -> SpawnSpec {
     }
 }
 
-const SIZE: WindowSize = WindowSize { rows: 24, cols: 80 };
+fn size(rows: u16, cols: u16) -> WindowSize {
+    WindowSize::new(rows, cols).unwrap()
+}
 
 fn id() -> SessionId {
     SessionId::parse("abcdef012345").unwrap()
@@ -40,7 +42,7 @@ async fn read_all(shell: &mut impl Shell) -> String {
 #[tokio::test]
 async fn output_and_exit_status_reach_the_caller() {
     let mut shell = Direct
-        .spawn(&id(), spec("printf hello; exit 3", SIZE))
+        .spawn(&id(), spec("printf hello; exit 3", size(24, 80)))
         .await
         .unwrap();
 
@@ -50,10 +52,7 @@ async fn output_and_exit_status_reach_the_caller() {
 
 #[tokio::test]
 async fn shell_sees_initial_and_changed_window_size() {
-    let initial = WindowSize {
-        rows: 30,
-        cols: 100,
-    };
+    let initial = size(30, 100);
     let mut shell = Direct
         .spawn(&id(), spec("stty size; read line; stty size", initial))
         .await
@@ -69,12 +68,7 @@ async fn shell_sees_initial_and_changed_window_size() {
             .unwrap();
         seen.push_str(&String::from_utf8_lossy(&buf[..n]));
     }
-    shell
-        .resize(WindowSize {
-            rows: 40,
-            cols: 120,
-        })
-        .unwrap();
+    shell.resize(size(40, 120)).unwrap();
     shell.write_all(b"\n").await.unwrap();
 
     assert!(read_all(&mut shell).await.contains("40 120"));
@@ -87,7 +81,7 @@ async fn shell_gets_only_the_environment_of_the_spec() {
             &id(),
             SpawnSpec {
                 env: vec![("ONLY".into(), "this".into())],
-                ..spec("/usr/bin/env", SIZE)
+                ..spec("/usr/bin/env", size(24, 80))
             },
         )
         .await

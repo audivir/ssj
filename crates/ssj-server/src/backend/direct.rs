@@ -20,7 +20,7 @@ pub struct DirectShell {
 }
 
 fn to_size(size: WindowSize) -> Size {
-    Size::new(size.rows, size.cols)
+    Size::new(size.rows(), size.cols())
 }
 
 fn to_io(err: pty_process::Error) -> io::Error {

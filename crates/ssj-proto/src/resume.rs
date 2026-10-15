@@ -1,0 +1,92 @@
+//! Decisions at the start of a connection, as pure functions.
+
+use crate::env::Env;
+use crate::frame::{ErrorCode, Hello, Welcome};
+use crate::replay::ReplayBuffer;
+use crate::types::WindowSize;
+
+/// Output bytes replayed to a client that attaches without history.
+pub const ATTACH_TAIL: usize = 64 * 1024;
+
+/// What the server has to do besides answering.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    Spawn { size: WindowSize, env: Env },
+    Resize(WindowSize),
+}
+
+/// State of the server that the answer to `Hello` depends on.
+pub struct ServerView<'a> {
+    pub shell_started: bool,
+    pub output: &'a ReplayBuffer,
+    /// Input bytes consumed so far.
+    pub input_received: u64,
+}
+
+/// Decides how the server answers a `Hello`.
+pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action), ErrorCode> {
+    match hello {
+        Hello::Start { size, env } => {
+            if view.shell_started {
+                return Err(ErrorCode::AlreadyStarted);
+            }
+            let welcome = Welcome {
+                input_offset: 0,
+                output_offset: 0,
+            };
+            Ok((welcome, Action::Spawn { size, env }))
+        }
+        Hello::Resume {
+            size,
+            output_offset,
+        } => {
+            if !view.shell_started {
+                return Err(ErrorCode::NotStarted);
+            }
+            if output_offset < view.output.start() || output_offset > view.output.end() {
+                return Err(ErrorCode::ReplayGap);
+            }
+            let welcome = Welcome {
+                input_offset: view.input_received,
+                output_offset,
+            };
+            Ok((welcome, Action::Resize(size)))
+        }
+        Hello::Attach { size } => {
+            if !view.shell_started {
+                return Err(ErrorCode::NotStarted);
+            }
+            let welcome = Welcome {
+                input_offset: view.input_received,
+                output_offset: view.output.tail_offset(ATTACH_TAIL),
+            };
+            Ok((welcome, Action::Resize(size)))
+        }
+    }
+}
+
+/// Reason a `Welcome` does not fit what the client sent and knows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BadWelcome;
+
+/// Checks the `Welcome` of the server against the client state.
+///
+/// `input_acked` and `input_sent` are the acknowledged and the written input offsets. A welcome
+/// that claims input the client never sent, or that takes back acknowledged input, is refused.
+pub fn check_welcome(
+    hello: &Hello,
+    welcome: Welcome,
+    input_acked: u64,
+    input_sent: u64,
+) -> Result<(), BadWelcome> {
+    let ok = match hello {
+        Hello::Start { .. } => welcome.input_offset == 0 && welcome.output_offset == 0,
+        Hello::Resume { output_offset, .. } => {
+            welcome.output_offset == *output_offset
+                && (input_acked..=input_sent).contains(&welcome.input_offset)
+        }
+        // a client without history adopts the offsets of the server
+        Hello::Attach { .. } => true,
+    };
+    if ok { Ok(()) } else { Err(BadWelcome) }
+}

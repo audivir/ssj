@@ -1,4 +1,4 @@
-use ssj_server::backend::SessionId;
+use ssj_proto::{SessionId, WindowSize};
 
 #[test]
 fn accepts_lowercase_alphanumeric_ids() {
@@ -24,5 +24,14 @@ fn rejects_ids_that_could_escape_a_path_or_a_command() {
         &"a".repeat(65),
     ] {
         assert!(SessionId::parse(id).is_none(), "{id:?}");
+    }
+}
+
+#[test]
+fn window_size_is_limited_to_a_sane_range() {
+    assert!(WindowSize::new(1, 1).is_some());
+    assert!(WindowSize::new(WindowSize::MAX, WindowSize::MAX).is_some());
+    for (rows, cols) in [(0, 80), (24, 0), (WindowSize::MAX + 1, 80), (24, u16::MAX)] {
+        assert!(WindowSize::new(rows, cols).is_none(), "{rows}x{cols}");
     }
 }
