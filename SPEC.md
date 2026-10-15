@@ -51,6 +51,17 @@ not take part in the bootstrap cannot open a session.
 Rejected alternative: custom reliable stream over UDP with Noise (`snow`). More control, but more
 code to audit.
 
+Findings of the M0 spike (`crates/ssj-spike`, removed after M1 absorbs the code):
+
+- Pinning in a custom `rustls` verifier works for both directions. A peer presenting the pinned
+  certificate with a different private key is rejected by the handshake signature check.
+- With the idle timeout disabled and a 1 second keepalive, one connection survived a 90 second
+  total network blackout and delivered its pending data 0.4 seconds after the network returned.
+  Reconnecting is therefore the fallback and not the normal path.
+- A client that changes its source address keeps the same connection (QUIC migration).
+- A client that lost its connection without a close can be replaced: the server closes the old
+  connection when a newer authenticated one arrives.
+
 ### Session persistence
 
 - The server process outlives the connection. It keeps the PTY and its child shell running.
