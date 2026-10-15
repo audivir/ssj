@@ -256,8 +256,10 @@ Bootstrap (client):
 
 Supply chain:
 
-- `Cargo.lock` is committed, and CI runs `cargo audit`, `cargo deny`, and a `cargo geiger` report
-  to track `unsafe` in dependencies. The crypto provider is `ring`.
+- `Cargo.lock` is committed, and CI runs `cargo audit` and `cargo deny` on every push and weekly.
+  `deny.toml` limits licenses and registries and bans `openssl`, `native-tls`, and `aws-lc`, so the
+  crypto provider stays `ring`. `cargo geiger` was tried to track `unsafe` in dependencies but
+  fails to read the current lockfile, so new dependencies are reviewed by hand instead.
 - Release binaries get checksums and GitHub artifact attestations, because they run on remote
   hosts.
 - The protocol version is part of the ALPN string. A server and client of different versions
