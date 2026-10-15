@@ -170,10 +170,18 @@ impl ClientCertVerifier for PinnedVerifier {
 
 /// Server TLS config that requires the client certificate with fingerprint `client_pin`.
 pub fn server_tls(identity: &Identity, client_pin: Fingerprint) -> rustls::ServerConfig {
+    server_tls_with(identity, PinnedVerifier::new(client_pin))
+}
+
+/// Like [`server_tls`] with a custom client verifier.
+pub fn server_tls_with(
+    identity: &Identity,
+    verifier: Arc<dyn ClientCertVerifier>,
+) -> rustls::ServerConfig {
     let mut config = rustls::ServerConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("TLS 1.3 is supported")
-        .with_client_cert_verifier(PinnedVerifier::new(client_pin))
+        .with_client_cert_verifier(verifier)
         .with_single_cert(vec![identity.cert.clone()], identity.private_key())
         .expect("matching certificate and key");
     config.max_early_data_size = 0;
@@ -184,11 +192,19 @@ pub fn server_tls(identity: &Identity, client_pin: Fingerprint) -> rustls::Serve
 
 /// Client TLS config that accepts only the server certificate with fingerprint `server_pin`.
 pub fn client_tls(identity: &Identity, server_pin: Fingerprint) -> rustls::ClientConfig {
+    client_tls_with(identity, PinnedVerifier::new(server_pin))
+}
+
+/// Like [`client_tls`] with a custom server verifier.
+pub fn client_tls_with(
+    identity: &Identity,
+    verifier: Arc<dyn ServerCertVerifier>,
+) -> rustls::ClientConfig {
     let mut config = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("TLS 1.3 is supported")
         .dangerous()
-        .with_custom_certificate_verifier(PinnedVerifier::new(server_pin))
+        .with_custom_certificate_verifier(verifier)
         .with_client_auth_cert(vec![identity.cert.clone()], identity.private_key())
         .expect("matching certificate and key");
     config.enable_early_data = false;
