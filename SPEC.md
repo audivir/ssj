@@ -109,8 +109,9 @@ UDP phase:
 - Client: macOS (arm64 only) and Linux.
 - Server: macOS (arm64 only) and Linux.
 - Linux targets: glibc and musl, each on x86_64 and arm64 (four release binaries).
-- macOS target: arm64 only (one release binary). Server code uses only portable POSIX calls (via `rustix`), so no
-  Linux-only APIs such as `epoll` or `/proc` outside of optional, feature-gated code.
+- macOS target: arm64 only (one release binary).
+- Server code uses only portable POSIX calls (via `rustix`), so no Linux-only APIs such as
+  `epoll` or `/proc` outside of optional, feature-gated code.
 
 ## Out of scope for v1
 
