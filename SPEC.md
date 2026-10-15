@@ -20,8 +20,13 @@ Workspace layout follows the guidelines (`crates/`, edition 2024, shared `Cargo.
 the workspace root):
 
 - `crates/ssj-proto`: wire format, framing, and session state machine (no IO).
-- `crates/ssj-server`: runs on the remote host as the unprivileged user, owns the PTY.
+- `crates/ssj-server`: runs on the remote host as the unprivileged user, owns the session.
+  The shell lives behind the `Backend` and `Shell` traits (`backend` module), so where it runs
+  can change without touching the session logic. v1 has one backend, `Direct`, which runs the
+  shell as a child of the server on a PTY (via `pty-process`).
 - `crates/ssj-client`: local terminal, bootstrap, and reconnect logic.
+- `crates/ssj-holder` (optional, later): the holder process of the `holder` backend described
+  below. It is a separate binary with no network code.
 
 ### Bootstrap
 
@@ -122,7 +127,8 @@ Multiplexer backend (`--persist zellij` or `--persist tmux`):
   multiplexer should be reduced to the minimum (no status bar, no pane frames).
 - A host reboot still ends the session, since the multiplexer is gone too.
 
-Holder backend (`--persist holder`):
+Holder backend (`--persist holder`), added as a second implementation of `Backend` with
+`SURVIVES_SERVER_RESTART` set to true and a working `attach`:
 
 - A small separate process `ssj-holder` owns the PTY and the shell. It does nothing except pass
   bytes between the PTY and a Unix socket, with no screen emulation, so native scrollback is
@@ -135,7 +141,9 @@ Holder backend (`--persist holder`):
 
 Optional, later: on a binary upgrade the server re-executes itself and passes the PTY file
 descriptor to the new process. This is a cheaper variant of the holder, for upgrades only and
-not for crashes.
+not for crashes. Rebuilding a PTY from a file descriptor needs `unsafe` in `pty-process`
+(`Pty::from_fd`), which `forbid(unsafe_code)` rules out in our crates. The holder backend does
+not have this problem, so it is preferred.
 
 ### Environment forwarding
 
