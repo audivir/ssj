@@ -103,6 +103,14 @@ protocol version, and two peers talk only if their versions are equal.
   example "client 0.4.0 speaks protocol 3, install it on the host with `ssj install`".
 - The bootstrap line `SSJ CONNECT` has no version of its own and is covered by `N`.
 
+### Address of the UDP connection
+
+The client needs the address of the server for the UDP connection. Its default is the host part
+of the destination, resolved by DNS. This is wrong when the destination is an alias from the
+`ssh` configuration or when `ssh` goes through a jump host. `--udp-host` overrides it. A later
+version should read the `HostName` that `ssh -G` reports. A jump host does not help for UDP,
+because the datagrams do not travel through it.
+
 ### Installation of the server
 
 The server needs no root: it is one file in the home directory of the user.

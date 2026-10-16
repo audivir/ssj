@@ -4,9 +4,12 @@ Session survives jumps: a remote shell for flaky networks. The session survives 
 changes, sleep, and packet loss, and the native scrollback of the local terminal keeps working.
 The server runs without root and the transport is QUIC over UDP.
 
-_Status:_ under development. The protocol, the session core of the server, and the checks are
-implemented and tested. The `ssj` and `ssj-server` programs themselves do not work yet, so the
-usage below describes the planned behavior. See `SPEC.md` for the design and the threat model.
+_Status:_ under development. You can already start a session: `ssj` bootstraps the server through
+`ssh`, connects over QUIC, and passes the terminal through, including the window size and the exit
+code of the shell. Not implemented yet: reconnecting after a lost connection, the `~.` escape,
+`ssj list`, `ssj kill`, `ssj install`, and the config files. Until `ssj install` exists, copy
+`ssj-server` to the remote host and point to it with `--server-path`. See `SPEC.md` for the
+design and the threat model.
 
 ## Prerequisites
 
@@ -27,7 +30,10 @@ upload it to `~/.local/share/ssj/bin/`. No root is needed.
 ## Usage
 
 ```shell
-ssj user@host                       # start or join a session
+ssj user@host                       # start a session
+ssj --server-path ~/bin/ssj-server user@host
+ssj --ssh-command 'ssh -J jump' user@host
+ssj --udp-host 203.0.113.7 user@host  # UDP address when it differs from the host name
 ssj --port-range 62000:62100 user@host
 ssj list user@host                  # sessions with state and age
 ssj kill [ID] user@host             # end a session
