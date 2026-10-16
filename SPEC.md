@@ -162,29 +162,37 @@ Location and name:
 
 Two ways to get it there:
 
-1. Explicit (v1): `ssj install user@host` uploads the matching binary. This is the recommended
-   default, since it is one visible step.
-2. Automatic, on first use (optional, after v1): when the server file of the protocol of the client
-   is missing, the client offers to install it, and with `--auto-install` it does so without asking.
-   It never installs silently by default.
+1. Explicit: `ssj install user@host` uploads the matching binary.
+2. On first use: when `ssj user@host` finds no server file for its protocol, the wrapper of the
+   remote command reports `SSJ MISSING` with exit code 66, which the client tells apart from every
+   other failure. What happens next follows the policy `auto_install`:
+   - `ask` (default): on a terminal, the client asks `Install it now? [y/N]` and only `y` or `yes`
+     counts. Without a terminal there is nobody to ask, so nothing is installed and the message
+     names `ssj install` and `--install`.
+   - `always`: installs without asking. `never`: never installs and says how to do it by hand.
+   - The flags `--install` and `--no-install` override the config file for one run.
+   - `attach`, `list`, and `kill` never install. Without a server there are no sessions.
 
 How the upload works:
 
-1. The client runs `ssh user@host uname -sm` (no shell startup output is trusted, the answer is
-   matched against a fixed list) and picks the target: Linux x86_64 or arm64, or macOS arm64.
-   Linux targets use the static `musl` build, which runs on any distribution regardless of the
-   `glibc` version. Other answers abort with a clear message.
-2. The binaries for all five targets are known to the client by SHA-256 digest through a manifest
-   that is compiled into the client. The binaries themselves are either bundled with the client
-   or downloaded from the GitHub release of the same version, and the digest is checked before
-   anything is sent.
-3. The client streams the file over `ssh` into a temporary file in the target directory (created
-   with `umask 077`), and the remote side runs `sha256sum` (or `shasum -a 256` on macOS) on it.
-   Only if the digest matches the manifest, the file is made executable and renamed into place
-   atomically. Otherwise it is deleted and the install fails.
-4. The file name contains the protocol, so a present file is by definition the right one. The
-   client does not compare binary versions. Whether the present file is current is irrelevant
-   unless the user asks for an update with `ssj install --force`.
+1. The client asks the host for its system (`uname -sm`, in a line of its own that must appear
+   exactly once) and maps it to a build: Linux x86_64 and aarch64 get the static `musl` build,
+   macOS arm64 gets the native one. Anything else is refused with a clear message.
+2. The client takes the file `ssj-server-<build>` from `--server-dir` (default: the directory of
+   the client itself, where a release archive puts it), or the file named by `--server-binary`.
+3. It sends the SHA-256 digest of the file on the first line of stdin, followed by the file. The
+   remote script writes to a temporary file (`umask 077`), computes the digest again with
+   `sha256sum` or `shasum -a 256`, and compares. It then makes the file executable and runs
+   `--version` on it, which catches `noexec` mounts. Only after both checks it moves the file into
+   place by atomic rename. Any failure removes the temporary file.
+4. The file name contains the protocol, so a present file is by definition the right one.
+
+Limit of the digest check: the client computes the digest from the same local file it uploads, so
+the check protects against corruption and truncation on the way, but not against a tampered local
+file. The trust anchor is the file next to the client, which comes from the same release. A
+manifest of digests compiled into the client (so that a swapped server file would be noticed) needs
+the release pipeline to build the servers first. It is planned, together with downloading the file
+from the GitHub release of the same version.
 
 Failure cases, each with a clear message:
 

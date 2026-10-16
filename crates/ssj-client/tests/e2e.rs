@@ -462,3 +462,508 @@ fn attach_and_kill_without_a_session_say_so() {
     let listed = ssj(&runtime, &ssh, &["list", "user@localhost"], "");
     assert!(text(&listed.stdout).contains("no sessions"));
 }
+
+/// The name of the server build that matches the system of the tests, which is also the "host".
+fn local_build() -> &'static str {
+    let output = Command::new("uname").arg("-sm").output().unwrap();
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "Darwin arm64" => "aarch64-apple-darwin",
+        "Linux x86_64" => "x86_64-unknown-linux-musl",
+        "Linux aarch64" => "aarch64-unknown-linux-musl",
+        other => panic!("the tests have no server build for {other}"),
+    }
+}
+
+/// A directory with the server file under the name that the client looks for.
+fn server_dir() -> PathBuf {
+    let dir = short_dir();
+    std::fs::copy(
+        server_binary(),
+        dir.join(format!("ssj-server-{}", local_build())),
+    )
+    .unwrap();
+    dir
+}
+
+/// Directories for one test host: where the data (installed files) and the sockets go.
+struct Host {
+    data: PathBuf,
+    config: PathBuf,
+    runtime: PathBuf,
+}
+
+fn host() -> Host {
+    Host {
+        data: short_dir(),
+        config: short_dir(),
+        runtime: short_dir(),
+    }
+}
+
+impl Host {
+    fn installed(&self) -> PathBuf {
+        self.data.join("ssj/bin/ssj-server-p1")
+    }
+
+    /// Runs `ssj` as a script would, without a terminal, with the words as given.
+    fn ssj(&self, ssh: &Path, words: &[&str], input: &str) -> Output {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+            .env("XDG_DATA_HOME", &self.data)
+            .env("XDG_CONFIG_HOME", &self.config)
+            .env("XDG_RUNTIME_DIR", &self.runtime)
+            .args([
+                "--ssh-command",
+                ssh.to_str().unwrap(),
+                "--udp-host",
+                "127.0.0.1",
+            ])
+            .args(words)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let start = Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "ssj {words:?} did not finish"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        child.wait_with_output().unwrap()
+    }
+
+    /// The words that start a short session without naming the server file.
+    fn session_words(&self, extra: &[&str]) -> Vec<String> {
+        let port = free_port();
+        let mut words: Vec<String> = extra.iter().map(|w| (*w).to_owned()).collect();
+        for arg in [
+            "--port-range",
+            &format!("{port}:{port}"),
+            "--detached-timeout",
+            "5",
+            "--server-arg",
+            "--shell",
+            "--server-arg",
+            "/bin/sh",
+            "--server-arg",
+            "--shell-arg",
+            "--server-arg",
+            "-c",
+            "--server-arg",
+            "--shell-arg",
+            "--server-arg",
+            "read x; echo got:$x; exit 3",
+        ] {
+            words.push(arg.to_owned());
+        }
+        words.push("user@localhost".to_owned());
+        words
+    }
+}
+
+fn words(owned: &[String]) -> Vec<&str> {
+    owned.iter().map(String::as_str).collect()
+}
+
+#[test]
+fn install_uploads_checks_and_makes_the_default_path_work() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+
+    let output = host.ssj(
+        &ssh,
+        &[
+            "install",
+            "--server-dir",
+            dir.to_str().unwrap(),
+            "user@localhost",
+        ],
+        "",
+    );
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stdout).contains("installed "),
+        "{}",
+        text(&output.stdout)
+    );
+
+    // a private, executable file that reports the protocol
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(host.installed())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700);
+    let version = Command::new(host.installed())
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(text(&version.stdout).contains("protocol 1"));
+    // no temporary files stay behind
+    let names: Vec<String> = std::fs::read_dir(host.data.join("ssj/bin"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["ssj-server-p1"]);
+
+    // and a session starts through the default path, without --server-path
+    let session = host.session_words(&[]);
+    let output = host.ssj(&ssh, &words(&session), "go\n");
+    assert!(
+        text(&output.stdout).contains("got:go"),
+        "{} / {}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(3));
+}
+
+#[test]
+fn missing_server_is_installed_on_demand_with_the_flag() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    let session = host.session_words(&["--install", "--server-dir", dir.to_str().unwrap()]);
+
+    let output = host.ssj(&ssh, &words(&session), "go\n");
+
+    assert!(
+        text(&output.stderr).contains("installed "),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(
+        text(&output.stdout).contains("got:go"),
+        "{} / {}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(3));
+    assert!(host.installed().exists());
+}
+
+#[test]
+fn without_a_terminal_a_missing_server_is_not_installed_unasked() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
+
+    let output = host.ssj(&ssh, &words(&session), "");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = text(&output.stderr);
+    assert!(
+        stderr.contains("not installed")
+            && stderr.contains("no terminal")
+            && stderr.contains("--install"),
+        "{stderr}"
+    );
+    assert!(!host.installed().exists());
+}
+
+#[test]
+fn the_config_file_and_the_flags_decide_in_this_order() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    std::fs::create_dir_all(host.config.join("ssj")).unwrap();
+    let config = host.config.join("ssj/client.toml");
+    let write = |text: &str| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&config, text).unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+    };
+
+    // "never" in the config stops an installation that would otherwise happen
+    write("auto_install = \"never\"\n");
+    let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
+    let output = host.ssj(&ssh, &words(&session), "go\n");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        text(&output.stderr).contains("ssj install"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(!host.installed().exists());
+
+    // the flag wins over the config
+    let session = host.session_words(&["--install", "--server-dir", dir.to_str().unwrap()]);
+    assert_eq!(
+        host.ssj(&ssh, &words(&session), "go\n").status.code(),
+        Some(3)
+    );
+    assert!(host.installed().exists());
+    std::fs::remove_file(host.installed()).unwrap();
+
+    // "always" in the config installs without a flag
+    write("auto_install = \"always\"\n");
+    let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
+    assert_eq!(
+        host.ssj(&ssh, &words(&session), "go\n").status.code(),
+        Some(3)
+    );
+    assert!(host.installed().exists());
+    std::fs::remove_file(host.installed()).unwrap();
+
+    // and --no-install wins over "always"
+    let session = host.session_words(&["--no-install", "--server-dir", dir.to_str().unwrap()]);
+    assert_eq!(
+        host.ssj(&ssh, &words(&session), "go\n").status.code(),
+        Some(1)
+    );
+    assert!(!host.installed().exists());
+
+    // a broken config is an error, not a silent default
+    write("auto_instal = \"always\"\n");
+    let output = host.ssj(&ssh, &["list", "user@localhost"], "");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        text(&output.stderr).contains("unknown key"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+// A transfer that is changed on the way must never replace or create the server file.
+#[test]
+fn damaged_upload_is_rejected_and_installs_nothing() {
+    let host = host();
+    let ssh = fake_ssh(
+        "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nshift\n{ cat; printf x; } | sh -c \"$*\"\n",
+    );
+    let dir = server_dir();
+
+    let output = host.ssj(
+        &ssh,
+        &[
+            "install",
+            "--server-dir",
+            dir.to_str().unwrap(),
+            "user@localhost",
+        ],
+        "",
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        text(&output.stderr).contains("does not match its digest"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(!host.installed().exists());
+    let leftovers = std::fs::read_dir(host.data.join("ssj/bin"))
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(leftovers, 0, "the temporary file must be removed");
+}
+
+#[test]
+fn unsupported_systems_and_missing_builds_are_explained() {
+    let host = host();
+    let freebsd = fake_ssh("#!/bin/sh\necho 'SSJ TARGET FreeBSD amd64'\n");
+    let dir = server_dir();
+    let output = host.ssj(
+        &freebsd,
+        &[
+            "install",
+            "--server-dir",
+            dir.to_str().unwrap(),
+            "user@localhost",
+        ],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        text(&output.stderr).contains("no server for the system"),
+        "{}",
+        text(&output.stderr)
+    );
+
+    let ssh = fake_ssh(FAKE_SSH);
+    let empty = short_dir();
+    let output = host.ssj(
+        &ssh,
+        &[
+            "install",
+            "--server-dir",
+            empty.to_str().unwrap(),
+            "user@localhost",
+        ],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = text(&output.stderr);
+    assert!(
+        stderr.contains(&format!("ssj-server-{}", local_build()))
+            && stderr.contains("--server-dir"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn listing_and_attaching_to_a_host_without_the_server_say_so() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+
+    let listed = host.ssj(&ssh, &["list", "user@localhost"], "");
+    assert_eq!(listed.status.code(), Some(0));
+    assert!(
+        text(&listed.stdout).contains("not installed"),
+        "{}",
+        text(&listed.stdout)
+    );
+
+    for command in ["attach", "kill"] {
+        let output = host.ssj(&ssh, &[command, "user@localhost"], "");
+        assert_eq!(output.status.code(), Some(1), "{command}");
+        assert!(
+            text(&output.stderr).contains("not installed"),
+            "{command}: {}",
+            text(&output.stderr)
+        );
+        assert!(!host.installed().exists(), "{command} must never install");
+    }
+}
+
+/// Starts `ssj` on a pseudo-terminal, so that it can ask questions, and follows what it shows.
+struct OnTerminal {
+    child: std::process::Child,
+    typed: std::fs::File,
+    shown: std::sync::mpsc::Receiver<Vec<u8>>,
+    seen: String,
+}
+
+fn on_terminal(host: &Host, ssh: &Path, words: &[String]) -> OnTerminal {
+    use std::io::Read;
+
+    let (pty, pts) = pty_process::blocking::open().unwrap();
+    pty.resize(pty_process::Size::new(24, 80)).unwrap();
+    let child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_DATA_HOME", &host.data)
+        .env("XDG_CONFIG_HOME", &host.config)
+        .env("XDG_RUNTIME_DIR", &host.runtime)
+        .args([
+            "--ssh-command",
+            ssh.to_str().unwrap(),
+            "--udp-host",
+            "127.0.0.1",
+        ])
+        .args(words)
+        .spawn(pts)
+        .unwrap();
+    let fd: std::os::fd::OwnedFd = pty.into();
+    let mut reader = std::fs::File::from(fd.try_clone().unwrap());
+    let typed = std::fs::File::from(fd);
+    let (tx, shown) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = reader.read(&mut buf) {
+            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    OnTerminal {
+        child,
+        typed,
+        shown,
+        seen: String::new(),
+    }
+}
+
+impl OnTerminal {
+    fn wait_for(&mut self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !self.seen.contains(needle) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.shown.recv_timeout(left) {
+                Ok(bytes) => self.seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Err(_) => panic!("never saw {needle:?} in {:?}", self.seen),
+            }
+        }
+    }
+
+    fn exit_code(&mut self) -> Option<i32> {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status.code();
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "the client did not end: {:?}",
+                self.seen
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+#[test]
+fn on_a_terminal_the_user_is_asked_and_can_decline() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    let mut terminal = on_terminal(
+        &host,
+        &ssh,
+        &host.session_words(&["--server-dir", dir.to_str().unwrap()]),
+    );
+
+    terminal.wait_for("Install it now? [y/N]");
+    terminal.typed.write_all(b"n\n").unwrap();
+
+    assert_eq!(terminal.exit_code(), Some(1));
+    assert!(!host.installed().exists());
+}
+
+#[test]
+fn on_a_terminal_the_user_can_agree_and_the_session_starts() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    let mut terminal = on_terminal(
+        &host,
+        &ssh,
+        &host.session_words(&["--server-dir", dir.to_str().unwrap()]),
+    );
+
+    terminal.wait_for("Install it now? [y/N]");
+    terminal.typed.write_all(b"y\n").unwrap();
+    terminal.wait_for("installed ");
+    terminal.typed.write_all(b"go\n").unwrap();
+    terminal.wait_for("got:go");
+
+    assert_eq!(terminal.exit_code(), Some(3));
+    assert!(host.installed().exists());
+}
+
+// Only a clear yes counts, so that a stray key or an empty answer never uploads anything.
+#[test]
+fn only_yes_means_yes() {
+    for answer in ["\n", "yep\n", "no\n", "n\n", " \n"] {
+        let host = host();
+        let ssh = fake_ssh(FAKE_SSH);
+        let dir = server_dir();
+        let mut terminal = on_terminal(
+            &host,
+            &ssh,
+            &host.session_words(&["--server-dir", dir.to_str().unwrap()]),
+        );
+        terminal.wait_for("[y/N]");
+        terminal.typed.write_all(answer.as_bytes()).unwrap();
+        assert_eq!(terminal.exit_code(), Some(1), "{answer:?}");
+        assert!(!host.installed().exists(), "{answer:?}");
+    }
+}

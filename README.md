@@ -7,9 +7,9 @@ The server runs without root and the transport is QUIC over UDP.
 _Status:_ under development. You can already use it: `ssj` bootstraps the server through `ssh`,
 connects over QUIC, passes the terminal through (window size, exit code, and `~.` to detach),
 reconnects after a lost connection without losing or repeating input, and manages sessions with
-`ssj list`, `ssj attach`, and `ssj kill`. Not implemented yet: `ssj install` and the config files
-(`client.toml`, `server.toml`). Until `ssj install` exists, copy `ssj-server` to the remote host
-and point to it with `--server-path`. See `SPEC.md` for the design and the threat model.
+`ssj list`, `ssj attach`, and `ssj kill`, and installs the server on the host. Not implemented yet:
+downloading the server from a release, and most settings of `client.toml` and `server.toml`. See
+`SPEC.md` for the design and the threat model.
 
 ## Prerequisites
 
@@ -24,8 +24,23 @@ cargo install --path crates/ssj-client
 cargo install --path crates/ssj-server
 ```
 
-Install the server on the remote host as the unprivileged user, or let `ssj install user@host`
-upload it to `~/.local/share/ssj/bin/`. No root is needed.
+Put the server file for the host next to `ssj` (a release archive does this), then let
+`ssj install user@host` upload it to `~/.local/share/ssj/bin/ssj-server-p1`. No root is needed.
+The upload is checked with SHA-256 on the host, tested by running it, and only then moved into
+place, so a broken transfer never replaces a working server.
+
+When the server is missing, `ssj user@host` offers to install it, as set by `auto_install` in
+`$XDG_CONFIG_HOME/ssj/client.toml`:
+
+```toml
+auto_install = "ask"   # "ask" (default), "always", or "never"
+```
+
+- `ask`: on a terminal you are asked, and only `y` or `yes` installs. Without a terminal nothing
+  is installed, and the message tells you what to do.
+- `always`: installs without asking. `never`: never installs.
+- `--install` and `--no-install` override the setting for one run.
+- `ssj attach`, `ssj list`, and `ssj kill` never install anything.
 
 ## Usage
 
@@ -37,8 +52,9 @@ ssj kill [ID] user@host             # end a session
 ssj --server-path ~/bin/ssj-server user@host
 ssj --ssh-command 'ssh -J jump' user@host
 ssj --udp-host 203.0.113.7 user@host  # UDP address when it differs from the host name
+ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
-ssj install user@host               # upload the server (planned)
+ssj install user@host               # upload the server file to the host
 ```
 
 ### Ending and leaving a session

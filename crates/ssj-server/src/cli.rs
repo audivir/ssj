@@ -20,6 +20,8 @@ pub enum Mode {
     Attach(Option<SessionId>),
     /// Print the running sessions.
     List,
+    /// Print the version and the protocol.
+    Version,
     /// End a running session.
     Kill(Option<SessionId>),
 }
@@ -128,6 +130,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 out.mode = Mode::Kill(session_id(&mut args).map_err(|e| format!("--kill: {e}"))?)
             }
             "--list" => out.mode = Mode::List,
+            "--version" => out.mode = Mode::Version,
             "--port-range" => {
                 let value = args.next().ok_or("--port-range needs a value")?;
                 out.port_range = parse_port_range(&value.to_string_lossy())

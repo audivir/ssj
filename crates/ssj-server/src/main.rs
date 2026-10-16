@@ -5,6 +5,14 @@ use ssj_server::{control_cli, launch};
 
 fn main() -> ExitCode {
     match cli::parse(std::env::args_os().skip(1)) {
+        Ok(args) if args.mode == Mode::Version => {
+            println!(
+                "ssj-server {} protocol {}",
+                env!("CARGO_PKG_VERSION"),
+                ssj_proto::PROTOCOL
+            );
+            ExitCode::SUCCESS
+        }
         Err(message) => {
             eprintln!("ssj-server: {message}");
             ExitCode::from(2)

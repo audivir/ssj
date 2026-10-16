@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::cli::{Args, ServerPath, default_server_file};
+use crate::cli::{Args, ServerPath};
 
 /// Time for the whole bootstrap, which includes typing a passphrase.
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -20,23 +20,43 @@ pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
-/// The command line that the remote shell runs: the server, its arguments, and `extra`.
-pub fn remote_command(args: &Args, extra: &[String]) -> String {
-    let program = match &args.server_path {
-        ServerPath::Default => {
-            format!(
-                "\"${{XDG_DATA_HOME:-$HOME/.local/share}}/ssj/bin/{}\"",
-                default_server_file()
-            )
-        }
-        ServerPath::Custom(path) => shell_quote(path),
-    };
-    let mut command = program;
-    for arg in args.server_args.iter().chain(extra) {
+/// Text that the wrapper prints, and the exit code it uses, when the server file is missing.
+pub const MISSING_MARKER: &str = "SSJ MISSING";
+pub const MISSING_EXIT_CODE: i32 = 66;
+
+/// Starts the server file of this protocol if it exists. The arguments follow in `"$@"`.
+const WRAPPER: &str = r#"p="${XDG_DATA_HOME:-$HOME/.local/share}/ssj/bin/ssj-server-p__PROTOCOL__"
+if [ -x "$p" ]; then exec "$p" "$@"; fi
+echo 'SSJ MISSING'
+exit 66"#;
+
+/// A command for the remote login shell that runs `script` with POSIX `sh`, whatever that shell is.
+pub fn sh_command(script: &str, args: &[String]) -> String {
+    let mut command = format!("sh -c {} ssj", shell_quote(script));
+    for arg in args {
         command.push(' ');
         command.push_str(&shell_quote(arg));
     }
     command
+}
+
+/// The command line that the remote shell runs: the server, its arguments, and `extra`.
+pub fn remote_command(args: &Args, extra: &[String]) -> String {
+    let all: Vec<String> = args.server_args.iter().chain(extra).cloned().collect();
+    match &args.server_path {
+        ServerPath::Default => sh_command(
+            &WRAPPER.replace("__PROTOCOL__", &ssj_proto::PROTOCOL.to_string()),
+            &all,
+        ),
+        ServerPath::Custom(path) => {
+            let mut command = shell_quote(path);
+            for arg in &all {
+                command.push(' ');
+                command.push_str(&shell_quote(arg));
+            }
+            command
+        }
+    }
 }
 
 /// What a command on the remote host produced.
@@ -53,36 +73,56 @@ impl Remote {
     }
 }
 
-/// Runs the server with `extra` arguments through `ssh` and collects its output.
-pub async fn run_remote(args: &Args, extra: &[String], stdin_text: &str) -> Result<Remote, String> {
+impl Remote {
+    /// Whether the wrapper reported that the server file is not installed.
+    pub fn server_missing(&self) -> bool {
+        self.status.code() == Some(MISSING_EXIT_CODE)
+            && self
+                .stdout
+                .split(|b| *b == b'\n')
+                .any(|line| line == MISSING_MARKER.as_bytes())
+    }
+}
+
+/// Runs `command` through `ssh` with `stdin` as its input and collects the output.
+pub async fn run_remote_command(
+    args: &Args,
+    command: &str,
+    stdin: Vec<u8>,
+) -> Result<Remote, String> {
     if args.destination.starts_with('-') {
         return Err("the destination must not start with '-'".to_owned());
     }
-    let mut command = Command::new(&args.ssh_command[0]);
+    let mut ssh = Command::new(&args.ssh_command[0]);
     // `-T`: no terminal, so that the output is not altered. `--`: no option injection.
-    command
-        .args(&args.ssh_command[1..])
+    ssh.args(&args.ssh_command[1..])
         .args(["-T", "--"])
         .arg(&args.destination)
-        .arg(remote_command(args, extra))
+        .arg(command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = command
+    let mut child = ssh
         .spawn()
         .map_err(|e| format!("cannot run {}: {e}", args.ssh_command[0]))?;
 
-    let mut stdin = child.stdin.take().expect("piped");
-    // the server may fail before it reads its input, which shows up in its error output
-    let _ = stdin.write_all(stdin_text.as_bytes()).await;
-    drop(stdin);
-
+    let mut input = child.stdin.take().expect("piped");
     let mut stdout = child.stdout.take().expect("piped").take(MAX_OUTPUT as u64);
     let mut stderr = child.stderr.take().expect("piped").take(4096);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let finished = timeout(BOOTSTRAP_TIMEOUT, async {
-        let _ = tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err));
+        // writing and reading run side by side, so that a large upload cannot block on output
+        let write = async move {
+            // the remote side may stop reading early, which shows up in its error output
+            let _ = input.write_all(&stdin).await;
+            drop(input);
+        };
+        let _ = tokio::join!(
+            write,
+            stdout.read_to_end(&mut out),
+            stderr.read_to_end(&mut err)
+        );
         child.wait().await
     })
     .await;
@@ -97,6 +137,24 @@ pub async fn run_remote(args: &Args, extra: &[String], stdin_text: &str) -> Resu
     }
 }
 
+/// Runs the server with `extra` arguments through `ssh` and collects its output.
+pub async fn run_remote(args: &Args, extra: &[String], stdin_text: &str) -> Result<Remote, String> {
+    run_remote_command(
+        args,
+        &remote_command(args, extra),
+        stdin_text.as_bytes().to_vec(),
+    )
+    .await
+}
+
+/// Why the server could not be started.
+#[derive(Debug)]
+pub enum StartError {
+    /// The server file of this protocol is not on the host.
+    Missing,
+    Failed(String),
+}
+
 /// Starts the server, or attaches to one that runs, and returns its connection data.
 ///
 /// `extra` holds the arguments for the attach case; the client fingerprint goes in on stdin.
@@ -104,14 +162,19 @@ pub async fn start_server(
     args: &Args,
     client_fingerprint: &[u8; 32],
     extra: &[String],
-) -> Result<Connect, String> {
-    let remote = run_remote(args, extra, &format_pin(client_fingerprint)).await?;
+) -> Result<Connect, StartError> {
+    let remote = run_remote(args, extra, &format_pin(client_fingerprint))
+        .await
+        .map_err(StartError::Failed)?;
+    if remote.server_missing() {
+        return Err(StartError::Missing);
+    }
     match parse_connect(&remote.stdout) {
         Ok(Some(connect)) if remote.status.success() => Ok(connect),
-        _ => Err(format!(
+        _ => Err(StartError::Failed(format!(
             "could not start the server ({}): {}",
             remote.status,
             remote.error_text()
-        )),
+        ))),
     }
 }

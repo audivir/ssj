@@ -103,6 +103,6 @@ pub fn run(args: &Args) -> ExitCode {
                 },
             }
         }
-        Mode::Serve => unreachable!("handled by the caller"),
+        Mode::Serve | Mode::Version => unreachable!("handled by the caller"),
     }
 }

@@ -1,6 +1,10 @@
 //! Command line of `ssj`.
 
+use std::path::PathBuf;
+
 use ssj_proto::{EnvFilter, PROTOCOL, SessionId};
+
+use crate::config::AutoInstall;
 
 /// Where the server file is, as seen on the remote host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,6 +24,8 @@ pub enum Command {
     Attach(Option<SessionId>),
     /// Print the sessions on the host.
     List,
+    /// Put the server on the host.
+    Install,
     /// End a session on the host.
     Kill(Option<SessionId>),
 }
@@ -37,6 +43,12 @@ pub struct Args {
     /// Host name or address for the UDP connection when it differs from the destination.
     pub udp_host: Option<String>,
     pub send_env: EnvFilter,
+    /// Overrides the setting of the config file.
+    pub auto_install: Option<AutoInstall>,
+    /// Directory with the files `ssj-server-<build>` for uploads.
+    pub server_dir: Option<PathBuf>,
+    /// The server file to upload, whatever the system of the host is.
+    pub server_binary: Option<PathBuf>,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
 }
@@ -57,6 +69,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut server_args = Vec::new();
     let mut udp_host = None;
     let mut send_env: Option<Vec<String>> = None;
+    let mut auto_install = None;
+    let mut server_dir = None;
+    let mut server_binary = None;
     let mut escape = Some(b'~');
 
     let mut args = args.into_iter();
@@ -83,6 +98,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                     value("--detached-timeout")?,
                 ]);
             }
+            "--install" => auto_install = Some(AutoInstall::Always),
+            "--no-install" => auto_install = Some(AutoInstall::Never),
+            "--server-dir" => server_dir = Some(PathBuf::from(value("--server-dir")?)),
+            "--server-binary" => server_binary = Some(PathBuf::from(value("--server-binary")?)),
             "--udp-host" => udp_host = Some(value("--udp-host")?),
             "--escape-char" => {
                 let text = value("--escape-char")?;
@@ -109,23 +128,28 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         .filter(|_| positionals.len() > 1)
         .map(String::as_str);
     let (command, destination) = match command_word {
-        Some(word @ ("list" | "attach" | "kill")) => {
+        Some(word @ ("list" | "attach" | "kill" | "install")) => {
             let rest = &positionals[1..];
             let (id, destination) = match rest {
                 [destination] => (None, destination.clone()),
-                [id, destination] if word != "list" => (
+                [id, destination] if word == "attach" || word == "kill" => (
                     Some(SessionId::parse(id).ok_or("not a valid session id")?),
                     destination.clone(),
                 ),
                 _ => {
                     return Err(format!(
                         "usage: ssj {word} {}user@host",
-                        if word == "list" { "" } else { "[ID] " }
+                        if matches!(word, "attach" | "kill") {
+                            "[ID] "
+                        } else {
+                            ""
+                        }
                     ));
                 }
             };
             let command = match word {
                 "list" => Command::List,
+                "install" => Command::Install,
                 "attach" => Command::Attach(id),
                 _ => Command::Kill(id),
             };
@@ -152,6 +176,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         server_args,
         udp_host,
         send_env,
+        auto_install,
+        server_dir,
+        server_binary,
         escape,
     })
 }

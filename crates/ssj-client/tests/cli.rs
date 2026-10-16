@@ -72,7 +72,7 @@ fn remote_command_survives_the_remote_shell_unchanged() {
     }
     assert!(!std::path::Path::new("/tmp/ssj-injected").exists());
 
-    let mut parsed = args(&[
+    let parsed = args(&[
         "--server-path",
         "/opt/it's/ssj-server",
         "--server-arg",
@@ -84,11 +84,55 @@ fn remote_command_survives_the_remote_shell_unchanged() {
         remote_command(&parsed, &[]),
         r"'/opt/it'\''s/ssj-server' 'a b'"
     );
-    parsed.server_path = ServerPath::Default;
-    assert!(
-        remote_command(&parsed, &[])
-            .starts_with("\"${XDG_DATA_HOME:-$HOME/.local/share}/ssj/bin/ssj-server-p1\"")
+}
+
+// The default command is run by the remote login shell like this, so the test uses a real shell.
+#[test]
+fn default_command_runs_the_installed_file_or_reports_it_missing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = std::path::PathBuf::from(format!("/tmp/ssjt-cli-{}", std::process::id()));
+    let bin = data.join("ssj/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let run = |args: &Args| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(remote_command(args, &["--attach".to_owned()]))
+            .env("XDG_DATA_HOME", &data)
+            .output()
+            .unwrap()
+    };
+    let mut parsed = args(&["--server-arg", "a b; touch /tmp/ssj-injected", "host"]).unwrap();
+    assert_eq!(parsed.server_path, ServerPath::Default);
+
+    // nothing installed: a marker and a code that the client can tell apart from other failures
+    let missing = run(&parsed);
+    assert_eq!(missing.status.code(), Some(66));
+    assert_eq!(String::from_utf8_lossy(&missing.stdout), "SSJ MISSING\n");
+
+    // installed: the file runs, and every argument arrives as one word
+    let file = bin.join("ssj-server-p1");
+    std::fs::write(
+        &file,
+        "#!/bin/sh\nfor a in \"$@\"; do echo \"arg:$a\"; done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let ran = run(&parsed);
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "arg:a b; touch /tmp/ssj-injected\narg:--attach\n"
     );
+    assert!(!std::path::Path::new("/tmp/ssj-injected").exists());
+
+    // a file that is not executable counts as missing
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(run(&parsed).status.code(), Some(66));
+
+    // a path given by the user is used as it is, without the wrapper
+    parsed.server_path = ServerPath::Custom("/nonexistent/ssj-server".to_owned());
+    assert_eq!(run(&parsed).status.code(), Some(127));
+    std::fs::remove_dir_all(&data).unwrap();
 }
 
 #[test]

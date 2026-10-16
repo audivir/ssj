@@ -20,9 +20,11 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
-use crate::bootstrap::{run_remote, start_server};
+use crate::bootstrap::{StartError, run_remote, start_server};
 use crate::cli::{Args, Command};
+use crate::config::Config;
 use crate::escape::{Action, EscapeFilter, HELP};
+use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::status::{LineStatus, Status, TitleStatus};
 use crate::terminal::{RawMode, window_size};
 
@@ -113,15 +115,67 @@ async fn resolve(args: &Args, port: u16) -> Result<SocketAddr, String> {
 }
 
 async fn session(args: Args) -> u8 {
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(message) => {
+            eprintln!("ssj: {message}");
+            return 2;
+        }
+    };
     match args.command.clone() {
-        Command::Connect => connect_session(args, &[], false).await,
+        Command::Connect => connect_session(args, &config, &[], false).await,
         Command::Attach(id) => {
             let mut extra = vec!["--attach".to_owned()];
             extra.extend(id.map(|id| id.as_str().to_owned()));
-            connect_session(args, &extra, true).await
+            connect_session(args, &config, &extra, true).await
         }
         Command::List => list_sessions(&args).await,
         Command::Kill(id) => kill_session(&args, id).await,
+        Command::Install => match install(&args).await {
+            Ok(path) => {
+                println!("installed {path}");
+                0
+            }
+            Err(message) => {
+                eprintln!("ssj: {message}");
+                1
+            }
+        },
+    }
+}
+
+/// Starts the server. If it is missing, installs it when the policy and the user agree.
+async fn start_or_install(
+    args: &Args,
+    config: &Config,
+    fingerprint: &[u8; 32],
+    extra: &[String],
+    attach: bool,
+) -> Result<Connect, String> {
+    match start_server(args, fingerprint, extra).await {
+        Ok(connect) => Ok(connect),
+        Err(StartError::Failed(message)) => Err(message),
+        Err(StartError::Missing) if attach => Err(format!(
+            "ssj-server is not installed on {}, so no session runs there",
+            args.destination
+        )),
+        Err(StartError::Missing) => {
+            let policy = args.auto_install.unwrap_or(config.auto_install);
+            match decide(policy, &args.destination, interactive(), confirm) {
+                Decision::Skip(message) => Err(message),
+                Decision::Install => {
+                    let path = install(args).await?;
+                    eprintln!("ssj: installed {path}");
+                    match start_server(args, fingerprint, extra).await {
+                        Ok(connect) => Ok(connect),
+                        Err(StartError::Missing) => {
+                            Err("the server is still missing after the installation".to_owned())
+                        }
+                        Err(StartError::Failed(message)) => Err(message),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -145,6 +199,13 @@ fn state_word(state: SessionState) -> &'static str {
 
 async fn list_sessions(args: &Args) -> u8 {
     let remote = match run_remote(args, &["--list".to_owned()], "").await {
+        Ok(remote) if remote.server_missing() => {
+            println!(
+                "no sessions (ssj-server is not installed on {})",
+                args.destination
+            );
+            return 0;
+        }
         Ok(remote) if remote.status.success() => remote,
         Ok(remote) => {
             eprintln!(
@@ -187,6 +248,13 @@ async fn kill_session(args: &Args, id: Option<ssj_proto::SessionId>) -> u8 {
     let mut extra = vec!["--kill".to_owned()];
     extra.extend(id.map(|id| id.as_str().to_owned()));
     match run_remote(args, &extra, "").await {
+        Ok(remote) if remote.server_missing() => {
+            eprintln!(
+                "ssj: no running session (ssj-server is not installed on {})",
+                args.destination
+            );
+            1
+        }
         Ok(remote) if remote.status.success() => {
             println!("session ended");
             0
@@ -202,10 +270,11 @@ async fn kill_session(args: &Args, id: Option<ssj_proto::SessionId>) -> u8 {
     }
 }
 
-async fn connect_session(args: Args, extra: &[String], attach: bool) -> u8 {
+async fn connect_session(args: Args, config: &Config, extra: &[String], attach: bool) -> u8 {
     let identity = Identity::generate();
     let prepared = async {
-        let connect = start_server(&args, &identity.fingerprint(), extra).await?;
+        let connect =
+            start_or_install(&args, config, &identity.fingerprint(), extra, attach).await?;
         let env = local_env(&args)?;
         let addr = resolve(&args, connect.port).await?;
         Ok::<_, String>((connect, env, addr))

@@ -2,7 +2,9 @@
 
 pub mod bootstrap;
 pub mod cli;
+pub mod config;
 pub mod escape;
+pub mod install;
 pub mod run;
 pub mod status;
 pub mod terminal;
