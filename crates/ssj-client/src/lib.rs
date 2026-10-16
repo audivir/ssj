@@ -5,7 +5,6 @@ pub mod cli;
 pub mod config;
 pub mod escape;
 pub mod install;
-pub mod manifest_slot;
 pub mod run;
 pub mod status;
 pub mod terminal;

@@ -27,9 +27,8 @@ cargo install --path crates/ssj-server
 Put the server file for the host next to `ssj` (a release archive does this), then let
 `ssj install user@host` upload it to `~/.local/share/ssj/bin/ssj-server-p1`. No root is needed.
 The upload is checked with SHA-256 on the host, tested by running it, and only then moved into
-place, so a broken transfer never replaces a working server. A client from a release also
-carries the digests of the server files and refuses a file that does not match them, so a swapped
-file is not uploaded. A development build has no digests and says so.
+place, so a broken transfer never replaces a working server.
+Check the downloaded files against `SHA256SUMS` of the release before you use them.
 
 When the server is missing, `ssj user@host` offers to install it, as set by `auto_install` in
 `$XDG_CONFIG_HOME/ssj/client.toml`:

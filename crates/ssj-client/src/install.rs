@@ -132,52 +132,6 @@ mv -f "$tmp" "$dir/ssj-server-p__PROTOCOL__"
 trap - EXIT
 echo "SSJ INSTALLED $dir/ssj-server-p__PROTOCOL__""#;
 
-/// Compares the digest of the file with the one this client was released with.
-///
-/// A client from a release has the digests of all server files inside, so a file from another
-/// release, a damaged one, or a swapped one is refused. A build that was not patched has none, and
-/// an explicit `--server-binary` is the choice of the user, so both go ahead with a note.
-fn check_against_manifest(
-    args: &Args,
-    target: Target,
-    digest: &str,
-    file: &std::path::Path,
-) -> Result<(), String> {
-    let manifest = crate::manifest_slot::embedded()?;
-    let recorded = manifest
-        .lookup(target.triple())
-        .map(|d| ssj_manifest::hex(&d));
-    if args.server_binary.is_some() {
-        if recorded.as_deref() != Some(digest) {
-            eprintln!(
-                "ssj: note: {} is not checked against the manifest of this client",
-                file.display()
-            );
-        }
-        return Ok(());
-    }
-    if manifest.is_empty() {
-        eprintln!(
-            "ssj: warning: this client has no manifest of server digests (a development build), \
-             so {} is not checked against a release",
-            file.display()
-        );
-        return Ok(());
-    }
-    match recorded {
-        Some(expected) if expected == digest => Ok(()),
-        Some(expected) => Err(format!(
-            "{} does not match the digest that this client was released with (expected {expected}, \
-             found {digest}); it may belong to another release, or it was changed",
-            file.display()
-        )),
-        None => Err(format!(
-            "this client has no digest for the build {}",
-            target.triple()
-        )),
-    }
-}
-
 /// Uploads the server file for the host and returns the path it was installed at.
 pub async fn install(args: &Args) -> Result<String, String> {
     let target = detect_target(args).await?;
@@ -195,7 +149,6 @@ pub async fn install(args: &Args) -> Result<String, String> {
         std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
 
     let digest = sha256_hex(&binary);
-    check_against_manifest(args, target, &digest, &file)?;
 
     let mut stdin = format!("{digest}\n").into_bytes();
     stdin.extend_from_slice(&binary);

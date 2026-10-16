@@ -13,7 +13,6 @@ name = "ssj"
 path = "src/main.rs"
 
 [dependencies]
-ssj-manifest.workspace = true
 ssj-proto.workspace = true
 ssj-net.workspace = true
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
@@ -23,6 +22,4 @@ sha2 = "0.11.1"
 
 [dev-dependencies]
 ssj-server.workspace = true
-ssj-manifest-tool.workspace = true
-ssj-manifest.workspace = true
 pty-process = "0.5.3"
