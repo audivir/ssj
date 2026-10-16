@@ -31,8 +31,8 @@ the workspace root):
 ### Bootstrap
 
 1. Client generates an ephemeral keypair and self-signed certificate.
-2. Client runs `ssh user@host ssj-server` (existing `ssh` handles authentication, host keys, and
-   jump hosts) and sends the fingerprint of its certificate on stdin. Stdin is used because argv
+2. Client runs `ssh user@host <server path>` (see Installation of the server; existing `ssh`
+   handles authentication, host keys, and jump hosts) and sends the fingerprint of its certificate on stdin. Stdin is used because argv
    is visible to other users in `ps`.
 3. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
    range, prints port and server certificate fingerprint on stdout, and detaches from the `ssh`
@@ -77,6 +77,94 @@ Findings of the M0 spike (`crates/ssj-spike`, removed after M1 absorbs the code)
 - Client input is also numbered and acknowledged, so no keystroke is lost or duplicated.
 - The server exits when the shell exits or after a configurable detached timeout (default off
   for the shell, on for the pinned client fingerprint before the first connect).
+
+### Protocol version
+
+There is no backward compatibility, which keeps the code small. Every binary speaks exactly one
+protocol version, and two peers talk only if their versions are equal.
+
+- The protocol version is an integer `N` with a single source, the constant `PROTOCOL` in
+  `ssj-proto`. It appears in the ALPN identifier `ssj/N` (the only one a peer offers or accepts)
+  and in the name of the server file (see Installation of the server).
+- `N` is increased whenever the wire format or its meaning changes in a way that an older peer
+  would not understand: a changed or removed frame, a changed field, a new frame, a new
+  handshake step. Changes that do not touch the wire format (client behavior, terminal handling,
+  messages) leave `N` alone.
+- A golden test keeps this honest: it encodes every frame variant and compares the bytes with the
+  stored file `tests/golden/protocol-<N>.bin`. A change of the wire format makes the test fail
+  until the developer increases `PROTOCOL` and stores a new golden file. Increasing `PROTOCOL`
+  without a new file fails the same test, because the file is missing.
+- `PROTOCOLS.md` is the table of releases: one row per release with its version and protocol.
+  It is checked by the release workflow, which fails if the version being released is missing or
+  its row differs from `PROTOCOL`. The client uses the table only for messages. When a handshake
+  fails with `no_application_protocol`, the client says which release speaks its protocol, for
+  example "client 0.4.0 speaks protocol 3, install it on the host with `ssj install`".
+- The bootstrap line `SSJ CONNECT` has no version of its own and is covered by `N`.
+
+### Installation of the server
+
+The server needs no root: it is one file in the home directory of the user.
+
+Location and name:
+
+- `$XDG_DATA_HOME/ssj/bin/ssj-server-p<N>` (default `~/.local/share/ssj/bin/`), where `N` is the
+  protocol version, not the version of the binary. A host that serves clients of different
+  protocol versions therefore has several files side by side, one per protocol, and each client
+  uses its own.
+- Installing a newer release with the same protocol replaces the file of that protocol by atomic
+  rename, which does not disturb a running session, since the running process keeps its old file.
+- The client starts the server by this absolute path and does not rely on `PATH`, because the
+  `PATH` of a non-interactive `ssh` command often lacks `~/.local/bin`. `--server-path` overrides
+  the location for servers installed elsewhere (for example by an administrator).
+- A session stays on the protocol it was started with. After updating the client to a newer
+  protocol, the old sessions are attached with an older client or ended. `ssj --list` shows the
+  protocol of each session, and the attach error says which release to use.
+- `ssj gc user@host` removes server files of protocols that have no running session, except the
+  protocol of the client that runs the command.
+
+Two ways to get it there:
+
+1. Explicit (v1): `ssj install user@host` uploads the matching binary. This is the recommended
+   default, since it is one visible step.
+2. Automatic, on first use (optional, after v1): when the server file of the protocol of the client
+   is missing, the client offers to install it, and with `--auto-install` it does so without asking.
+   It never installs silently by default.
+
+How the upload works:
+
+1. The client runs `ssh user@host uname -sm` (no shell startup output is trusted, the answer is
+   matched against a fixed list) and picks the target: Linux x86_64 or arm64, or macOS arm64.
+   Linux targets use the static `musl` build, which runs on any distribution regardless of the
+   `glibc` version. Other answers abort with a clear message.
+2. The binaries for all five targets are known to the client by SHA-256 digest through a manifest
+   that is compiled into the client. The binaries themselves are either bundled with the client
+   or downloaded from the GitHub release of the same version, and the digest is checked before
+   anything is sent.
+3. The client streams the file over `ssh` into a temporary file in the target directory (created
+   with `umask 077`), and the remote side runs `sha256sum` (or `shasum -a 256` on macOS) on it.
+   Only if the digest matches the manifest, the file is made executable and renamed into place
+   atomically. Otherwise it is deleted and the install fails.
+4. The file name contains the protocol, so a present file is by definition the right one. The
+   client does not compare binary versions. Whether the present file is current is irrelevant
+   unless the user asks for an update with `ssj install --force`.
+
+Failure cases, each with a clear message:
+
+- The directory is on a `noexec` mount. The client reports the directory and suggests
+  `--server-path` or another `XDG_DATA_HOME`.
+- The remote has no `sha256sum` or `shasum`. The install is refused, since it cannot be verified.
+- No write permission or no space. The upload is deleted.
+- The remote architecture is not in the list.
+
+Security notes:
+
+- Executing an uploaded file adds no privilege: it runs as the same user that `ssh` already gives
+  a shell to.
+- The digest check protects against corruption and a tampered download. It does not protect
+  against a compromised release, so releases are published with checksums and artifact
+  attestations (see Supply chain).
+- The client never executes a downloaded binary locally and never installs anything on the local
+  machine except through the normal installation of the client.
 
 ### Attach and restart
 
@@ -275,8 +363,8 @@ Supply chain:
   fails to read the current lockfile, so new dependencies are reviewed by hand instead.
 - Release binaries get checksums and GitHub artifact attestations, because they run on remote
   hosts.
-- The protocol version is part of the ALPN string. A server and client of different versions
-  refuse each other with a clear message.
+- The protocol version is part of the ALPN string (see Protocol version). Peers with different
+  versions refuse each other with a clear message.
 
 Inherent to any remote shell and not mitigated: terminal escape sequences in the output of the
 remote host (title changes, clipboard writes through OSC 52). This is the same exposure as `ssh`.
@@ -310,6 +398,12 @@ UDP phase:
 - macOS target: arm64 only (one release binary).
 - Release binaries are cross-compiled with `cargo-zigbuild` (Linux targets) and built natively
   on macOS. Each target ships `ssj` and `ssj-server`.
+- Automatic installs use the static `musl` build, because it runs on every distribution. The
+  `glibc` builds are published for packages and for those who want them. Performance is expected
+  to be the same: the work is network I/O and encryption, and `ring` brings its own assembly for
+  the ciphers, so the C library hardly matters. This is to be measured, not assumed: CI runs the
+  paste and throughput tests on both builds, and `glibc` becomes the default only if it is
+  clearly faster (more than 10 percent) in a test on a real link.
 - Server code uses only portable POSIX calls (via `rustix`), so no Linux-only APIs such as
   `epoll` or `/proc` outside of optional, feature-gated code.
 

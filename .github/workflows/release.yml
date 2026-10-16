@@ -13,6 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - name: Check that PROTOCOLS.md lists this release with the current protocol
+        if: github.event_name == 'release'
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          protocol="$(sed -n 's/^pub const PROTOCOL: u16 = \([0-9][0-9]*\);/\1/p' crates/ssj-proto/src/lib.rs)"
+          if ! grep -Eq "^\| ${tag_version//./\\.} +\| ${protocol} +\|" PROTOCOLS.md; then
+            echo "::error::PROTOCOLS.md has no row for release $tag_version with protocol $protocol"
+            exit 1
+          fi
       - name: Check that the release tag matches the package version
         if: github.event_name == 'release'
         run: |

@@ -33,3 +33,17 @@ path = "fuzz_targets/replay_model.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parse_connect"
+path = "fuzz_targets/parse_connect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "env_filter"
+path = "fuzz_targets/env_filter.rs"
+test = false
+doc = false
+bench = false
