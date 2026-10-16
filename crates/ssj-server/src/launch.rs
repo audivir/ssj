@@ -202,6 +202,7 @@ async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
             match event {
                 // nobody can connect anymore, and the next attach opens a new endpoint
                 SessionEvent::Detached => closing.close(0u8.into(), b"detached"),
+                SessionEvent::Connected | SessionEvent::Disconnected => {}
             }
         }
     });

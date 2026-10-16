@@ -7,7 +7,7 @@ use ssj_proto::{
 };
 use ssj_server::backend::Direct;
 use ssj_server::session::{
-    Connection, Session, SessionConfig, SessionEnd, SessionEvent, SpawnTemplate,
+    Connection, Session, SessionCommand, SessionConfig, SessionEnd, SessionEvent, SpawnTemplate,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
@@ -476,12 +476,8 @@ async fn deliberate_detach_disables_the_timeout_until_the_next_connection() {
     let mut client = harness.connect().await;
     client.start().await;
     client.send(ClientFrame::Detach).await;
-    assert_eq!(
-        timeout(Duration::from_secs(5), events.recv())
-            .await
-            .unwrap(),
-        Some(SessionEvent::Detached)
-    );
+    assert_eq!(next_event(&mut events).await, SessionEvent::Connected);
+    assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
 
     // several times the timeout later the session still runs
     assert!(
@@ -520,5 +516,115 @@ async fn ping_is_answered_while_the_shell_is_stuck() {
         client.send(ClientFrame::Ping).await;
         let seen = client.read_until(|s| s.pongs >= 1).await;
         assert_eq!(seen.pongs, 1);
+    }
+}
+
+async fn next_event(events: &mut mpsc::UnboundedReceiver<SessionEvent>) -> SessionEvent {
+    timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn events_follow_the_state_of_the_client() {
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (conns, rx) = mpsc::channel(4);
+    let _session = tokio::spawn(
+        Session::new(Direct, config("cat"))
+            .with_events(events_tx)
+            .run(rx),
+    );
+    let harness = Harness {
+        conns,
+        session: tokio::spawn(async { SessionEnd::Closed }),
+    };
+
+    // a connection that never completes its hello is not reported
+    let mut bad = harness.connect().await;
+    bad.send_raw(b"\xff\xff\xff\xff garbage").await;
+    bad.read_until(|_| false).await;
+
+    let mut client = harness.connect().await;
+    client.start().await;
+    assert_eq!(next_event(&mut events).await, SessionEvent::Connected);
+
+    drop(client);
+    assert_eq!(next_event(&mut events).await, SessionEvent::Disconnected);
+
+    let mut again = harness.connect().await;
+    again
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    assert_eq!(next_event(&mut events).await, SessionEvent::Connected);
+    again.send(ClientFrame::Detach).await;
+    // a deliberate detach is its own event and not also a loss
+    assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
+}
+
+#[tokio::test]
+async fn kill_hangs_up_the_shell_and_tells_the_client() {
+    let (commands, commands_rx) = mpsc::unbounded_channel();
+    let (conns, rx) = mpsc::channel(4);
+    let session = tokio::spawn(
+        Session::new(Direct, config("sleep 60"))
+            .with_commands(commands_rx)
+            .run(rx),
+    );
+    let harness = Harness {
+        conns,
+        session: tokio::spawn(async { SessionEnd::Closed }),
+    };
+    let mut client = harness.connect().await;
+    client.start().await;
+
+    let started = std::time::Instant::now();
+    commands.send(SessionCommand::Kill).unwrap();
+    let seen = client.read_until(|s| s.exit.is_some()).await;
+
+    // SIGHUP from the closing terminal, not the five seconds of patience
+    assert_eq!(seen.exit, Some(ExitStatus::Signal(1)));
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    let end = timeout(Duration::from_secs(10), session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(end, SessionEnd::Killed));
+}
+
+#[tokio::test]
+async fn kill_works_without_a_client_and_without_a_shell() {
+    for connect_first in [false, true] {
+        let (commands, commands_rx) = mpsc::unbounded_channel();
+        let (conns, rx) = mpsc::channel(4);
+        let session = tokio::spawn(
+            Session::new(Direct, config("cat"))
+                .with_commands(commands_rx)
+                .run(rx),
+        );
+        let harness = Harness {
+            conns,
+            session: tokio::spawn(async { SessionEnd::Closed }),
+        };
+        let _client = if connect_first {
+            let mut client = harness.connect().await;
+            client.start().await;
+            Some(client)
+        } else {
+            None
+        };
+        commands.send(SessionCommand::Kill).unwrap();
+        let end = timeout(Duration::from_secs(10), session)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(end, SessionEnd::Killed),
+            "connect_first={connect_first}"
+        );
     }
 }

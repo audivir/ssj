@@ -335,10 +335,18 @@ async fn escape_dot_detaches_and_the_session_keeps_running() {
         .unwrap()
         .unwrap();
     assert_eq!(finished, Ok(Finished::Detached));
-    let event = timeout(Duration::from_secs(10), server.events.recv())
-        .await
-        .unwrap();
-    assert_eq!(event, Some(SessionEvent::Detached));
+    // other events (the client connecting) come first
+    let detached = timeout(Duration::from_secs(10), async {
+        while let Some(event) = server.events.recv().await {
+            if event == SessionEvent::Detached {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap();
+    assert!(detached);
     assert!(
         timeout(Duration::from_millis(500), &mut server.session)
             .await
@@ -371,7 +379,9 @@ async fn escape_dot_works_without_a_connection_so_the_user_is_never_stuck() {
         .unwrap();
     assert_eq!(finished, Ok(Finished::Detached));
     // there was no connection to tell, so the server is not told
-    assert!(server.events.try_recv().is_err());
+    while let Ok(event) = server.events.try_recv() {
+        assert_ne!(event, SessionEvent::Detached);
+    }
 }
 
 // The server consumed input whose acknowledgement never reached the client. After the

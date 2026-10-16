@@ -77,13 +77,26 @@ pub enum SessionEnd {
     Failed(io::Error),
     /// The sender of connections was dropped.
     Closed,
+    /// A command ended the session by hanging up the terminal of the shell.
+    Killed,
 }
 
 /// Changes of the state of the session that the transport needs to know about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionEvent {
+    /// A client completed its handshake.
+    Connected,
+    /// The connected client was lost and may come back.
+    Disconnected,
     /// The client left on purpose. The transport closes its endpoint and drops the pinned client.
     Detached,
+}
+
+/// Orders to the running session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionCommand {
+    /// Hangs up the terminal of the shell, as closing a terminal window would, and ends.
+    Kill,
 }
 
 /// Manages the shell of one session across the connections of its client.
@@ -91,6 +104,7 @@ pub struct Session<B: Backend> {
     backend: B,
     config: SessionConfig,
     events: Option<mpsc::UnboundedSender<SessionEvent>>,
+    commands: Option<mpsc::UnboundedReceiver<SessionCommand>>,
 }
 
 enum Control {
@@ -167,7 +181,14 @@ impl<B: Backend> Session<B> {
             backend,
             config,
             events: None,
+            commands: None,
         }
+    }
+
+    /// Takes [`SessionCommand`]s from `commands`.
+    pub fn with_commands(mut self, commands: mpsc::UnboundedReceiver<SessionCommand>) -> Self {
+        self.commands = Some(commands);
+        self
     }
 
     /// Reports [`SessionEvent`]s on `events`.
@@ -181,6 +202,7 @@ impl<B: Backend> Session<B> {
             backend,
             config,
             events,
+            mut commands,
         } = self;
         let (control_tx, mut control_rx) = mpsc::channel::<Tagged>(64);
         let mut output = ReplayBuffer::new(config.replay_capacity);
@@ -206,6 +228,7 @@ impl<B: Backend> Session<B> {
                 Exited(io::Result<ExitStatus>),
                 CanSend(Result<mpsc::OwnedPermit<ServerFrame>, mpsc::error::SendError<()>>),
                 DetachedTimeout,
+                Command(Option<SessionCommand>),
             }
 
             let free = output.free().min(buf.len());
@@ -249,6 +272,7 @@ impl<B: Backend> Session<B> {
 
                 tokio::select! {
                     conn = conns.recv() => Event::Connection(conn),
+                    command = async { match commands.as_mut() { Some(rx) => rx.recv().await, None => pending().await } } => Event::Command(command),
                     tagged = control_rx.recv() => Event::Control(tagged),
                     data = async { match input { Some(rx) => rx.recv().await, None => pending().await } } => Event::Input(data),
                     n = async { match reader { Some(r) => r.read(&mut buf[..free]).await, None => pending().await } } => Event::ShellOutput(n),
@@ -260,6 +284,27 @@ impl<B: Backend> Session<B> {
             };
 
             match event {
+                Event::Command(None) => commands = None,
+                Event::Command(Some(SessionCommand::Kill)) => {
+                    if let Some(Running {
+                        reader,
+                        writer,
+                        exit,
+                        ..
+                    }) = shell.take()
+                    {
+                        // closing the terminal makes the kernel send SIGHUP to the shell
+                        drop(reader);
+                        drop(writer);
+                        if let Some(exit) = exit {
+                            let _ = tokio::time::timeout(Duration::from_secs(5), exit).await;
+                        }
+                    }
+                    if let Some(a) = active.as_ref().filter(|a| a.hello_done) {
+                        let _ = a.out.try_send(ServerFrame::Exit(WireExit::Signal(1)));
+                    }
+                    return SessionEnd::Killed;
+                }
                 Event::Connection(None) => return SessionEnd::Closed,
                 Event::Connection(Some(conn)) => {
                     generation += 1;
@@ -315,6 +360,9 @@ impl<B: Backend> Session<B> {
                                         }
                                     }
                                     a.hello_done = true;
+                                    if let Some(events) = &events {
+                                        let _ = events.send(SessionEvent::Connected);
+                                    }
                                     a.output_sent = welcome.output_offset;
                                     a.input_acked = welcome.input_offset;
                                     let _ = a.out.try_send(ServerFrame::Welcome(welcome));
@@ -328,13 +376,13 @@ impl<B: Backend> Session<B> {
                         }
                         Control::OutputAck(offset) => {
                             if output.ack(offset).is_err() {
-                                violation(&mut active, ErrorCode::Violation);
+                                violation(&mut active, &events, ErrorCode::Violation);
                                 detached_since = Some(Instant::now());
                             }
                         }
                         Control::Close | Control::Lost => {
                             let finished = shell.as_ref().is_some_and(|s| s.exit_queued);
-                            active = None;
+                            lose(&mut active, &events);
                             detached_since = Some(Instant::now());
                             if finished {
                                 let status = shell
@@ -357,7 +405,7 @@ impl<B: Backend> Session<B> {
                             }
                         }
                         Control::Violation(code) => {
-                            violation(&mut active, code);
+                            violation(&mut active, &events, code);
                             detached_since = Some(Instant::now());
                         }
                     }
@@ -398,7 +446,7 @@ impl<B: Backend> Session<B> {
                     }
                 }
                 Event::CanSend(Err(_)) => {
-                    active = None;
+                    lose(&mut active, &events);
                     detached_since = Some(Instant::now());
                 }
                 Event::CanSend(Ok(permit)) => {
@@ -455,11 +503,23 @@ fn wire_exit(status: ExitStatus) -> WireExit {
     }
 }
 
-fn violation(active: &mut Option<Active>, code: ErrorCode) {
+/// Ends the connection and reports it if the client had completed its handshake.
+fn lose(active: &mut Option<Active>, events: &Option<mpsc::UnboundedSender<SessionEvent>>) {
+    let was_connected = active.take().is_some_and(|a| a.hello_done);
+    if let (true, Some(events)) = (was_connected, events) {
+        let _ = events.send(SessionEvent::Disconnected);
+    }
+}
+
+fn violation(
+    active: &mut Option<Active>,
+    events: &Option<mpsc::UnboundedSender<SessionEvent>>,
+    code: ErrorCode,
+) {
     if let Some(a) = active.as_ref() {
         let _ = a.out.try_send(ServerFrame::Error(code));
     }
-    *active = None;
+    lose(active, events);
 }
 
 async fn spawn_shell<B: Backend>(
