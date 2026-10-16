@@ -198,6 +198,47 @@ Re-attach:
 The client keeps the session ID and host in `$XDG_STATE_HOME/ssj/` as a hint. The ID is not a
 secret. `ssj --list user@host` shows the sessions of a host.
 
+### Ending and leaving a session
+
+Ending a session and leaving it are different actions, and only the first one ends the shell.
+
+Ending (the session is over):
+
+- The shell exits: `exit`, Ctrl-D on an empty line, or the shell dying from a signal. The server
+  sends the exit status, the client prints nothing of its own and exits with the same code, and
+  the server process ends. This is what a user expects from `ssh`.
+- `ssj kill [ID] user@host` ends a session from another terminal. The server sends `SIGHUP` to the
+  process group of the shell, as a closing terminal would, and ends after the shell has exited.
+- `SIGTERM` or `SIGINT` to the server process does the same as `ssj kill`.
+- `SIGHUP` to the server process is ignored, because it is sent when the `ssh` channel of the
+  bootstrap closes.
+
+Leaving (the shell keeps running):
+
+- Closing the terminal, or `SIGHUP`, `SIGTERM`, or `SIGINT` to the client, is an accidental or
+  involuntary disconnect. The client just ends, and the session survives, because surviving
+  is the purpose of the tool. The detached timeout applies.
+- An escape key sequence detaches on purpose. As in `ssh`, the escape character `~` counts only
+  at the start of a line (right after a newline or at the start of the session). Then:
+  - `~.` detaches: the client sends `Detach`, prints `[detached from <ID>]`, and exits with code 0.
+  - `~~` sends a literal `~`.
+  - `~?` prints the list of escape sequences.
+  - Any other character after `~` is sent as typed, including the `~`.
+  The escape character is configurable (`--escape-char C` or `escape_char` in `client.toml`),
+  and `none` turns the feature off.
+- `Detach` keeps the session running and **disables the detached timeout** until a client
+  attaches again. The reason is intent: a user who detaches on purpose wants to come back later,
+  for example to a long job, so the server must not end the shell behind their back. After the
+  next attach, losing the connection involuntarily brings the timeout back.
+- The timeout protects against sessions that were forgotten after an accident. Since a detached
+  session without a timeout is a live shell behind an open UDP port, `ssj list user@host` shows
+  all sessions with their state and age, and the server config can set `max_detached` as a hard
+  upper limit even for deliberate detaches (default: none).
+
+Frames: `Detach` is a client frame of its own. `Close` means that the client is done, for
+example after it received the exit status, and a `Close` before the exit is treated as a lost
+connection.
+
 ### Surviving a server process restart (optional, later)
 
 By default the shell is a child of `ssj-server` and ends with it. Two optional backends keep it
@@ -438,6 +479,7 @@ UDP phase:
 
 ## Open questions
 
-1. Default for the detached timeout. With no timeout, a detached server keeps a live shell behind
-   an open UDP port indefinitely. A finite default (for example 7 days) is safer.
+1. Default for the detached timeout, which applies to involuntary disconnects only. With no
+   timeout, a lost client leaves a live shell behind an open UDP port indefinitely. A finite
+   default (for example 7 days) is safer.
 2. Should `ssj-server` refuse to run as root (uid 0), since root is never needed?
