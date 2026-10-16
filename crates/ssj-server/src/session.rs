@@ -99,6 +99,7 @@ enum Control {
     OutputAck(u64),
     Close,
     Detach,
+    Ping,
     Lost,
     Violation(ErrorCode),
 }
@@ -124,6 +125,8 @@ struct Active {
     /// Bytes that may still be queued in `input`.
     budget: Arc<Semaphore>,
     hello_done: bool,
+    /// A `Ping` was received and its `Pong` is not sent yet.
+    pong_due: bool,
     /// Output offset up to which frames were queued for this connection.
     output_sent: u64,
     /// Input offset that was last acknowledged to this client.
@@ -212,7 +215,10 @@ impl<B: Backend> Session<B> {
             };
             let send_due = active.as_ref().is_some_and(|a| {
                 a.hello_done
-                    && (a.input_acked < input_received || a.output_sent < output.end() || exit_due)
+                    && (a.pong_due
+                        || a.input_acked < input_received
+                        || a.output_sent < output.end()
+                        || exit_due)
             });
             let want_input = pending_offset >= pending_input.len();
             let deadline = match (
@@ -337,6 +343,11 @@ impl<B: Backend> Session<B> {
                                 return SessionEnd::ShellExited(status);
                             }
                         }
+                        Control::Ping => {
+                            if let Some(a) = active.as_mut() {
+                                a.pong_due = a.hello_done;
+                            }
+                        }
                         Control::Detach => {
                             active = None;
                             detached_since = Some(Instant::now());
@@ -392,7 +403,10 @@ impl<B: Backend> Session<B> {
                 }
                 Event::CanSend(Ok(permit)) => {
                     let Some(a) = active.as_mut() else { continue };
-                    let frame = if a.input_acked < input_received {
+                    let frame = if a.pong_due {
+                        a.pong_due = false;
+                        ServerFrame::Pong
+                    } else if a.input_acked < input_received {
                         a.input_acked = input_received;
                         ServerFrame::InputAck(input_received)
                     } else if a.output_sent < output.end() {
@@ -502,6 +516,7 @@ fn start_connection(
         input: input_rx,
         budget,
         hello_done: false,
+        pong_due: false,
         output_sent: 0,
         input_acked: 0,
         _reader: AbortOnDrop(reader),
@@ -578,6 +593,7 @@ async fn read_connection(
                 (ClientFrame::OutputAck(offset), true) => send(Control::OutputAck(offset)).await,
                 (ClientFrame::Close, true) => return send(Control::Close).await,
                 (ClientFrame::Detach, true) => return send(Control::Detach).await,
+                (ClientFrame::Ping, true) => send(Control::Ping).await,
             }
         }
         // a header that announces more than a frame may hold is rejected by the decoder, so

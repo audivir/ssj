@@ -286,3 +286,23 @@ fn decoders_do_not_panic_on_random_or_mutated_input() {
         }
     }
 }
+
+#[test]
+fn ping_and_pong_carry_no_body() {
+    assert_eq!(
+        decode_client(&raw(0x07, &[0])).unwrap_err(),
+        DecodeError::TrailingBytes
+    );
+    assert_eq!(
+        decode_server(&raw(0x86, &[0])).unwrap_err(),
+        DecodeError::TrailingBytes
+    );
+    assert_eq!(
+        decode_client(&raw(0x07, &[])),
+        Ok(Some((ClientFrame::Ping, 5)))
+    );
+    assert_eq!(
+        decode_server(&raw(0x86, &[])),
+        Ok(Some((ServerFrame::Pong, 5)))
+    );
+}

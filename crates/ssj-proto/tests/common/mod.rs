@@ -31,6 +31,7 @@ pub fn client_frames() -> Vec<ClientFrame> {
         ClientFrame::OutputAck(12345),
         ClientFrame::Close,
         ClientFrame::Detach,
+        ClientFrame::Ping,
     ]
 }
 
@@ -46,5 +47,6 @@ pub fn server_frames() -> Vec<ServerFrame> {
         ServerFrame::Exit(ExitStatus::Code(3)),
         ServerFrame::Exit(ExitStatus::Signal(9)),
         ServerFrame::Error(ErrorCode::ReplayGap),
+        ServerFrame::Pong,
     ]
 }

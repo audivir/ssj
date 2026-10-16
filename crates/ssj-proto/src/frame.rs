@@ -103,6 +103,8 @@ pub enum ClientFrame {
     Close,
     /// The client leaves on purpose and the session keeps running without a timeout.
     Detach,
+    /// Asks the server to answer with `Pong`, which shows that the path works.
+    Ping,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +115,8 @@ pub enum ServerFrame {
     InputAck(u64),
     Exit(ExitStatus),
     Error(ErrorCode),
+    /// Answer to `Ping`.
+    Pong,
 }
 
 const HELLO: u8 = 0x01;
@@ -121,12 +125,14 @@ const RESIZE: u8 = 0x03;
 const OUTPUT_ACK: u8 = 0x04;
 const CLOSE: u8 = 0x05;
 const DETACH: u8 = 0x06;
+const PING: u8 = 0x07;
 
 const WELCOME: u8 = 0x81;
 const OUTPUT: u8 = 0x82;
 const INPUT_ACK: u8 = 0x83;
 const EXIT: u8 = 0x84;
 const ERROR: u8 = 0x85;
+const PONG: u8 = 0x86;
 
 const HELLO_START: u8 = 0;
 const HELLO_RESUME: u8 = 1;
@@ -267,6 +273,10 @@ impl ClientFrame {
                 out.push(DETACH);
                 Ok(())
             }
+            Self::Ping => {
+                out.push(PING);
+                Ok(())
+            }
         };
         match result {
             Ok(()) => {
@@ -309,6 +319,7 @@ impl ClientFrame {
             OUTPUT_ACK => Self::OutputAck(body.u64()?),
             CLOSE => Self::Close,
             DETACH => Self::Detach,
+            PING => Self::Ping,
             other => return Err(DecodeError::UnknownType(other)),
         };
         body.finish()?;
@@ -347,6 +358,10 @@ impl ServerFrame {
                 out.push(*code as u8);
                 Ok(())
             }
+            Self::Pong => {
+                out.push(PONG);
+                Ok(())
+            }
         };
         match result {
             Ok(()) => {
@@ -377,6 +392,7 @@ impl ServerFrame {
                 })
             }
             ERROR => Self::Error(ErrorCode::from_u8(body.u8()?).ok_or(DecodeError::InvalidValue)?),
+            PONG => Self::Pong,
             other => return Err(DecodeError::UnknownType(other)),
         };
         body.finish()?;

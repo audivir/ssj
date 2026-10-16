@@ -59,6 +59,7 @@ struct Seen {
     error: Option<ErrorCode>,
     welcome: Option<ssj_proto::Welcome>,
     closed: bool,
+    pongs: usize,
 }
 
 impl Harness {
@@ -132,6 +133,7 @@ impl Client {
                 Some(ServerFrame::Exit(status)) => seen.exit = Some(status),
                 Some(ServerFrame::Error(code)) => seen.error = Some(code),
                 Some(ServerFrame::Welcome(welcome)) => seen.welcome = Some(welcome),
+                Some(ServerFrame::Pong) => seen.pongs += 1,
             }
         }
         seen
@@ -503,4 +505,19 @@ async fn deliberate_detach_disables_the_timeout_until_the_next_connection() {
         .unwrap()
         .unwrap();
     assert!(matches!(end, SessionEnd::DetachedTimeout));
+}
+
+// The answer must not wait for the shell: the point of a ping is to show that the path works
+// while the shell is busy or stuck.
+#[tokio::test]
+async fn ping_is_answered_while_the_shell_is_stuck() {
+    let harness = start(config("sleep 30"));
+    let mut client = harness.connect().await;
+    client.start().await;
+
+    client.send(ClientFrame::Ping).await;
+    client.send(ClientFrame::Ping).await;
+    let seen = client.read_until(|s| s.pongs >= 2).await;
+
+    assert!(seen.pongs >= 2);
 }
