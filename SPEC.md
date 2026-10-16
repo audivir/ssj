@@ -187,12 +187,39 @@ How the upload works:
    place by atomic rename. Any failure removes the temporary file.
 4. The file name contains the protocol, so a present file is by definition the right one.
 
-Limit of the digest check: the client computes the digest from the same local file it uploads, so
-the check protects against corruption and truncation on the way, but not against a tampered local
-file. The trust anchor is the file next to the client, which comes from the same release. A
-manifest of digests compiled into the client (so that a swapped server file would be noticed) needs
-the release pipeline to build the servers first. It is planned, together with downloading the file
-from the GitHub release of the same version.
+Trust in the server file: the manifest in the client.
+
+- A release client carries the SHA-256 digests of the server files of the builds it can install
+  (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, and `aarch64-apple-darwin`) in a
+  slot of 3.6 KiB inside the binary. The installer compares the file it is about to upload with
+  the digest of the system of the host and refuses a file that differs, whether it is damaged,
+  from another release, or swapped. Without the manifest, the digest sent to the host would only
+  protect the transfer, since it is computed from the same local file.
+- The slot starts with a marker of 24 bytes, followed by an entry count and up to 8 entries of a
+  name and a digest. The client is built with the slot empty. The crate `ssj-manifest` holds the
+  format, and the client reads its slot with it. The crate `ssj-manifest-tool` finds the slot
+  and fills it, and is never linked into the client.
+- The release pipeline builds all servers first, then each client, then runs
+  `ssj-manifest patch <client> <servers...>` and `ssj-manifest check <client> <servers...>`.
+  Zeroing the slot in the build and overwriting it afterwards means the servers do not need to
+  exist when the client is compiled.
+- The marker must occur exactly once in the client, or the tool refuses the file. The client
+  therefore holds only the slot itself: the marker is split in two halves, the first one stored
+  masked, so that the compiler cannot place two neighbouring constants into a second copy of the
+  marker. A test fails if any build of the client contains the marker twice, and the pipeline
+  stops at the same condition.
+- `ssj-manifest digest <client>` prints the SHA-256 of the client with the content of the slot
+  set to zero. It is the same before and after patching, so builds of one source can be
+  compared although each carries different slot content. The pipeline publishes it per client.
+- On macOS, a patched binary needs a new ad-hoc signature (`codesign --force -s -`), or the
+  system refuses to start it. The signature changes the file, so the digest above is taken before
+  signing, and builds should be compared on Linux or before signing.
+- Not checked against the manifest: an explicit `--server-binary`, which is the choice of the user,
+  and a client that was not patched, such as a development build. Both go ahead with a notice.
+  A client that was patched but has no digest for the build of the host stops.
+- What this does not protect against: a compromised release, since the client and the servers
+  come from the same pipeline, and a client that is replaced as a whole. Checksums and
+  attestations of the release (see Supply chain) cover those.
 
 Failure cases, each with a clear message:
 

@@ -507,7 +507,12 @@ impl Host {
 
     /// Runs `ssj` as a script would, without a terminal, with the words as given.
     fn ssj(&self, ssh: &Path, words: &[&str], input: &str) -> Output {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        self.ssj_with(Path::new(env!("CARGO_BIN_EXE_ssj")), ssh, words, input)
+    }
+
+    /// Like [`Host::ssj`] with another build of the client.
+    fn ssj_with(&self, exe: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
+        let mut child = Command::new(exe)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
@@ -966,4 +971,157 @@ fn only_yes_means_yes() {
         assert_eq!(terminal.exit_code(), Some(1), "{answer:?}");
         assert!(!host.installed().exists(), "{answer:?}");
     }
+}
+
+/// A copy of the client with the digests of the given server files in its slot.
+fn patched_client(entries: &[(&str, &[u8])]) -> PathBuf {
+    use ssj_manifest::{Entry, Manifest, digest};
+
+    let mut bytes = std::fs::read(env!("CARGO_BIN_EXE_ssj")).unwrap();
+    let manifest = Manifest::new(
+        entries
+            .iter()
+            .map(|(name, content)| Entry {
+                name: (*name).to_owned(),
+                digest: digest(content),
+            })
+            .collect(),
+    )
+    .unwrap();
+    ssj_manifest_tool::patch(&mut bytes, &manifest).unwrap();
+    let path = short_dir().join("ssj");
+    std::fs::write(&path, bytes).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // changing a signed binary breaks its signature, and macOS then refuses to run it
+    if cfg!(target_os = "macos") {
+        let status = Command::new("codesign")
+            .args(["--force", "-s", "-"])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "codesign failed");
+    }
+    path
+}
+
+#[test]
+fn built_client_holds_the_slot_exactly_once_and_empty() {
+    let bytes = std::fs::read(env!("CARGO_BIN_EXE_ssj")).unwrap();
+    // a second copy of the marker, such as two constants that end up side by side, would make the
+    // release tool refuse the client
+    ssj_manifest_tool::find_slot(&bytes).expect("exactly one marker");
+    assert!(ssj_manifest_tool::read(&bytes).unwrap().is_empty());
+}
+
+#[test]
+fn patched_client_installs_the_matching_server_and_refuses_every_other_file() {
+    use ssj_manifest::hex;
+
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    let server_file = dir.join(format!("ssj-server-{}", local_build()));
+    let content = std::fs::read(&server_file).unwrap();
+    let client = patched_client(&[(local_build(), &content)]);
+    let install_words = |dir: &Path| {
+        vec![
+            "install".to_owned(),
+            "--server-dir".to_owned(),
+            dir.to_str().unwrap().to_owned(),
+            "user@localhost".to_owned(),
+        ]
+    };
+    let run = |words: &[String]| {
+        host.ssj_with(
+            &client,
+            &ssh,
+            &words.iter().map(String::as_str).collect::<Vec<_>>(),
+            "",
+        )
+    };
+
+    // the file of the release goes through, without a warning
+    let ok = run(&install_words(&dir));
+    assert!(ok.status.success(), "{}", text(&ok.stderr));
+    assert!(
+        !text(&ok.stderr).contains("no manifest"),
+        "{}",
+        text(&ok.stderr)
+    );
+    assert!(host.installed().exists());
+    std::fs::remove_file(host.installed()).unwrap();
+
+    // one more byte: the same file as far as the host could tell, but not the released one
+    let mut changed = content.clone();
+    changed.push(0);
+    std::fs::write(&server_file, &changed).unwrap();
+    let refused = run(&install_words(&dir));
+    assert_eq!(refused.status.code(), Some(1));
+    let stderr = text(&refused.stderr);
+    assert!(
+        stderr.contains("does not match the digest that this client was released with"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&hex(&ssj_manifest::digest(&content))),
+        "the expected digest is shown: {stderr}"
+    );
+    assert!(!host.installed().exists());
+
+    // an explicit file is the choice of the user, and says so
+    let explicit = run(&[
+        "install".to_owned(),
+        "--server-binary".to_owned(),
+        server_file.to_str().unwrap().to_owned(),
+        "user@localhost".to_owned(),
+    ]);
+    assert!(explicit.status.success(), "{}", text(&explicit.stderr));
+    assert!(
+        text(&explicit.stderr).contains("not checked against the manifest"),
+        "{}",
+        text(&explicit.stderr)
+    );
+    std::fs::remove_file(host.installed()).unwrap();
+
+    // a client released without this build knows no digest for it
+    std::fs::write(&server_file, &content).unwrap();
+    let other = patched_client(&[("some-other-build", &content)]);
+    let words = install_words(&dir);
+    let output = host.ssj_with(
+        &other,
+        &ssh,
+        &words.iter().map(String::as_str).collect::<Vec<_>>(),
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        text(&output.stderr).contains("no digest for the build"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(!host.installed().exists());
+}
+
+#[test]
+fn unpatched_client_warns_but_installs() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    let output = host.ssj(
+        &ssh,
+        &[
+            "install",
+            "--server-dir",
+            dir.to_str().unwrap(),
+            "user@localhost",
+        ],
+        "",
+    );
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("no manifest of server digests"),
+        "{}",
+        text(&output.stderr)
+    );
 }

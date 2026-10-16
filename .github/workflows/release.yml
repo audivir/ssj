@@ -5,8 +5,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
-env:
-  BIN_NAMES: ssj ssj-server
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -31,9 +29,10 @@ jobs:
             echo "::error::Release tag $GITHUB_REF_NAME (version $tag_version) does not match Cargo.toml version ($pkg_version)"
             exit 1
           fi
-  build:
+  # The servers come first, because the clients carry their digests.
+  servers:
     needs: check-version
-    name: Build for ${{ matrix.target }}
+    name: Server for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -65,93 +64,107 @@ jobs:
           tool: cargo-zigbuild,zig
       - name: Build with cargo-zigbuild
         if: matrix.zig
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release -p ssj-server --target ${{ matrix.target }}
       - name: Build natively
         if: ${{ !matrix.zig }}
-        run: cargo build --release --target ${{ matrix.target }}
-      - name: Package binaries
-        run: |
-          for bin in $BIN_NAMES; do
-            cp "target/${{ matrix.target }}/release/$bin" "$bin-${{ matrix.target }}"
-          done
+        run: cargo build --release -p ssj-server --target ${{ matrix.target }}
+      - name: Package
+        run: cp "target/${{ matrix.target }}/release/ssj-server" "ssj-server-${{ matrix.target }}"
       - uses: actions/upload-artifact@v7
         with:
-          name: binary-${{ matrix.target }}
-          path: ssj-*
+          name: server-${{ matrix.target }}
+          path: ssj-server-*
           retention-days: 1
-  release:
-    types: [published]
-  workflow_dispatch:
-permissions:
-  contents: write
-env:
-  BIN_NAMES: ssj ssj-server
-jobs:
-  check-version:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check that the release tag matches the package version
-        if: github.event_name == 'release'
-        run: |
-          pkg_version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')"
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$pkg_version" != "$tag_version" ]; then
-            echo "::error::Release tag $GITHUB_REF_NAME (version $tag_version) does not match Cargo.toml version ($pkg_version)"
-            exit 1
-          fi
-  build:
-    needs: check-version
-    name: Build for ${{ matrix.target }}
+  clients:
+    needs: servers
+    name: Client for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            zig: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
+            zig: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            zig: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            zig: true
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            zig: false
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Install aarch64-linux cross-linker
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install zig and cargo-zigbuild
+        if: matrix.zig
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild,zig
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: server-*
+          path: servers
+          merge-multiple: true
+      - name: Build the client with cargo-zigbuild
+        if: matrix.zig
+        run: cargo zigbuild --release -p ssj-client --target ${{ matrix.target }}
+      - name: Build the client natively
+        if: ${{ !matrix.zig }}
+        run: cargo build --release -p ssj-client --target ${{ matrix.target }}
+      # the tool runs on the runner, whatever the target of the client is
+      - name: Build the manifest tool
+        run: cargo build --release -p ssj-manifest-tool
+      - name: Write the digests of the servers into the client
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-      - run: cargo build --release --target ${{ matrix.target }}
-      - name: Package binary
-        shell: bash
-        run: |
-          EXT=""
-          if [[ "${{ matrix.target }}" == *windows* ]]; then EXT=".exe"; fi
-          cp "target/${{ matrix.target }}/release/$BIN_NAME$EXT" "$BIN_NAME-${{ matrix.target }}$EXT"
+          client="target/${{ matrix.target }}/release/ssj"
+          servers="servers/ssj-server-x86_64-unknown-linux-musl servers/ssj-server-aarch64-unknown-linux-musl servers/ssj-server-aarch64-apple-darwin"
+          # the digest of the client without the slot, to compare builds of the same source
+          target/release/ssj-manifest digest "$client" > "ssj-${{ matrix.target }}.content-sha256"
+          target/release/ssj-manifest patch "$client" $servers
+          target/release/ssj-manifest check "$client" $servers
+      # changing a signed binary breaks its signature, and macOS then refuses to run it
+      - name: Sign again on macOS
+        if: runner.os == 'macOS'
+        run: codesign --force -s - "target/${{ matrix.target }}/release/ssj"
+      - name: Check the slot after signing
+        run: target/release/ssj-manifest show "target/${{ matrix.target }}/release/ssj"
+      - name: Package
+        run: cp "target/${{ matrix.target }}/release/ssj" "ssj-${{ matrix.target }}"
       - uses: actions/upload-artifact@v7
         with:
-          name: binary-${{ matrix.target }}
-          path: ${{ env.BIN_NAME }}-*
+          name: client-${{ matrix.target }}
+          path: |
+            ssj-${{ matrix.target }}
+            ssj-${{ matrix.target }}.content-sha256
           retention-days: 1
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [servers, clients]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all binaries
         uses: actions/download-artifact@v8
         with:
-          pattern: binary-*
+          pattern: "*-*"
           path: dist
           merge-multiple: true
+      - name: Write the checksums
+        run: cd dist && sha256sum ssj-* > SHA256SUMS
+      - name: Attest the provenance of the files
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/ssj-*"
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:

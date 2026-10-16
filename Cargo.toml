@@ -12,6 +12,8 @@ license = "MIT"
 ssj-proto = { path = "crates/ssj-proto", version = "0.1.0" }
 ssj-net = { path = "crates/ssj-net", version = "0.1.0" }
 ssj-server = { path = "crates/ssj-server", version = "0.1.0" }
+ssj-manifest = { path = "crates/ssj-manifest", version = "0.1.0" }
+ssj-manifest-tool = { path = "crates/ssj-manifest-tool", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

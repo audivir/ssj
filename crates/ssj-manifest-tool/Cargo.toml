@@ -1,0 +1,21 @@
+[package]
+name = "ssj-manifest-tool"
+version.workspace = true
+edition.workspace = true
+description = "Fills the manifest slot of a client binary with the digests of server files"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "ssj_manifest_tool"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ssj-manifest"
+path = "src/main.rs"
+
+[dependencies]
+ssj-manifest.workspace = true
+sha2 = "0.11"
