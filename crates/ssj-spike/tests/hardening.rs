@@ -184,7 +184,7 @@ async fn large_paste_arrives_intact_and_fast_at_100ms_round_trip() {
     let took = start.elapsed();
 
     assert!(received == paste, "paste was corrupted");
-    println!("8 MiB paste took {took:?}");
+    println!("{PASTE} byte paste took {took:?}");
     assert!(took < Duration::from_secs(4), "paste took {took:?}");
 }
 

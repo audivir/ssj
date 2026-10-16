@@ -223,11 +223,18 @@ fn base_transport() -> quinn::TransportConfig {
     // the session must outlive long outages, and the keepalive notices a returning network
     transport.max_idle_timeout(None);
     transport.keep_alive_interval(Some(Duration::from_secs(1)));
+    // a paste must not spend several round trips on slow start
+    let mut cubic = quinn::congestion::CubicConfig::default();
+    cubic.initial_window(INITIAL_CONGESTION_WINDOW);
+    transport.congestion_controller_factory(Arc::new(cubic));
     transport.datagram_receive_buffer_size(None);
     transport.max_concurrent_uni_streams(0u8.into());
     transport.max_concurrent_bidi_streams(8u8.into());
     transport
 }
+
+/// Bytes the sender may have in flight before the first acknowledgement.
+pub const INITIAL_CONGESTION_WINDOW: u64 = 256 * 1024;
 
 /// Receive limits of the server, which only gets small input from the client.
 pub const SERVER_RECEIVE_WINDOW: u32 = 2 * 1024 * 1024;
