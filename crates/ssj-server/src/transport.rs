@@ -1,0 +1,113 @@
+//! Turns QUIC connections into the byte streams that the session core works with.
+
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
+
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::mpsc;
+use tokio::time::timeout;
+
+use crate::session::Connection;
+
+/// How long the peer gets to deliver pending data before the connection is closed.
+const DRAIN: Duration = Duration::from_secs(5);
+
+/// Receiving side of the stream of a client.
+pub struct QuicReader {
+    recv: quinn::RecvStream,
+    _conn: quinn::Connection,
+}
+
+/// Sending side of the stream of a client. Closes the connection after the data was delivered.
+pub struct QuicWriter {
+    send: Option<quinn::SendStream>,
+    conn: quinn::Connection,
+}
+
+impl AsyncRead for QuicReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.recv).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for QuicWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let send = self.send.as_mut().expect("present until drop");
+        Pin::new(send).poll_write(cx, buf).map_err(io::Error::from)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let send = self.send.as_mut().expect("present until drop");
+        Pin::new(send).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let send = self.send.as_mut().expect("present until drop");
+        Pin::new(send).poll_shutdown(cx)
+    }
+}
+
+impl Drop for QuicWriter {
+    fn drop(&mut self) {
+        let Some(mut send) = self.send.take() else {
+            return;
+        };
+        let conn = self.conn.clone();
+        tokio::spawn(async move {
+            let _ = send.finish();
+            // closing at once would discard data that is still on its way
+            let _ = timeout(DRAIN, send.stopped()).await;
+            conn.close(0u8.into(), b"done");
+        });
+    }
+}
+
+/// Accepts validated connection attempts and hands each client stream to the session.
+///
+/// A client that does not open its stream within `stream_timeout` is dropped. Returns when the
+/// endpoint is closed or the session no longer takes connections.
+pub async fn serve(
+    endpoint: quinn::Endpoint,
+    conns: mpsc::Sender<Connection>,
+    stream_timeout: Duration,
+) {
+    while let Some(incoming) = ssj_net::accept_validated(&endpoint).await {
+        let to_session = conns.clone();
+        tokio::spawn(async move {
+            // the handshake includes the check of the pinned client certificate
+            let Ok(connection) = incoming.await else {
+                return;
+            };
+            let Ok(Ok((send, recv))) = timeout(stream_timeout, connection.accept_bi()).await else {
+                return;
+            };
+            let reader = QuicReader {
+                recv,
+                _conn: connection.clone(),
+            };
+            let writer = QuicWriter {
+                send: Some(send),
+                conn: connection,
+            };
+            let _ = to_session
+                .send(Connection {
+                    reader: Box::new(reader),
+                    writer: Box::new(writer),
+                })
+                .await;
+        });
+        if conns.is_closed() {
+            break;
+        }
+    }
+}
