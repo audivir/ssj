@@ -233,6 +233,28 @@ not for crashes. Rebuilding a PTY from a file descriptor needs `unsafe` in `pty-
 (`Pty::from_fd`), which `forbid(unsafe_code)` rules out in our crates. The holder backend does
 not have this problem, so it is preferred.
 
+### Session core (server)
+
+One task owns the state of a session: the shell, the output buffer, and the current connection.
+Connections arrive as byte streams, so the logic does not depend on QUIC and is tested with
+in-memory streams and real shells.
+
+- Reading the shell, writing to it, and talking to the client never wait for each other. The
+  shell is split into reader, writer, and exit parts for this reason.
+- The reader of a connection keeps parsing frames while the shell is busy. Acknowledgements of
+  output travel in the same byte stream as the input and are what lets a chatty program
+  continue, so holding them behind a blocked input frame is a deadlock (found by the paste
+  test). Input is queued with a byte budget of 2 MiB per connection, which is above the 1 MiB
+  that the client may leave unacknowledged. A client that sends more waits, and only it.
+- Output is read from the shell only while the replay buffer has room, so a client that does not
+  acknowledge cannot make the server buffer more than the capacity.
+- `Close` from the client means "detach": the session and the shell go on. The session ends when
+  the shell has exited and the exit was queued for the client and the connection then ends, or
+  after the detached timeout. If the connection is lost right after the exit was queued but
+  before it arrived, the client finds no server on its next attempt and reports the end of the
+  session without the exit code.
+- A new connection replaces the old one. Frames queued for the old one get five seconds to leave.
+
 ### Environment forwarding
 
 Works like `SendEnv` and `AcceptEnv` in `ssh`: the client selects variables, the server filters

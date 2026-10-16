@@ -1,13 +1,12 @@
 use std::io;
 use std::pin::Pin;
-use std::process::ExitStatus;
 use std::task::{Context, Poll};
 
 use pty_process::Size;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::AsyncWrite;
 use tokio::process::Child;
 
-use super::{Backend, SessionId, Shell, SpawnSpec, WindowSize};
+use super::{Backend, Parts, SessionId, Shell, ShellWriter, SpawnSpec, WindowSize};
 
 /// Backend that runs the shell as a child of the server, which ends with the server.
 #[derive(Clone, Copy, Debug, Default)]
@@ -18,6 +17,9 @@ pub struct DirectShell {
     pty: pty_process::Pty,
     child: Child,
 }
+
+/// Input side of a [`DirectShell`].
+pub struct DirectWriter(pty_process::OwnedWritePty);
 
 fn to_size(size: WindowSize) -> Size {
     Size::new(size.rows(), size.cols())
@@ -53,39 +55,40 @@ impl Backend for Direct {
 }
 
 impl Shell for DirectShell {
+    type Reader = pty_process::OwnedReadPty;
+    type Writer = DirectWriter;
+
+    fn split(self) -> Parts<Self::Reader, Self::Writer> {
+        let (reader, writer) = self.pty.into_split();
+        let mut child = self.child;
+        Parts {
+            reader,
+            writer: DirectWriter(writer),
+            exit: Box::pin(async move { child.wait().await }),
+        }
+    }
+}
+
+impl ShellWriter for DirectWriter {
     fn resize(&self, size: WindowSize) -> io::Result<()> {
-        self.pty.resize(to_size(size)).map_err(to_io)
-    }
-
-    async fn wait(&mut self) -> io::Result<ExitStatus> {
-        self.child.wait().await
+        self.0.resize(to_size(size)).map_err(to_io)
     }
 }
 
-impl AsyncRead for DirectShell {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.pty).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for DirectShell {
+impl AsyncWrite for DirectWriter {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.pty).poll_write(cx, buf)
+        Pin::new(&mut self.0).poll_write(cx, buf)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.pty).poll_flush(cx)
+        Pin::new(&mut self.0).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.pty).poll_shutdown(cx)
+        Pin::new(&mut self.0).poll_shutdown(cx)
     }
 }

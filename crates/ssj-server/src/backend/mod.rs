@@ -10,6 +10,7 @@ use std::ffi::OsString;
 use std::future::Future;
 use std::io;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::ExitStatus;
 
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -29,15 +30,30 @@ pub struct SpawnSpec {
     pub size: WindowSize,
 }
 
-/// Byte stream to a running shell, with its terminal controls.
-///
-/// Reading yields the output of the shell and ends when the shell has exited. Writing sends input.
-pub trait Shell: AsyncRead + AsyncWrite + Send + Unpin {
+/// Future that resolves when the shell has exited. Dropping it ends the shell.
+pub type ExitFuture = Pin<Box<dyn Future<Output = io::Result<ExitStatus>> + Send>>;
+
+/// Input side of a shell with its terminal controls.
+pub trait ShellWriter: AsyncWrite + Send + Unpin + 'static {
     /// Changes the terminal size seen by the shell.
     fn resize(&self, size: WindowSize) -> io::Result<()>;
+}
 
-    /// Waits for the shell to exit.
-    fn wait(&mut self) -> impl Future<Output = io::Result<ExitStatus>> + Send;
+/// Independent parts of a running shell, so that output and input never wait for each other.
+///
+/// Reading yields the output of the shell and ends when the shell has closed its terminal.
+pub struct Parts<R, W> {
+    pub reader: R,
+    pub writer: W,
+    pub exit: ExitFuture,
+}
+
+/// Running shell that can be taken apart into its [`Parts`].
+pub trait Shell: Send + 'static {
+    type Reader: AsyncRead + Send + Unpin + 'static;
+    type Writer: ShellWriter;
+
+    fn split(self) -> Parts<Self::Reader, Self::Writer>;
 }
 
 /// Interface for creating shells and finding ones that outlived the server process.

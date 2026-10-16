@@ -44,6 +44,8 @@ pub enum ErrorCode {
     /// The first frame of the client was not a valid `Hello`.
     BadHello = 4,
     Internal = 5,
+    /// The client sent a frame at a wrong time or with a wrong value.
+    Violation = 6,
 }
 
 impl ErrorCode {
@@ -54,6 +56,7 @@ impl ErrorCode {
             3 => Self::ReplayGap,
             4 => Self::BadHello,
             5 => Self::Internal,
+            6 => Self::Violation,
             _ => return None,
         })
     }
