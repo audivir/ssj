@@ -1,0 +1,54 @@
+//! Process setup of the server: detaching from the `ssh` session and removing leaks.
+
+use std::fs::File;
+use std::io::{self, Read};
+use std::os::fd::AsFd;
+
+use rustix::process::{Resource, Rlimit, setrlimit, setsid};
+
+/// Starts a new session, so that the end of the `ssh` channel does not touch the server.
+pub fn detach_from_session() {
+    // fails only if the process leads a process group already, which is harmless here
+    let _ = setsid();
+}
+
+/// Prevents core dumps, which could contain keys and terminal contents.
+pub fn disable_core_dumps() -> io::Result<()> {
+    setrlimit(
+        Resource::Core,
+        Rlimit {
+            current: Some(0),
+            maximum: Some(0),
+        },
+    )?;
+    Ok(())
+}
+
+/// Points stdin, stdout, and stderr at `/dev/null`, which releases the pipes of the `ssh` channel.
+pub fn silence_stdio() -> io::Result<()> {
+    let null = File::options().read(true).write(true).open("/dev/null")?;
+    rustix::stdio::dup2_stdin(null.as_fd())?;
+    rustix::stdio::dup2_stdout(null.as_fd())?;
+    rustix::stdio::dup2_stderr(null.as_fd())?;
+    Ok(())
+}
+
+/// Fills `buf` from the random source of the operating system.
+pub fn random_bytes(buf: &mut [u8]) -> io::Result<()> {
+    File::open("/dev/urandom")?.read_exact(buf)
+}
+
+/// Random identifier of 16 characters from `a-z` and `2-7`, which is valid for `SessionId`.
+pub fn random_session_id() -> io::Result<String> {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let mut bytes = [0u8; 16];
+    random_bytes(&mut bytes)?;
+    Ok(bytes
+        .iter()
+        .map(|b| ALPHABET[usize::from(b & 31)] as char)
+        .collect())
+}
+
+pub fn is_root() -> bool {
+    rustix::process::getuid().is_root()
+}
