@@ -79,10 +79,18 @@ pub enum SessionEnd {
     Closed,
 }
 
+/// Changes of the state of the session that the transport needs to know about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionEvent {
+    /// The client left on purpose. The transport closes its endpoint and drops the pinned client.
+    Detached,
+}
+
 /// Manages the shell of one session across the connections of its client.
 pub struct Session<B: Backend> {
     backend: B,
     config: SessionConfig,
+    events: Option<mpsc::UnboundedSender<SessionEvent>>,
 }
 
 enum Control {
@@ -90,6 +98,7 @@ enum Control {
     Resize(WindowSize),
     OutputAck(u64),
     Close,
+    Detach,
     Lost,
     Violation(ErrorCode),
 }
@@ -151,11 +160,25 @@ struct Running<S: Shell> {
 
 impl<B: Backend> Session<B> {
     pub fn new(backend: B, config: SessionConfig) -> Self {
-        Self { backend, config }
+        Self {
+            backend,
+            config,
+            events: None,
+        }
+    }
+
+    /// Reports [`SessionEvent`]s on `events`.
+    pub fn with_events(mut self, events: mpsc::UnboundedSender<SessionEvent>) -> Self {
+        self.events = Some(events);
+        self
     }
 
     pub async fn run(self, mut conns: mpsc::Receiver<Connection>) -> SessionEnd {
-        let Self { backend, config } = self;
+        let Self {
+            backend,
+            config,
+            events,
+        } = self;
         let (control_tx, mut control_rx) = mpsc::channel::<Tagged>(64);
         let mut output = ReplayBuffer::new(config.replay_capacity);
         let mut input_received = 0u64;
@@ -166,6 +189,8 @@ impl<B: Backend> Session<B> {
         let mut active: Option<Active> = None;
         let mut generation = 0u64;
         let mut detached_since = Some(Instant::now());
+        // a deliberate detach disables the timeout until the next connection
+        let mut detached_on_purpose = false;
         let mut buf = vec![0u8; READ_CHUNK];
 
         loop {
@@ -190,8 +215,13 @@ impl<B: Backend> Session<B> {
                     && (a.input_acked < input_received || a.output_sent < output.end() || exit_due)
             });
             let want_input = pending_offset >= pending_input.len();
-            let deadline = match (active.is_none(), config.detached_timeout, detached_since) {
-                (true, Some(limit), Some(since)) => Some(since + limit),
+            let deadline = match (
+                active.is_none(),
+                detached_on_purpose,
+                config.detached_timeout,
+                detached_since,
+            ) {
+                (true, false, Some(limit), Some(since)) => Some(since + limit),
                 _ => None,
             };
             let event = {
@@ -234,6 +264,7 @@ impl<B: Backend> Session<B> {
                         config.hello_timeout,
                     ));
                     detached_since = None;
+                    detached_on_purpose = false;
                 }
                 Event::DetachedTimeout => return SessionEnd::DetachedTimeout,
                 Event::Control(None) => unreachable!("the actor holds a sender"),
@@ -304,6 +335,14 @@ impl<B: Backend> Session<B> {
                                     .and_then(|s| s.status)
                                     .expect("exit is queued after the status is known");
                                 return SessionEnd::ShellExited(status);
+                            }
+                        }
+                        Control::Detach => {
+                            active = None;
+                            detached_since = Some(Instant::now());
+                            detached_on_purpose = true;
+                            if let Some(events) = &events {
+                                let _ = events.send(SessionEvent::Detached);
                             }
                         }
                         Control::Violation(code) => {
@@ -538,6 +577,7 @@ async fn read_connection(
                 (ClientFrame::Resize(size), true) => send(Control::Resize(size)).await,
                 (ClientFrame::OutputAck(offset), true) => send(Control::OutputAck(offset)).await,
                 (ClientFrame::Close, true) => return send(Control::Close).await,
+                (ClientFrame::Detach, true) => return send(Control::Detach).await,
             }
         }
         // a header that announces more than a frame may hold is rejected by the decoder, so

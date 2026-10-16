@@ -6,7 +6,9 @@ use ssj_proto::{
     decode_server,
 };
 use ssj_server::backend::Direct;
-use ssj_server::session::{Connection, Session, SessionConfig, SessionEnd, SpawnTemplate};
+use ssj_server::session::{
+    Connection, Session, SessionConfig, SessionEnd, SessionEvent, SpawnTemplate,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -455,4 +457,50 @@ async fn detached_session_ends_after_the_timeout() {
     client.start().await;
     drop(client);
     assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
+}
+
+#[tokio::test]
+async fn deliberate_detach_disables_the_timeout_until_the_next_connection() {
+    let mut cfg = config("cat");
+    cfg.detached_timeout = Some(Duration::from_millis(300));
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (conns, rx) = mpsc::channel(4);
+    let mut session = tokio::spawn(Session::new(Direct, cfg).with_events(events_tx).run(rx));
+    let harness = Harness {
+        conns,
+        session: tokio::spawn(async { SessionEnd::Closed }),
+    };
+
+    let mut client = harness.connect().await;
+    client.start().await;
+    client.send(ClientFrame::Detach).await;
+    assert_eq!(
+        timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap(),
+        Some(SessionEvent::Detached)
+    );
+
+    // several times the timeout later the session still runs
+    assert!(
+        timeout(Duration::from_millis(1200), &mut session)
+            .await
+            .is_err()
+    );
+
+    // a new client attaches and uses the same shell
+    let mut again = harness.connect().await;
+    again
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    again.send(ClientFrame::Input(b"back\n".to_vec())).await;
+    again.read_until(|s| contains(&s.output, "back")).await;
+
+    // an involuntary loss brings the timeout back
+    drop(again);
+    let end = timeout(Duration::from_secs(5), session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(end, SessionEnd::DetachedTimeout));
 }
