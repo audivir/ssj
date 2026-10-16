@@ -47,3 +47,10 @@ path = "fuzz_targets/env_filter.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "control"
+path = "fuzz_targets/control.rs"
+test = false
+doc = false
+bench = false

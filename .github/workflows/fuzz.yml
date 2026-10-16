@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [decode_client, decode_server, replay_model, parse_connect, env_filter]
+        target: [decode_client, decode_server, replay_model, parse_connect, env_filter, control]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly

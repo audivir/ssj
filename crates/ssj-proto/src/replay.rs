@@ -29,6 +29,15 @@ impl ReplayBuffer {
         }
     }
 
+    /// Empty buffer whose stream already has `offset` bytes behind it.
+    pub fn starting_at(capacity: usize, offset: u64) -> Self {
+        Self {
+            data: VecDeque::new(),
+            start: offset,
+            capacity,
+        }
+    }
+
     /// Offset of the oldest retained byte.
     pub fn start(&self) -> u64 {
         self.start

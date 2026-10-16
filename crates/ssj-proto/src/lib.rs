@@ -4,6 +4,7 @@
 //! state logic tested without sockets.
 
 pub mod bootstrap;
+pub mod control;
 pub mod env;
 pub mod env_filter;
 pub mod frame;
