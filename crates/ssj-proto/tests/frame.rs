@@ -2,10 +2,7 @@ mod common;
 
 use common::{client_frames, server_frames};
 use ssj_proto::frame::{MAX_DATA_LEN, MAX_FRAME_LEN};
-use ssj_proto::{
-    ClientFrame, DecodeError, Env, EnvError, ErrorCode, ExitStatus, Hello, ServerFrame, Welcome,
-    WindowSize, decode_client, decode_server,
-};
+use ssj_proto::{ClientFrame, DecodeError, EnvError, ServerFrame, decode_client, decode_server};
 
 /// Feeds `stream` in chunks of `step` bytes, like a socket would, and collects all frames.
 type Decode<F> = fn(&[u8]) -> Result<Option<(F, usize)>, DecodeError>;

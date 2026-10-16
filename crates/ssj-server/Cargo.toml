@@ -9,6 +9,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-ssj-proto = { path = "../ssj-proto" }
+ssj-proto.workspace = true
 pty-process = { version = "0.5.3", features = ["async"] }
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "io-util", "process", "time"] }
