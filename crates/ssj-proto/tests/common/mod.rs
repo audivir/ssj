@@ -30,6 +30,7 @@ pub fn client_frames() -> Vec<ClientFrame> {
         ClientFrame::Resize(WindowSize::new(1, WindowSize::MAX).unwrap()),
         ClientFrame::OutputAck(12345),
         ClientFrame::Close,
+        ClientFrame::Detach,
     ]
 }
 

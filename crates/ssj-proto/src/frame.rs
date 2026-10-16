@@ -99,7 +99,10 @@ pub enum ClientFrame {
     Resize(WindowSize),
     /// Total output bytes the client has processed.
     OutputAck(u64),
+    /// The client is done, for example after it received the exit status.
     Close,
+    /// The client leaves on purpose and the session keeps running without a timeout.
+    Detach,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,6 +120,7 @@ const INPUT: u8 = 0x02;
 const RESIZE: u8 = 0x03;
 const OUTPUT_ACK: u8 = 0x04;
 const CLOSE: u8 = 0x05;
+const DETACH: u8 = 0x06;
 
 const WELCOME: u8 = 0x81;
 const OUTPUT: u8 = 0x82;
@@ -259,6 +263,10 @@ impl ClientFrame {
                 out.push(CLOSE);
                 Ok(())
             }
+            Self::Detach => {
+                out.push(DETACH);
+                Ok(())
+            }
         };
         match result {
             Ok(()) => {
@@ -300,6 +308,7 @@ impl ClientFrame {
             RESIZE => Self::Resize(body.size()?),
             OUTPUT_ACK => Self::OutputAck(body.u64()?),
             CLOSE => Self::Close,
+            DETACH => Self::Detach,
             other => return Err(DecodeError::UnknownType(other)),
         };
         body.finish()?;

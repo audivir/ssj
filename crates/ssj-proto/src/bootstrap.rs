@@ -5,6 +5,8 @@
 
 /// Start of the line that carries the connection data.
 pub const PREFIX: &str = "SSJ CONNECT ";
+/// Start of the line that the client writes to the stdin of `ssj-server`.
+pub const PIN_PREFIX: &str = "SSJ PIN ";
 /// The client stops reading the output of `ssh` after this many bytes.
 pub const MAX_OUTPUT: usize = 64 * 1024;
 
@@ -112,4 +114,24 @@ pub fn sanitize(text: &[u8], max_chars: usize) -> String {
         out.push(if unsafe_char { '?' } else { c });
     }
     out
+}
+
+/// Formats the line with the certificate fingerprint of the client, including the newline.
+pub fn format_pin(fingerprint: &[u8; 32]) -> String {
+    let mut line = String::from(PIN_PREFIX);
+    for byte in fingerprint {
+        line.push_str(&format!("{byte:02x}"));
+    }
+    line.push('\n');
+    line
+}
+
+/// Parses one line `SSJ PIN <64 lowercase hex digits>` with an optional `\r` before the newline.
+pub fn parse_pin(line: &[u8]) -> Result<[u8; 32], BootstrapError> {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let hex = line
+        .strip_prefix(PIN_PREFIX.as_bytes())
+        .ok_or(BootstrapError::Malformed)?;
+    parse_fingerprint(hex)
 }

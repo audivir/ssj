@@ -1,4 +1,6 @@
-use ssj_proto::bootstrap::{BootstrapError, Connect, format_connect, parse_connect, sanitize};
+use ssj_proto::bootstrap::{
+    BootstrapError, Connect, format_connect, format_pin, parse_connect, parse_pin, sanitize,
+};
 
 fn connect() -> Connect {
     let mut fingerprint = [0u8; 32];
@@ -114,4 +116,39 @@ fn sanitized_text_is_cut_to_the_limit() {
     assert_eq!(sanitize(b"abcdef", 6), "abcdef");
     assert_eq!(sanitize(b"abcdefg", 6), "abcdef...");
     assert_eq!(sanitize("äöüäöüx".as_bytes(), 6), "äöüäöü...");
+}
+
+#[test]
+fn pin_line_round_trips_and_rejects_everything_else() {
+    let fingerprint = connect().fingerprint;
+    assert_eq!(format_pin(&fingerprint), format!("SSJ PIN {HEX}\n"));
+    assert_eq!(
+        parse_pin(format_pin(&fingerprint).as_bytes()),
+        Ok(fingerprint)
+    );
+    assert_eq!(
+        parse_pin(format!("SSJ PIN {HEX}\r\n").as_bytes()),
+        Ok(fingerprint)
+    );
+    assert_eq!(
+        parse_pin(format!("SSJ PIN {HEX}").as_bytes()),
+        Ok(fingerprint)
+    );
+
+    for bad in [
+        format!("SSJ CONNECT 1 {HEX}\n"),
+        format!("SSJ PIN {}\n", HEX.to_uppercase()),
+        format!("SSJ PIN {}\n", &HEX[2..]),
+        format!("SSJ PIN {HEX}00\n"),
+        format!(" SSJ PIN {HEX}\n"),
+        format!("SSJ PIN {HEX} \n"),
+        "SSJ PIN \n".to_owned(),
+        String::new(),
+    ] {
+        assert_eq!(
+            parse_pin(bad.as_bytes()),
+            Err(BootstrapError::Malformed),
+            "{bad:?}"
+        );
+    }
 }
