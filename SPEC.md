@@ -230,10 +230,19 @@ Leaving (the shell keeps running):
   attaches again. The reason is intent: a user who detaches on purpose wants to come back later,
   for example to a long job, so the server must not end the shell behind their back. After the
   next attach, losing the connection involuntarily brings the timeout back.
-- The timeout protects against sessions that were forgotten after an accident. Since a detached
-  session without a timeout is a live shell behind an open UDP port, `ssj list user@host` shows
-  all sessions with their state and age, and the server config can set `max_detached` as a hard
-  upper limit even for deliberate detaches (default: none).
+- On `Detach` the server also closes its UDP endpoint and drops the pinned client fingerprint.
+  The key of the client exists only in the memory of the client process, which has exited, so
+  the pin could never match again anyway. A detached session therefore listens on no port. The
+  next attach goes through `ssh`, as described under Attach and restart, and opens a new port
+  with a new pin.
+- An involuntary disconnect is different: the client may still be alive and reconnect, so the
+  endpoint stays open until the detached timeout ends the session.
+- This is not a vulnerability in either case. Only a holder of the pinned key can open a session,
+  and the open port of an involuntary disconnect is limited to handshake attempts, which are
+  bounded by retry and by the limits listed under Hardening requirements. What a session without
+  timeout costs is a live shell in the background, such as resources and forgotten jobs.
+  `ssj list user@host` shows all sessions with their state and age, and the server config can set
+  `max_detached` as a hard upper limit even for deliberate detaches (default: none).
 
 Frames: `Detach` is a client frame of its own. `Close` means that the client is done, for
 example after it received the exit status, and a `Close` before the exit is treated as a lost
