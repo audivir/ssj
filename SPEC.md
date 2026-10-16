@@ -20,6 +20,8 @@ Workspace layout follows the guidelines (`crates/`, edition 2024, shared `Cargo.
 the workspace root):
 
 - `crates/ssj-proto`: wire format, framing, and session state machine (no IO).
+- `crates/ssj-net`: QUIC transport shared by client and server: pinned mutual TLS, address
+  validation (retry), and the transport limits.
 - `crates/ssj-server`: runs on the remote host as the unprivileged user, owns the session.
   The shell lives behind the `Backend` and `Shell` traits (`backend` module), so where it runs
   can change without touching the session logic. v1 has one backend, `Direct`, which runs the
@@ -58,7 +60,7 @@ not take part in the bootstrap cannot open a session.
 Rejected alternative: custom reliable stream over UDP with Noise (`snow`). More control, but more
 code to audit.
 
-Findings of the M0 spike (`crates/ssj-spike`, removed after M1 absorbs the code):
+Findings of the M0 spike, whose code and tests now live in `crates/ssj-net`:
 
 - Pinning in a custom `rustls` verifier works for both directions. A peer presenting the pinned
   certificate with a different private key is rejected by the handshake signature check.

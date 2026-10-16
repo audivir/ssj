@@ -6,9 +6,7 @@ use rustls::SignatureScheme;
 use rustls::client::ResolvesClientCert;
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
-use ssj_spike::{
-    Identity, SERVER_NAME, client_tls, provider, quic_client, quic_server, server_tls,
-};
+use ssj_net::{Identity, SERVER_NAME, client_tls, provider, quic_client, quic_server, server_tls};
 
 use common::{client_endpoint, localhost, server_endpoint};
 

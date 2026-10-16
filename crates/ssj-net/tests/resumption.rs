@@ -11,7 +11,7 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::ServerSessionMemoryCache;
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
-use ssj_spike::{
+use ssj_net::{
     Identity, PinnedVerifier, SERVER_NAME, client_tls_with, quic_client, quic_server,
     server_tls_with,
 };
@@ -26,7 +26,7 @@ struct Counting {
 }
 
 impl Counting {
-    fn new(pin: ssj_spike::Fingerprint) -> Arc<Self> {
+    fn new(pin: ssj_net::Fingerprint) -> Arc<Self> {
         Arc::new(Self {
             inner: PinnedVerifier::new(pin),
             calls: AtomicUsize::new(0),

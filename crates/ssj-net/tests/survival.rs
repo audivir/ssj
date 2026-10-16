@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use quinn::{Connection, ConnectionError, Endpoint};
-use ssj_spike::{Identity, SERVER_NAME};
+use ssj_net::{Identity, SERVER_NAME};
 use tokio::time::timeout;
 
 use common::{Proxy, client_endpoint, server_endpoint};

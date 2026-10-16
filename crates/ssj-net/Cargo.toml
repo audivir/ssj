@@ -1,15 +1,15 @@
 [package]
-name = "ssj-spike"
+name = "ssj-net"
 version.workspace = true
 edition.workspace = true
-description = "Throwaway M0 spike: pinned mutual TLS and connection survival over QUIC"
+description = "QUIC transport of ssj: pinned mutual TLS, address validation, and transport limits"
 license.workspace = true
-publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
+ssj-proto.workspace = true
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rcgen = "0.14.10"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }

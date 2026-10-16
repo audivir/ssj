@@ -3,7 +3,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use quinn::Endpoint;
-use ssj_spike::{ALPN, Identity, SERVER_NAME, accept_validated, client_tls, quic_client};
+use ssj_net::{Identity, SERVER_NAME, accept_validated, client_tls, quic_client};
 use tokio::time::{sleep, timeout};
 
 use common::{Proxy, client_endpoint, localhost, server_endpoint};
@@ -20,7 +20,7 @@ fn hold(incoming: quinn::Incoming) {
 /// Client that offers `alpn` instead of the protocol of `ssj`.
 fn client_with_alpn(
     identity: &Identity,
-    server_pin: ssj_spike::Fingerprint,
+    server_pin: ssj_net::Fingerprint,
     alpn: &[&[u8]],
 ) -> Endpoint {
     let mut tls = client_tls(identity, server_pin);
@@ -42,7 +42,11 @@ async fn handshake_without_the_ssj_alpn_is_refused() {
     });
 
     // a correct client with the same setup connects, so the refusals below are about ALPN
-    let ok = client_with_alpn(&client_id, server_id.fingerprint(), &[ALPN]);
+    let ok = client_with_alpn(
+        &client_id,
+        server_id.fingerprint(),
+        &[ssj_proto::alpn().as_slice()],
+    );
     assert!(ok.connect(addr, SERVER_NAME).unwrap().await.is_ok());
 
     for alpn in [&[b"h3".as_slice()][..], &[b"ssj/2"], &[]] {

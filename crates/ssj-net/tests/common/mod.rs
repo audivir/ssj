@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use quinn::Endpoint;
-use ssj_spike::{Fingerprint, Identity, client_tls, quic_client, quic_server, server_tls};
+use ssj_net::{Fingerprint, Identity, client_tls, quic_client, quic_server, server_tls};
 use tokio::net::UdpSocket;
 
 pub fn localhost() -> SocketAddr {

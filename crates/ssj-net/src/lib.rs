@@ -1,4 +1,4 @@
-//! Throwaway M0 spike: pinned mutual TLS and connection survival over QUIC.
+//! QUIC transport of `ssj`: pinned mutual TLS, address validation, and transport limits.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,9 +14,6 @@ use rustls::{DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 use sha2::{Digest, Sha256};
 
 pub type Fingerprint = [u8; 32];
-
-/// ALPN identifier, which includes the protocol version.
-pub const ALPN: &[u8] = b"ssj/1";
 
 /// Name sent as SNI. Not validated, since trust comes from the pinned fingerprint.
 pub const SERVER_NAME: &str = "ssj";
@@ -187,7 +184,7 @@ pub fn server_tls_with(
         .with_client_cert_verifier(verifier)
         .with_single_cert(vec![identity.cert.clone()], identity.private_key())
         .expect("matching certificate and key");
-    config.alpn_protocols = vec![ALPN.to_vec()];
+    config.alpn_protocols = vec![ssj_proto::alpn()];
     config.max_early_data_size = 0;
     config.send_tls13_tickets = 0;
     config.session_storage = Arc::new(NoServerSessionStorage {});
@@ -211,7 +208,7 @@ pub fn client_tls_with(
         .with_custom_certificate_verifier(verifier)
         .with_client_auth_cert(vec![identity.cert.clone()], identity.private_key())
         .expect("matching certificate and key");
-    config.alpn_protocols = vec![ALPN.to_vec()];
+    config.alpn_protocols = vec![ssj_proto::alpn()];
     config.enable_early_data = false;
     config.resumption = Resumption::disabled();
     config
