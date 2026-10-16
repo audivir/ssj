@@ -2,7 +2,11 @@
 
 pub mod backend;
 pub mod cli;
+pub mod control_cli;
+pub mod control_server;
+pub mod control_socket;
 pub mod daemon;
+pub mod frontend;
 pub mod launch;
 pub mod listen;
 pub mod session;

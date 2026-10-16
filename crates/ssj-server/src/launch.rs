@@ -7,29 +7,38 @@
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, ExitCode, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use ssj_net::{Identity, quic_server, server_tls};
-use ssj_proto::bootstrap::{Connect, format_connect, format_pin, parse_connect, parse_pin};
+use ssj_proto::bootstrap::{format_connect, format_pin, parse_connect, parse_pin};
+use ssj_proto::control::SessionState;
 use ssj_proto::{EnvFilter, SessionId};
-use tokio::sync::mpsc as tokio_mpsc;
+use tokio::net::UnixListener;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Mutex, mpsc as tokio_mpsc};
 
 use crate::backend::Direct;
 use crate::cli::Args;
+use crate::control_server::{Context, serve_control};
+use crate::control_socket::{SocketFile, control_dir, ensure_private_dir, socket_path};
 use crate::daemon;
-use crate::listen::{bind_in_range, endpoint_on};
-use crate::session::{Session, SessionConfig, SessionEnd, SessionEvent, SpawnTemplate};
-use crate::transport::serve;
+use crate::frontend::Frontend;
+use crate::session::{
+    Session, SessionCommand, SessionConfig, SessionEnd, SessionEvent, SpawnTemplate,
+};
 
 /// Longest line the bootstrap accepts from stdin or from the daemon.
-const MAX_LINE: usize = 512;
+pub(crate) const MAX_LINE: usize = 512;
 const PIN_TIMEOUT: Duration = Duration::from_secs(10);
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Reads one line of at most [`MAX_LINE`] bytes in a thread, so that the wait has a limit.
-fn read_line_with_timeout(source: impl Read + Send + 'static, limit: Duration) -> Option<Vec<u8>> {
+pub(crate) fn read_line_with_timeout(
+    source: impl Read + Send + 'static,
+    limit: Duration,
+) -> Option<Vec<u8>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut line = Vec::new();
@@ -138,23 +147,26 @@ pub fn run_child(args: Args) -> ExitCode {
 }
 
 async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
-    let identity = Identity::generate();
-    let socket = match bind_in_range(&args.port_range) {
-        Ok(socket) => socket,
+    let id = daemon::random_session_id()
+        .ok()
+        .and_then(|id| SessionId::parse(&id));
+    let Some(id) = id else {
+        return fail("cannot create a session id", 1);
+    };
+    let (conns, conns_rx) = tokio_mpsc::channel(4);
+    let mut frontend = Frontend::new(args.port_range.clone(), conns, HELLO_TIMEOUT);
+    let connect = match frontend.open(pin).await {
+        Ok(connect) => connect,
         Err(err) => return fail(&err.to_string(), 1),
     };
-    let endpoint = match endpoint_on(socket, quic_server(server_tls(&identity, pin))) {
-        Ok(endpoint) => endpoint,
-        Err(err) => return fail(&format!("cannot start the endpoint: {err}"), 1),
-    };
-    let Ok(local) = endpoint.local_addr() else {
-        return fail("cannot read the local address", 1);
-    };
 
-    let connect = Connect {
-        port: local.port(),
-        fingerprint: identity.fingerprint(),
+    // the control socket exists before the client hears about the session
+    let socket = match prepare_control_socket(&id) {
+        Ok(socket) => socket,
+        Err(err) => return fail(&format!("cannot create the control socket: {err}"), 1),
     };
+    let (listener, _socket_file) = socket;
+
     let mut out = std::io::stdout();
     let _ = out.write_all(format_connect(&connect).as_bytes());
     let _ = out.flush();
@@ -163,12 +175,6 @@ async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
         eprintln!("ssj-server: cannot release stdio: {err}");
     }
 
-    let id = daemon::random_session_id()
-        .ok()
-        .and_then(|id| SessionId::parse(&id));
-    let Some(id) = id else {
-        return ExitCode::from(1);
-    };
     let shell = args
         .shell
         .clone()
@@ -180,7 +186,7 @@ async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
         args.shell_args.clone()
     };
     let config = SessionConfig {
-        id,
+        id: id.clone(),
         template: SpawnTemplate {
             program: shell,
             args: shell_args,
@@ -193,27 +199,73 @@ async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
         hello_timeout: HELLO_TIMEOUT,
     };
 
-    let (conns, conns_rx) = tokio_mpsc::channel(4);
     let (events, mut events_rx) = tokio_mpsc::unbounded_channel();
-    tokio::spawn(serve(endpoint.clone(), conns, HELLO_TIMEOUT));
-    let closing = endpoint.clone();
+    let (commands, commands_rx) = tokio_mpsc::unbounded_channel();
+    let context = Arc::new(Context {
+        id,
+        started: Instant::now(),
+        state: std::sync::Mutex::new(SessionState::Disconnected),
+        frontend: Mutex::new(frontend),
+        commands: commands.clone(),
+    });
+    tokio::spawn(serve_control(listener, context.clone()));
+
+    let watching = context.clone();
     tokio::spawn(async move {
         while let Some(event) = events_rx.recv().await {
             match event {
-                // nobody can connect anymore, and the next attach opens a new endpoint
-                SessionEvent::Detached => closing.close(0u8.into(), b"detached"),
-                SessionEvent::Connected | SessionEvent::Disconnected => {}
+                SessionEvent::Connected => watching.set_state(SessionState::Connected),
+                SessionEvent::Disconnected => watching.set_state(SessionState::Disconnected),
+                SessionEvent::Detached => {
+                    watching.set_state(SessionState::Detached);
+                    // nobody can connect anymore, and the next attach opens a new endpoint
+                    watching.frontend.lock().await.close();
+                }
             }
         }
     });
 
+    // closing like a terminal: the same as `ssj kill`. SIGHUP is ignored, since the end of the
+    // `ssh` channel of the bootstrap can send it.
+    for kind in [SignalKind::terminate(), SignalKind::interrupt()] {
+        if let Ok(mut signal) = signal(kind) {
+            let commands = commands.clone();
+            tokio::spawn(async move {
+                while signal.recv().await.is_some() {
+                    let _ = commands.send(SessionCommand::Kill);
+                }
+            });
+        }
+    }
+    if let Ok(mut hangup) = signal(SignalKind::hangup()) {
+        tokio::spawn(async move { while hangup.recv().await.is_some() {} });
+    }
+
     let end = Session::new(Direct, config)
         .with_events(events)
+        .with_commands(commands_rx)
         .run(conns_rx)
         .await;
-    endpoint.close(0u8.into(), b"session ended");
+    if matches!(end, SessionEnd::Killed) {
+        // the exit status for a connected client is queued, and needs a moment to leave
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    context.frontend.lock().await.close();
     match end {
         SessionEnd::Failed(_) => ExitCode::from(1),
         _ => ExitCode::SUCCESS,
     }
+}
+
+/// Binds the socket in the private directory, for this user only.
+fn prepare_control_socket(id: &SessionId) -> std::io::Result<(UnixListener, SocketFile)> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = control_dir()?;
+    ensure_private_dir(&dir)?;
+    let path = socket_path(&dir, id.as_str());
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+    let file = SocketFile(path.clone());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    Ok((listener, file))
 }
