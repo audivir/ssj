@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use quinn::Endpoint;
 use ssj_net::{Identity, SERVER_NAME, client_tls, quic_client};
 use ssj_proto::bootstrap::Connect;
+use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
 use ssj_proto::resume::check_welcome;
 use ssj_proto::{
@@ -19,8 +20,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
-use crate::bootstrap::start_server;
-use crate::cli::Args;
+use crate::bootstrap::{run_remote, start_server};
+use crate::cli::{Args, Command};
 use crate::escape::{Action, EscapeFilter, HELP};
 use crate::status::{LineStatus, Status, TitleStatus};
 use crate::terminal::{RawMode, window_size};
@@ -60,6 +61,8 @@ pub struct Params {
     pub env: Env,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
+    /// Join a running session instead of starting one.
+    pub attach: bool,
 }
 
 /// The terminal side of a session, so that tests can stand in for it.
@@ -110,9 +113,99 @@ async fn resolve(args: &Args, port: u16) -> Result<SocketAddr, String> {
 }
 
 async fn session(args: Args) -> u8 {
+    match args.command.clone() {
+        Command::Connect => connect_session(args, &[], false).await,
+        Command::Attach(id) => {
+            let mut extra = vec!["--attach".to_owned()];
+            extra.extend(id.map(|id| id.as_str().to_owned()));
+            connect_session(args, &extra, true).await
+        }
+        Command::List => list_sessions(&args).await,
+        Command::Kill(id) => kill_session(&args, id).await,
+    }
+}
+
+/// Text for the age of a session: `5s`, `3m`, `2h`, or `4d`.
+pub fn format_age(seconds: u64) -> String {
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..86400 => format!("{}h", seconds / 3600),
+        _ => format!("{}d", seconds / 86400),
+    }
+}
+
+fn state_word(state: SessionState) -> &'static str {
+    match state {
+        SessionState::Connected => "connected",
+        SessionState::Disconnected => "disconnected",
+        SessionState::Detached => "detached",
+    }
+}
+
+async fn list_sessions(args: &Args) -> u8 {
+    let remote = match run_remote(args, &["--list".to_owned()], "").await {
+        Ok(remote) if remote.status.success() => remote,
+        Ok(remote) => {
+            eprintln!(
+                "ssj: could not list the sessions ({}): {}",
+                remote.status,
+                remote.error_text()
+            );
+            return 1;
+        }
+        Err(message) => {
+            eprintln!("ssj: {message}");
+            return 1;
+        }
+    };
+    let infos: Vec<SessionInfo> = remote
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| match parse_reply(line) {
+            Ok(Reply::Info(info)) => Some(info),
+            _ => None,
+        })
+        .collect();
+    if infos.is_empty() {
+        println!("no sessions");
+    }
+    for info in infos {
+        println!(
+            "{}  {:<12}  {:>4}  protocol {}",
+            info.id.as_str(),
+            state_word(info.state),
+            format_age(info.age_secs),
+            info.protocol
+        );
+    }
+    0
+}
+
+async fn kill_session(args: &Args, id: Option<ssj_proto::SessionId>) -> u8 {
+    let mut extra = vec!["--kill".to_owned()];
+    extra.extend(id.map(|id| id.as_str().to_owned()));
+    match run_remote(args, &extra, "").await {
+        Ok(remote) if remote.status.success() => {
+            println!("session ended");
+            0
+        }
+        Ok(remote) => {
+            eprintln!("ssj: could not end the session: {}", remote.error_text());
+            1
+        }
+        Err(message) => {
+            eprintln!("ssj: {message}");
+            1
+        }
+    }
+}
+
+async fn connect_session(args: Args, extra: &[String], attach: bool) -> u8 {
     let identity = Identity::generate();
     let prepared = async {
-        let connect = start_server(&args, &identity.fingerprint()).await?;
+        let connect = start_server(&args, &identity.fingerprint(), extra).await?;
         let env = local_env(&args)?;
         let addr = resolve(&args, connect.port).await?;
         Ok::<_, String>((connect, env, addr))
@@ -162,6 +255,7 @@ async fn session(args: Args) -> u8 {
             addr,
             env,
             escape: args.escape,
+            attach,
         },
         io,
     )
@@ -326,6 +420,8 @@ impl Client {
                     size: self.size,
                     output_offset: self.output_offset,
                 }
+            } else if self.params.attach {
+                Hello::Attach { size: self.size }
             } else {
                 Hello::Start {
                     size: self.size,
@@ -406,6 +502,13 @@ impl Client {
         let welcome = match reply {
             Ok(Some(ServerFrame::Welcome(welcome))) => welcome,
             // the first start may not have arrived, so it is tried again as a start
+            // nobody has started the shell yet, so this client does it
+            Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
+                if matches!(hello, Hello::Attach { .. }) && !self.started =>
+            {
+                self.params.attach = false;
+                return Attempt::Retry;
+            }
             Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
                 if matches!(
                     hello,
@@ -429,6 +532,11 @@ impl Client {
             Err(message) => return Attempt::Fatal(message),
             Ok(_) => return Attempt::Retry,
         };
+        if matches!(hello, Hello::Attach { .. }) {
+            // a client without history takes over the offsets of the server
+            self.output_offset = welcome.output_offset;
+            self.input = ReplayBuffer::starting_at(INPUT_BUFFER, welcome.input_offset);
+        }
         if check_welcome(hello, welcome, self.input.start(), self.input.end()).is_err() {
             return Attempt::Fatal("the server answered with unexpected offsets".to_owned());
         }

@@ -5,11 +5,11 @@ changes, sleep, and packet loss, and the native scrollback of the local terminal
 The server runs without root and the transport is QUIC over UDP.
 
 _Status:_ under development. You can already use it: `ssj` bootstraps the server through `ssh`,
-connects over QUIC, passes the terminal through (window size, exit code, and `~.` to detach), and
-reconnects after a lost connection without losing or repeating input. Not implemented yet:
-`ssj list`, `ssj kill`, attaching to a session from a new client, `ssj install`, and the config
-files. Until `ssj install` exists, copy `ssj-server` to the remote host and point to it with
-`--server-path`. See `SPEC.md` for the design and the threat model.
+connects over QUIC, passes the terminal through (window size, exit code, and `~.` to detach),
+reconnects after a lost connection without losing or repeating input, and manages sessions with
+`ssj list`, `ssj attach`, and `ssj kill`. Not implemented yet: `ssj install` and the config files
+(`client.toml`, `server.toml`). Until `ssj install` exists, copy `ssj-server` to the remote host
+and point to it with `--server-path`. See `SPEC.md` for the design and the threat model.
 
 ## Prerequisites
 
@@ -31,13 +31,14 @@ upload it to `~/.local/share/ssj/bin/`. No root is needed.
 
 ```shell
 ssj user@host                       # start a session
+ssj attach [ID] user@host           # join a running session, for example after a restart
+ssj list user@host                  # sessions with state and age
+ssj kill [ID] user@host             # end a session
 ssj --server-path ~/bin/ssj-server user@host
 ssj --ssh-command 'ssh -J jump' user@host
 ssj --udp-host 203.0.113.7 user@host  # UDP address when it differs from the host name
 ssj --port-range 62000:62100 user@host
-ssj list user@host                  # sessions with state and age
-ssj kill [ID] user@host             # end a session
-ssj install user@host               # upload the server
+ssj install user@host               # upload the server (planned)
 ```
 
 ### Ending and leaving a session

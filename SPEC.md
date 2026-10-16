@@ -233,6 +233,13 @@ Re-attach:
 5. After the handshake, the client sends its window size, so that full-screen programs redraw.
    The server replays the unacknowledged tail of the output buffer.
 
+If the session has no shell yet, because its first client never connected, `Attach` is answered
+with `NotStarted` and the client sends `Start` instead, which also delivers its environment.
+
+When `Attach` replaces the endpoint, the old one is closed first. Its UDP port stays busy until
+QUIC has drained the connections, so the server waits for that and retries a busy port for up to
+two seconds. Without this a narrow port range would refuse an immediate re-attach.
+
 The client keeps the session ID and host in `$XDG_STATE_HOME/ssj/` as a hint. The ID is not a
 secret. `ssj --list user@host` shows the sessions of a host.
 

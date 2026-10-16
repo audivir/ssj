@@ -1,6 +1,6 @@
 //! Command line of `ssj`.
 
-use ssj_proto::{EnvFilter, PROTOCOL};
+use ssj_proto::{EnvFilter, PROTOCOL, SessionId};
 
 /// Where the server file is, as seen on the remote host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -11,8 +11,22 @@ pub enum ServerPath {
     Custom(String),
 }
 
+/// What the client is asked to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Command {
+    /// Start a new session.
+    Connect,
+    /// Join a running session as a new client.
+    Attach(Option<SessionId>),
+    /// Print the sessions on the host.
+    List,
+    /// End a session on the host.
+    Kill(Option<SessionId>),
+}
+
 #[derive(Clone, Debug)]
 pub struct Args {
+    pub command: Command,
     /// `[user@]host` as given.
     pub destination: String,
     /// Command that replaces `ssh`, split at whitespace.
@@ -37,7 +51,7 @@ impl Args {
 }
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let mut destination = None;
+    let mut positionals: Vec<String> = Vec::new();
     let mut ssh_command = vec!["ssh".to_owned()];
     let mut server_path = ServerPath::Default;
     let mut server_args = Vec::new();
@@ -86,14 +100,43 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                 .get_or_insert_with(Vec::new)
                 .push(value("--send-env")?),
             other if other.starts_with('-') => return Err(format!("unknown option {other:?}")),
-            other => {
-                if destination.replace(other.to_owned()).is_some() {
-                    return Err("only one destination is allowed".to_owned());
-                }
-            }
+            other => positionals.push(other.to_owned()),
         }
     }
-    let destination = destination.ok_or("missing destination (user@host)")?;
+    // `list`, `attach`, and `kill` are commands only when a destination follows them
+    let command_word = positionals
+        .first()
+        .filter(|_| positionals.len() > 1)
+        .map(String::as_str);
+    let (command, destination) = match command_word {
+        Some(word @ ("list" | "attach" | "kill")) => {
+            let rest = &positionals[1..];
+            let (id, destination) = match rest {
+                [destination] => (None, destination.clone()),
+                [id, destination] if word != "list" => (
+                    Some(SessionId::parse(id).ok_or("not a valid session id")?),
+                    destination.clone(),
+                ),
+                _ => {
+                    return Err(format!(
+                        "usage: ssj {word} {}user@host",
+                        if word == "list" { "" } else { "[ID] " }
+                    ));
+                }
+            };
+            let command = match word {
+                "list" => Command::List,
+                "attach" => Command::Attach(id),
+                _ => Command::Kill(id),
+            };
+            (command, destination)
+        }
+        _ => match positionals.as_slice() {
+            [destination] => (Command::Connect, destination.clone()),
+            [] => return Err("missing destination (user@host)".to_owned()),
+            _ => return Err("only one destination is allowed".to_owned()),
+        },
+    };
     if destination.is_empty() || destination.contains(char::is_whitespace) {
         return Err("invalid destination".to_owned());
     }
@@ -102,6 +145,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         None => EnvFilter::default_patterns(),
     };
     Ok(Args {
+        command,
         destination,
         ssh_command,
         server_path,

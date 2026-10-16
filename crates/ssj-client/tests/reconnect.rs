@@ -135,6 +135,15 @@ fn start_client(server: &Server, identity: Identity) -> Terminal {
 }
 
 fn start_client_at(server: &Server, identity: Identity, addr: SocketAddr) -> Terminal {
+    start_client_with(server, identity, addr, false)
+}
+
+fn start_client_with(
+    server: &Server,
+    identity: Identity,
+    addr: SocketAddr,
+    attach: bool,
+) -> Terminal {
     let (typed_tx, typed_rx) = tokio::io::duplex(1 << 20);
     let (shown_tx, shown_rx) = tokio::io::duplex(1 << 20);
     let (_, typed) = tokio::io::split(typed_tx);
@@ -161,6 +170,7 @@ fn start_client_at(server: &Server, identity: Identity, addr: SocketAddr) -> Ter
         addr,
         env: Env::default(),
         escape: Some(b'~'),
+        attach,
     };
     let client = tokio::spawn(run_session(params, io));
     Terminal {
@@ -454,4 +464,52 @@ async fn silent_server_is_reported_and_the_report_goes_away_when_it_answers() {
         !after.iter().any(|s| s.contains("reconnecting")),
         "{after:?}"
     );
+}
+
+// A client that restarts has no offsets. It joins with `Attach`, takes over the offsets of the
+// server, and the shell goes on where it was.
+#[tokio::test]
+async fn attaching_client_continues_a_running_session_and_survives_a_later_loss() {
+    let client_id = Identity::generate();
+    let mut server = start_server(ECHO_COUNTING, client_id.fingerprint());
+    let mut first = start_client(&server, client_id_clone(&client_id));
+    first.type_line("one").await;
+    first.wait_for("got:one:1").await;
+    first.typed.write_all(b"~.").await.unwrap();
+    let finished = timeout(Duration::from_secs(10), first.client)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished, Ok(Finished::Detached));
+
+    let mut second = start_client_with(&server, client_id, server.addr, true);
+    second.type_line("two").await;
+    second.wait_for("got:two:2").await;
+    // the second client has the history of the first one only as far as the replay reaches
+    assert!(second.seen.contains("got:two:2"));
+
+    // and it reconnects like any client
+    live_connection(&mut server)
+        .await
+        .close(9u8.into(), b"killed by the test");
+    second.type_line("three").await;
+    second.wait_for("got:three:3").await;
+    second.settle().await;
+    assert!(second.status().iter().any(|s| s.contains("reconnecting")));
+    let lines = second.got_lines();
+    assert_eq!(
+        lines.iter().filter(|l| l.starts_with("got:three")).count(),
+        1
+    );
+}
+
+const ECHO_COUNTING: &str =
+    "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done";
+
+/// A second handle to the same identity, since the first one moves into a client.
+fn client_id_clone(identity: &Identity) -> Identity {
+    Identity {
+        cert: identity.cert.clone(),
+        key: identity.key.clone_key(),
+    }
 }

@@ -226,3 +226,239 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
     };
     assert_eq!(status.code(), Some(7));
 }
+
+fn short_dir() -> PathBuf {
+    let dir = PathBuf::from(format!(
+        "/tmp/ssjt-c-{}-{}",
+        std::process::id(),
+        rand_suffix() % 1_000_000
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Runs `ssj` with the given words and stdin, against the server in the same runtime directory.
+fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_RUNTIME_DIR", runtime)
+        .args(["--ssh-command", ssh.to_str().unwrap()])
+        .args(["--server-path", server_binary().to_str().unwrap()])
+        .args(["--udp-host", "127.0.0.1"])
+        .args(words)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let start = Instant::now();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "ssj {words:?} did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Types `send` into `ssj` and waits until its output contains `expect` before the next step,
+/// like a person who reads the screen. Returns the output when the client has ended.
+fn ssj_typing(runtime: &Path, ssh: &Path, words: &[&str], steps: &[(&str, &str)]) -> Output {
+    use std::io::Read;
+    use std::sync::{Arc, Mutex};
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_RUNTIME_DIR", runtime)
+        .args(["--ssh-command", ssh.to_str().unwrap()])
+        .args(["--server-path", server_binary().to_str().unwrap()])
+        .args(["--udp-host", "127.0.0.1"])
+        .args(words)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let seen = Arc::new(Mutex::new(String::new()));
+    let mut stdout = child.stdout.take().unwrap();
+    let collector = seen.clone();
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        while let Ok(n) = stdout.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            collector
+                .lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+    });
+    let mut stdin = child.stdin.take().unwrap();
+    for (send, expect) in steps {
+        stdin.write_all(send.as_bytes()).unwrap();
+        let start = Instant::now();
+        while !seen.lock().unwrap().contains(expect) {
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "never saw {expect:?} in {:?}",
+                seen.lock().unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let start = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "ssj {words:?} did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = reader.join();
+    let mut output = child.wait_with_output().unwrap();
+    output.stdout = seen.lock().unwrap().clone().into_bytes();
+    output
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[test]
+fn list_attach_detach_attach_kill_through_the_client() {
+    use ssj_proto::bootstrap::format_pin;
+
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    let script = "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done";
+
+    // a session whose first client never shows up, as after a crash of the client
+    let port = free_port();
+    let mut daemon = Command::new(server_binary())
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .args([
+            "--port-range",
+            &format!("{port}:{port}"),
+            "--detached-timeout",
+            "60",
+        ])
+        .args([
+            "--shell",
+            "/bin/sh",
+            "--shell-arg",
+            "-c",
+            "--shell-arg",
+            script,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let dummy = ssj_net::Identity::generate();
+    daemon
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format_pin(&dummy.fingerprint()).as_bytes())
+        .unwrap();
+    assert!(daemon.wait_with_output().unwrap().status.success());
+
+    let listed = ssj(&runtime, &ssh, &["list", "user@localhost"], "");
+    let listing = text(&listed.stdout);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    assert!(
+        listing.contains("disconnected") && listing.contains("protocol 1"),
+        "{listing}"
+    );
+    let id = listing.split_whitespace().next().unwrap().to_owned();
+
+    // the first attach types a line and leaves with the escape
+    let first = ssj_typing(
+        &runtime,
+        &ssh,
+        &["attach", &id, "user@localhost"],
+        &[
+            (
+                "hello
+",
+                "got:hello:1",
+            ),
+            ("~.", ""),
+        ],
+    );
+    assert!(
+        text(&first.stdout).contains("got:hello:1"),
+        "{} / {}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    assert_eq!(first.status.code(), Some(0));
+    assert!(
+        text(&first.stderr).contains("detached"),
+        "{}",
+        text(&first.stderr)
+    );
+
+    // the second one finds the shell as it was
+    let second = ssj_typing(
+        &runtime,
+        &ssh,
+        &["attach", "user@localhost"],
+        &[("again\n", "got:again:2"), ("~.", "")],
+    );
+    assert!(
+        text(&second.stdout).contains("got:again:2"),
+        "{} / {}",
+        text(&second.stdout),
+        text(&second.stderr)
+    );
+
+    let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
+    assert!(listing.contains("detached"), "{listing}");
+
+    let killed = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+    assert!(killed.status.success(), "{}", text(&killed.stderr));
+    assert!(text(&killed.stdout).contains("session ended"));
+    let start = Instant::now();
+    loop {
+        let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
+        if listing.contains("no sessions") {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(8),
+            "still listed: {listing}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn attach_and_kill_without_a_session_say_so() {
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    for words in [
+        vec!["attach", "user@localhost"],
+        vec!["kill", "user@localhost"],
+        vec!["kill", "abcdef012345", "user@localhost"],
+    ] {
+        let output = ssj(&runtime, &ssh, &words, "");
+        assert_eq!(output.status.code(), Some(1), "{words:?}");
+        assert!(
+            text(&output.stderr).contains("no running session"),
+            "{words:?}: {}",
+            text(&output.stderr)
+        );
+    }
+    let listed = ssj(&runtime, &ssh, &["list", "user@localhost"], "");
+    assert!(text(&listed.stdout).contains("no sessions"));
+}
