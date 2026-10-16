@@ -289,11 +289,12 @@ in-memory streams and real shells.
   that the client may leave unacknowledged. A client that sends more waits, and only it.
 - Output is read from the shell only while the replay buffer has room, so a client that does not
   acknowledge cannot make the server buffer more than the capacity.
-- `Close` from the client means "detach": the session and the shell go on. The session ends when
-  the shell has exited and the exit was queued for the client and the connection then ends, or
-  after the detached timeout. If the connection is lost right after the exit was queued but
-  before it arrived, the client finds no server on its next attempt and reports the end of the
-  session without the exit code.
+- The client leaves in two ways (see Ending and leaving a session). `Detach` keeps the session
+  and disables the detached timeout. A lost connection, or a `Close` before the exit, keeps the
+  session with the timeout. The session ends when the shell has exited and the exit was queued for
+  the client and the connection then ends. If the connection is lost right after the exit was
+  queued but before it arrived, the client finds no server on its next attempt and reports the
+  end of the session without the exit code.
 - A new connection replaces the old one. Frames queued for the old one get five seconds to leave.
 
 ### Environment forwarding
