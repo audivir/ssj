@@ -11,6 +11,7 @@ license = "MIT"
 [workspace.dependencies]
 ssj-proto = { path = "crates/ssj-proto", version = "0.1.0" }
 ssj-net = { path = "crates/ssj-net", version = "0.1.0" }
+ssj-server = { path = "crates/ssj-server", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

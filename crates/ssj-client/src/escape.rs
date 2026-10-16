@@ -1,0 +1,81 @@
+//! The escape character of the client, as in `ssh`: `~` at the start of a line.
+
+/// What the client has to do with the typed input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Bytes for the shell.
+    Send(Vec<u8>),
+    /// Leave the session and keep it running (`~.`).
+    Detach,
+    /// Show the list of escape sequences (`~?`).
+    Help,
+}
+
+/// Filters typed input for escape sequences. Chunking of the input does not matter.
+#[derive(Debug)]
+pub struct EscapeFilter {
+    /// `None` turns the feature off.
+    escape: Option<u8>,
+    at_line_start: bool,
+    /// The escape character was typed at the start of a line and waits for the next byte.
+    pending: bool,
+}
+
+impl EscapeFilter {
+    pub fn new(escape: Option<u8>) -> Self {
+        Self {
+            escape,
+            at_line_start: true,
+            pending: false,
+        }
+    }
+
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<Action> {
+        let Some(escape) = self.escape else {
+            return vec![Action::Send(bytes.to_vec())];
+        };
+        let mut actions = Vec::new();
+        let mut run = Vec::new();
+        let flush = |run: &mut Vec<u8>, actions: &mut Vec<Action>| {
+            if !run.is_empty() {
+                actions.push(Action::Send(std::mem::take(run)));
+            }
+        };
+        for &byte in bytes {
+            if self.pending {
+                self.pending = false;
+                match byte {
+                    b'.' => {
+                        flush(&mut run, &mut actions);
+                        actions.push(Action::Detach);
+                        return actions;
+                    }
+                    b'?' => {
+                        flush(&mut run, &mut actions);
+                        actions.push(Action::Help);
+                        self.at_line_start = false;
+                    }
+                    b if b == escape => {
+                        run.push(escape);
+                        self.at_line_start = false;
+                    }
+                    other => {
+                        run.extend([escape, other]);
+                        self.at_line_start = matches!(other, b'\r' | b'\n');
+                    }
+                }
+            } else if self.at_line_start && byte == escape {
+                self.pending = true;
+                self.at_line_start = false;
+            } else {
+                run.push(byte);
+                self.at_line_start = matches!(byte, b'\r' | b'\n');
+            }
+        }
+        flush(&mut run, &mut actions);
+        actions
+    }
+}
+
+/// Text for `~?`.
+pub const HELP: &str = "\r\nSupported escape sequences:\r\n  ~.  detach and leave the session running\r\n  ~~  send a single ~\r\n  ~?  this list\r\n(only at the start of a line)\r\n";

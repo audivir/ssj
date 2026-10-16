@@ -81,8 +81,21 @@ pub async fn serve(
     conns: mpsc::Sender<Connection>,
     stream_timeout: Duration,
 ) {
+    serve_observed(endpoint, conns, stream_timeout, None).await;
+}
+
+/// Like [`serve`], and publishes a handle of every accepted QUIC connection on `observer`.
+///
+/// The handle lets tests end a connection from the server side.
+pub async fn serve_observed(
+    endpoint: quinn::Endpoint,
+    conns: mpsc::Sender<Connection>,
+    stream_timeout: Duration,
+    observer: Option<mpsc::UnboundedSender<quinn::Connection>>,
+) {
     while let Some(incoming) = ssj_net::accept_validated(&endpoint).await {
         let to_session = conns.clone();
+        let observer = observer.clone();
         tokio::spawn(async move {
             // the handshake includes the check of the pinned client certificate
             let Ok(connection) = incoming.await else {
@@ -91,6 +104,9 @@ pub async fn serve(
             let Ok(Ok((send, recv))) = timeout(stream_timeout, connection.accept_bi()).await else {
                 return;
             };
+            if let Some(observer) = observer {
+                let _ = observer.send(connection.clone());
+            }
             let reader = QuicReader {
                 recv,
                 _conn: connection.clone(),

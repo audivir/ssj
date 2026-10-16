@@ -23,6 +23,8 @@ pub struct Args {
     /// Host name or address for the UDP connection when it differs from the destination.
     pub udp_host: Option<String>,
     pub send_env: EnvFilter,
+    /// `None` turns the escape character off.
+    pub escape: Option<u8>,
 }
 
 impl Args {
@@ -41,6 +43,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut server_args = Vec::new();
     let mut udp_host = None;
     let mut send_env: Option<Vec<String>> = None;
+    let mut escape = Some(b'~');
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -67,6 +70,18 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                 ]);
             }
             "--udp-host" => udp_host = Some(value("--udp-host")?),
+            "--escape-char" => {
+                let text = value("--escape-char")?;
+                escape = match text.as_bytes() {
+                    b"none" => None,
+                    [byte] if byte.is_ascii() && !byte.is_ascii_control() => Some(*byte),
+                    _ => {
+                        return Err(
+                            "--escape-char needs one printable ASCII character or none".to_owned()
+                        );
+                    }
+                };
+            }
             "--send-env" => send_env
                 .get_or_insert_with(Vec::new)
                 .push(value("--send-env")?),
@@ -93,6 +108,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         server_args,
         udp_host,
         send_env,
+        escape,
     })
 }
 

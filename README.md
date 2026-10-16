@@ -4,12 +4,12 @@ Session survives jumps: a remote shell for flaky networks. The session survives 
 changes, sleep, and packet loss, and the native scrollback of the local terminal keeps working.
 The server runs without root and the transport is QUIC over UDP.
 
-_Status:_ under development. You can already start a session: `ssj` bootstraps the server through
-`ssh`, connects over QUIC, and passes the terminal through, including the window size and the exit
-code of the shell. Not implemented yet: reconnecting after a lost connection, the `~.` escape,
-`ssj list`, `ssj kill`, `ssj install`, and the config files. Until `ssj install` exists, copy
-`ssj-server` to the remote host and point to it with `--server-path`. See `SPEC.md` for the
-design and the threat model.
+_Status:_ under development. You can already use it: `ssj` bootstraps the server through `ssh`,
+connects over QUIC, passes the terminal through (window size, exit code, and `~.` to detach), and
+reconnects after a lost connection without losing or repeating input. Not implemented yet:
+`ssj list`, `ssj kill`, attaching to a session from a new client, `ssj install`, and the config
+files. Until `ssj install` exists, copy `ssj-server` to the remote host and point to it with
+`--server-path`. See `SPEC.md` for the design and the threat model.
 
 ## Prerequisites
 
@@ -60,7 +60,16 @@ The `~` is the escape character, as in `ssh`. It counts only at the start of a l
 | `~?` | Print this list.                        |
 
 Any other character after `~` is sent as typed. Set another escape character with
-`--escape-char C` or `escape_char` in `client.toml`, or turn the feature off with `none`.
+`--escape-char C`, or turn the feature off with `--escape-char none`. The `escape_char` setting in
+`client.toml` is planned.
+
+### Connection problems
+
+- While the network is down, the window title of the terminal shows `no response from the server`
+  or `connection lost, reconnecting`. The session itself keeps running, and what you type in the
+  meantime is sent when the connection is back. `~.` works even without a connection.
+- The message is written to the window title, so it never draws over the program that runs in
+  the terminal.
 
 ### Timeouts and detached sessions
 

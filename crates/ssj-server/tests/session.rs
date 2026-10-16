@@ -515,9 +515,10 @@ async fn ping_is_answered_while_the_shell_is_stuck() {
     let mut client = harness.connect().await;
     client.start().await;
 
-    client.send(ClientFrame::Ping).await;
-    client.send(ClientFrame::Ping).await;
-    let seen = client.read_until(|s| s.pongs >= 2).await;
-
-    assert!(seen.pongs >= 2);
+    // pings that arrive together may share one pong, so each ping waits for its answer
+    for _ in 0..2 {
+        client.send(ClientFrame::Ping).await;
+        let seen = client.read_until(|s| s.pongs >= 1).await;
+        assert_eq!(seen.pongs, 1);
+    }
 }

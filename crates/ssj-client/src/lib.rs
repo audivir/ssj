@@ -2,5 +2,7 @@
 
 pub mod bootstrap;
 pub mod cli;
+pub mod escape;
 pub mod run;
+pub mod status;
 pub mod terminal;

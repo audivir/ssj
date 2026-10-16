@@ -103,6 +103,34 @@ protocol version, and two peers talk only if their versions are equal.
   example "client 0.4.0 speaks protocol 3, install it on the host with `ssj install`".
 - The bootstrap line `SSJ CONNECT` has no version of its own and is covered by `N`.
 
+### Reconnect (client)
+
+QUIC keeps one connection alive through long outages, so most disconnects need no action by the
+client. A new connection is made only when the old one ends (the server closed it, or the path
+was lost for good). Then:
+
+1. The client shows the status `connection lost, reconnecting (attempt N)` and tries again after
+   0.25, 0.5, 1, 2, and then every 3 seconds. One attempt lasts at most 8 seconds.
+2. Each attempt sends `Resume` with the output offset the client has processed. The server answers
+   with the input offset it has consumed. The client drops that input from its buffer and sends
+   the rest again, so nothing is lost and nothing is repeated, including keystrokes typed during
+   the outage. They wait in the bounded input buffer.
+3. If the server no longer has the output (`ReplayGap`) or the session is gone, the client stops
+   with a clear message.
+4. If the first `Start` may not have arrived, the client tries `Resume` first and falls back to
+   `Start` when the server answers `NotStarted`.
+5. While there is no connection, `~.` still works, so the user is never stuck. The server is not
+   told, and the session keeps running with its timeout.
+
+The client sends a `Ping` every two seconds. After five seconds without any frame from the
+server, it shows `no response from the server for Ns` and removes the message with the next frame.
+
+Status messages go to the window title, with the title stack of xterm (`CSI 22;0t` and
+`CSI 23;0t`) to restore the old title. The client has no copy of the screen, so it must not draw
+over the application. A known limit: a message written in the middle of an escape sequence of the
+remote side, which the output stream may be split inside, would corrupt that sequence. Without a
+terminal, the messages go to stderr as lines.
+
 ### Address of the UDP connection
 
 The client needs the address of the server for the UDP connection. Its default is the host part
