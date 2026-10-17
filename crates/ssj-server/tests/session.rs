@@ -30,6 +30,7 @@ fn config(script: &str) -> SessionConfig {
         accept_env: EnvFilter::default_patterns(),
         replay_capacity: 64 * 1024,
         detached_timeout: None,
+        max_detached: None,
         hello_timeout: Duration::from_secs(2),
     }
 }
@@ -627,4 +628,29 @@ async fn kill_works_without_a_client_and_without_a_shell() {
             "connect_first={connect_first}"
         );
     }
+}
+
+#[tokio::test]
+async fn max_detached_limits_a_deliberate_detach_and_not_a_loss() {
+    // no timeout for lost connections, a short limit for deliberate detaches
+    let mut cfg = config("cat");
+    cfg.detached_timeout = None;
+    cfg.max_detached = Some(Duration::from_millis(400));
+
+    let harness = start(cfg.clone());
+    let mut client = harness.connect().await;
+    client.start().await;
+    drop(client);
+    // the loss is not limited
+    assert!(
+        timeout(Duration::from_millis(1200), harness.session)
+            .await
+            .is_err()
+    );
+
+    let harness = start(cfg);
+    let mut client = harness.connect().await;
+    client.start().await;
+    client.send(ClientFrame::Detach).await;
+    assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
 }

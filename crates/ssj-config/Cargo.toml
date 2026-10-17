@@ -5,7 +5,7 @@ edition.workspace = true
 description = "Strict reader for the flat config files of ssj"
 license.workspace = true
 
+[dependencies]
+
 [lints]
 workspace = true
-
-[dependencies]

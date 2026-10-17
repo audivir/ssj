@@ -72,6 +72,7 @@ fn child_arguments_carry_every_setting() {
     assert_eq!(
         Args {
             daemon_child: false,
+            explicit: original.explicit,
             ..child
         },
         original

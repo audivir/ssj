@@ -1,3 +1,5 @@
+// Fuzz target. The first line is a comment, so that the file does not look like a script.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

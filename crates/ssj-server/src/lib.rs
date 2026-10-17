@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod cli;
+pub mod config;
 pub mod control_cli;
 pub mod control_server;
 pub mod control_socket;

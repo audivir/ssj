@@ -41,6 +41,7 @@ fn start(script: &str, client_pin: ssj_net::Fingerprint) -> Server {
         accept_env: EnvFilter::default_patterns(),
         replay_capacity: 64 * 1024,
         detached_timeout: None,
+        max_detached: None,
         hello_timeout: Duration::from_secs(2),
     };
     let (conns, rx) = mpsc::channel(4);

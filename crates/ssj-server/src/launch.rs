@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, mpsc as tokio_mpsc};
 
 use crate::backend::Direct;
 use crate::cli::Args;
+use crate::config::Config;
 use crate::control_server::{Context, serve_control};
 use crate::control_socket::{SocketFile, control_dir, ensure_private_dir, socket_path};
 use crate::daemon;
@@ -56,6 +57,13 @@ fn fail(message: &str, code: u8) -> ExitCode {
 
 /// The process started by `ssh`.
 pub fn run_parent(args: &Args) -> ExitCode {
+    // the daemon gets the resolved values on its command line, so both agree
+    let mut args = args.clone();
+    match Config::load() {
+        Ok(config) => args.apply_config(&config),
+        Err(message) => return fail(&message, 2),
+    }
+    let args = &args;
     if daemon::is_root() && !args.allow_root {
         return fail("refusing to run as root (use --allow-root to override)", 2);
     }
@@ -125,7 +133,12 @@ fn base_env() -> Vec<(OsString, OsString)> {
 }
 
 /// The daemon: runs the session until it ends.
-pub fn run_child(args: Args) -> ExitCode {
+pub fn run_child(mut args: Args) -> ExitCode {
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(message) => return fail(&message, 2),
+    };
+    args.apply_config(&config);
     daemon::detach_from_session();
     if let Err(err) = daemon::disable_core_dumps() {
         eprintln!("ssj-server: cannot disable core dumps: {err}");
@@ -143,10 +156,10 @@ pub fn run_child(args: Args) -> ExitCode {
         Ok(runtime) => runtime,
         Err(err) => return fail(&format!("cannot start the runtime: {err}"), 1),
     };
-    runtime.block_on(run_session(args, pin))
+    runtime.block_on(run_session(args, config.accept_env(), pin))
 }
 
-async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
+async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCode {
     let id = daemon::random_session_id()
         .ok()
         .and_then(|id| SessionId::parse(&id));
@@ -193,9 +206,10 @@ async fn run_session(args: Args, pin: [u8; 32]) -> ExitCode {
             env: base_env(),
             cwd: None,
         },
-        accept_env: EnvFilter::default_patterns(),
+        accept_env,
         replay_capacity: 1 << 20,
         detached_timeout: args.detached_timeout,
+        max_detached: args.max_detached,
         hello_timeout: HELLO_TIMEOUT,
     };
 

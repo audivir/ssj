@@ -8,7 +8,7 @@ _Status:_ under development. You can already use it: `ssj` bootstraps the server
 connects over QUIC, passes the terminal through (window size, exit code, and `~.` to detach),
 reconnects after a lost connection without losing or repeating input, and manages sessions with
 `ssj list`, `ssj attach`, and `ssj kill`, and installs the server on the host. Not implemented yet:
-downloading the server from a release, and most settings of `client.toml` and `server.toml`. See
+downloading the server from a release. See
 `SPEC.md` for the design and the threat model.
 
 ## Prerequisites
@@ -62,20 +62,20 @@ ssj install user@host               # upload the server file to the host
 
 Ending a session stops the shell. Leaving it keeps the shell running.
 
-| Action                                              | Effect                                              |
+| Action | Effect |
 | --------------------------------------------------- | --------------------------------------------------- |
-| `exit`, Ctrl-D on an empty line                     | Ends the session. `ssj` exits with the shell code.  |
-| `ssj kill [ID] user@host`                           | Ends the session from another terminal.             |
-| `~.` at the start of a line                         | Detaches on purpose. The shell keeps running.       |
-| Closing the terminal, `SIGHUP`, `SIGTERM`, `SIGINT` | Disconnects. The shell keeps running.               |
+| `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
+| `ssj kill [ID] user@host` | Ends the session from another terminal. |
+| `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
+| Closing the terminal, `SIGHUP`, `SIGTERM`, `SIGINT` | Disconnects. The shell keeps running. |
 
 The `~` is the escape character, as in `ssh`. It counts only at the start of a line:
 
-| Keys | Effect                                  |
+| Keys | Effect |
 | ---- | --------------------------------------- |
-| `~.` | Detach and exit with code 0.            |
-| `~~` | Send a literal `~`.                     |
-| `~?` | Print this list.                        |
+| `~.` | Detach and exit with code 0. |
+| `~~` | Send a literal `~`. |
+| `~?` | Print this list. |
 
 Any other character after `~` is sent as typed. Set another escape character with
 `--escape-char C`, or turn the feature off with `--escape-char none`. The `escape_char` setting in
@@ -110,6 +110,34 @@ Any other character after `~` is sent as typed. Set another escape character wit
   sessions.
 - Terminal escape sequences in the output of the remote host (such as clipboard writes) reach
   your terminal, as with `ssh`.
+
+### Config files
+
+Both files are flat `key = value` lines, a strict subset of TOML. A typo in a key is an error with
+the line number, and a file that others can write is refused. Flags on the command line override
+the file.
+
+`$XDG_CONFIG_HOME/ssj/client.toml`:
+
+```toml
+auto_install = "ask"                  # "ask", "always", or "never"
+escape_char = "~"                     # one character, or "none"
+ssh_command = "ssh -J jump"           # replaces ssh
+send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
+```
+
+`$XDG_CONFIG_HOME/ssj/server.toml` on the host:
+
+```toml
+port_range = "60000:61000"            # UDP ports the server may use
+detached_timeout = 604800             # seconds without a client, or "none"
+max_detached = "none"                 # limit even after a deliberate detach
+shell = "/bin/zsh"                    # default: $SHELL
+accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
+```
+
+`accept_env` can only be set in the file, never on the command line, because the command line of
+the server is built by the client.
 
 ### Files
 

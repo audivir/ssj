@@ -5,14 +5,14 @@ We want a secure shell (ssh) alternative with the following properties.
 ## Requirements
 
 1. Non-failure as in `mosh`: the session survives roaming, IP changes, sleep, and packet loss.
-2. Full scroll mode as in eternal terminal (`et`): the native scrollback of the local terminal
+1. Full scroll mode as in eternal terminal (`et`): the native scrollback of the local terminal
    works, so the stream is forwarded as bytes and not as synchronized screen state.
-3. No root on the remote server: no privileged port, no daemon, no setuid binary.
-4. UDP transport for speed.
-5. Written in memory safe Rust, with `#![forbid(unsafe_code)]` in every crate of the workspace.
+1. No root on the remote server: no privileged port, no daemon, no setuid binary.
+1. UDP transport for speed.
+1. Written in memory safe Rust, with `#![forbid(unsafe_code)]` in every crate of the workspace.
    Dependencies such as `ring`, `rustix`, and `tokio` contain `unsafe` code, which is audited
    through the checks listed under Security and not avoided.
-6. No new security vulnerabilities: no home-made cryptography, and no weaker trust model than `ssh`.
+1. No new security vulnerabilities: no home-made cryptography, and no weaker trust model than `ssh`.
 
 ## Architecture
 
@@ -33,14 +33,14 @@ the workspace root):
 ### Bootstrap
 
 1. Client generates an ephemeral keypair and self-signed certificate.
-2. Client runs `ssh user@host <server path>` (see Installation of the server; existing `ssh`
+1. Client runs `ssh user@host <server path>` (see Installation of the server; existing `ssh`
    handles authentication, host keys, and jump hosts) and sends the fingerprint of its certificate on stdin. Stdin is used because argv
    is visible to other users in `ps`.
-3. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
+1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
    range, prints port and server certificate fingerprint on stdout, and detaches from the `ssh`
    channel. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
    the client also accepts and passes on to `ssj-server`.
-4. Client reads the line, closes the `ssh` connection, and switches to UDP.
+1. Client reads the line, closes the `ssh` connection, and switches to UDP.
 
 No bearer secret exists. Both fingerprints are public values that need integrity, not
 confidentiality, and the authenticated `ssh` channel provides that. The server expires the
@@ -111,15 +111,15 @@ was lost for good). Then:
 
 1. The client shows the status `connection lost, reconnecting (attempt N)` and tries again after
    0.25, 0.5, 1, 2, and then every 3 seconds. One attempt lasts at most 8 seconds.
-2. Each attempt sends `Resume` with the output offset the client has processed. The server answers
+1. Each attempt sends `Resume` with the output offset the client has processed. The server answers
    with the input offset it has consumed. The client drops that input from its buffer and sends
    the rest again, so nothing is lost and nothing is repeated, including keystrokes typed during
    the outage. They wait in the bounded input buffer.
-3. If the server no longer has the output (`ReplayGap`) or the session is gone, the client stops
+1. If the server no longer has the output (`ReplayGap`) or the session is gone, the client stops
    with a clear message.
-4. If the first `Start` may not have arrived, the client tries `Resume` first and falls back to
+1. If the first `Start` may not have arrived, the client tries `Resume` first and falls back to
    `Start` when the server answers `NotStarted`.
-5. While there is no connection, `~.` still works, so the user is never stuck. The server is not
+1. While there is no connection, `~.` still works, so the user is never stuck. The server is not
    told, and the session keeps running with its timeout.
 
 The client sends a `Ping` every two seconds. After five seconds without any frame from the
@@ -163,7 +163,7 @@ Location and name:
 Two ways to get it there:
 
 1. Explicit: `ssj install user@host` uploads the matching binary.
-2. On first use: when `ssj user@host` finds no server file for its protocol, the wrapper of the
+1. On first use: when `ssj user@host` finds no server file for its protocol, the wrapper of the
    remote command reports `SSJ MISSING` with exit code 66, which the client tells apart from every
    other failure. What happens next follows the policy `auto_install`:
    - `ask` (default): on a terminal, the client asks `Install it now? [y/N]` and only `y` or `yes`
@@ -178,14 +178,14 @@ How the upload works:
 1. The client asks the host for its system (`uname -sm`, in a line of its own that must appear
    exactly once) and maps it to a build: Linux x86_64 and aarch64 get the static `musl` build,
    macOS arm64 gets the native one. Anything else is refused with a clear message.
-2. The client takes the file `ssj-server-<build>` from `--server-dir` (default: the directory of
+1. The client takes the file `ssj-server-<build>` from `--server-dir` (default: the directory of
    the client itself, where a release archive puts it), or the file named by `--server-binary`.
-3. It sends the SHA-256 digest of the file on the first line of stdin, followed by the file. The
+1. It sends the SHA-256 digest of the file on the first line of stdin, followed by the file. The
    remote script writes to a temporary file (`umask 077`), computes the digest again with
    `sha256sum` or `shasum -a 256`, and compares. It then makes the file executable and runs
    `--version` on it, which catches `noexec` mounts. Only after both checks it moves the file into
    place by atomic rename. Any failure removes the temporary file.
-4. The file name contains the protocol, so a present file is by definition the right one.
+1. The file name contains the protocol, so a present file is by definition the right one.
 
 Trust in the server file:
 
@@ -237,15 +237,15 @@ Re-attach:
 1. Each session has an ID and a control socket (mode `0600`, in the runtime directory). The
    server checks the peer credentials of every connection to the socket and accepts only its own
    uid.
-2. The client runs `ssh user@host ssj-server --attach [ID]` and sends its new fingerprint on
+1. The client runs `ssh user@host ssj-server --attach [ID]` and sends its new fingerprint on
    stdin, as in the normal bootstrap. Without an ID, it attaches to the only session, or fails
    and lists the sessions if there are several.
-3. The `--attach` process connects to the control socket and asks the running server to replace
+1. The `--attach` process connects to the control socket and asks the running server to replace
    the pinned client fingerprint. Authorization comes from `ssh`: only a process of the same user
    can reach the socket.
-4. The server prints `SSJ CONNECT <port> <fingerprint>` again. The old connection, if any, is
+1. The server prints `SSJ CONNECT <port> <fingerprint>` again. The old connection, if any, is
    closed with reason `replaced`.
-5. After the handshake, the client sends its window size, so that full-screen programs redraw.
+1. After the handshake, the client sends its window size, so that full-screen programs redraw.
    The server replays the unacknowledged tail of the output buffer.
 
 If the session has no shell yet, because its first client never connected, `Attach` is answered
@@ -284,8 +284,8 @@ Leaving (the shell keeps running):
   - `~~` sends a literal `~`.
   - `~?` prints the list of escape sequences.
   - Any other character after `~` is sent as typed, including the `~`.
-  The escape character is configurable (`--escape-char C` or `escape_char` in `client.toml`),
-  and `none` turns the feature off.
+    The escape character is configurable (`--escape-char C` or `escape_char` in `client.toml`),
+    and `none` turns the feature off.
 - `Detach` keeps the session running and **disables the detached timeout** until a client
   attaches again. The reason is intent: a user who detaches on purpose wants to come back later,
   for example to a long job, so the server must not end the shell behind their back. After the
@@ -552,4 +552,4 @@ UDP phase:
 1. Default for the detached timeout, which applies to involuntary disconnects only. With no
    timeout, a lost client leaves a live shell behind an open UDP port indefinitely. A finite
    default (for example 7 days) is safer.
-2. Should `ssj-server` refuse to run as root (uid 0), since root is never needed?
+1. Should `ssj-server` refuse to run as root (uid 0), since root is never needed?

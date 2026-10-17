@@ -32,12 +32,24 @@ pub struct Args {
     pub port_range: RangeInclusive<u16>,
     /// `None` waits forever.
     pub detached_timeout: Option<Duration>,
+    /// Upper limit for a session after a deliberate detach. `None` means no limit.
+    pub max_detached: Option<Duration>,
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
     pub allow_root: bool,
     /// Set by the bootstrap process when it starts the real server.
     pub daemon_child: bool,
+    /// Which settings the command line gave, since the config file only fills in the others.
+    pub explicit: Explicit,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Explicit {
+    pub port_range: bool,
+    pub detached_timeout: bool,
+    pub max_detached: bool,
+    pub shell: bool,
 }
 
 impl Default for Args {
@@ -46,10 +58,12 @@ impl Default for Args {
             mode: Mode::Serve,
             port_range: 60000..=61000,
             detached_timeout: Some(Duration::from_secs(7 * 24 * 3600)),
+            max_detached: None,
             shell: None,
             shell_args: Vec::new(),
             allow_root: false,
             daemon_child: false,
+            explicit: Explicit::default(),
         }
     }
 }
@@ -66,6 +80,12 @@ impl Args {
                 .map_or("none".to_owned(), |t| t.as_secs().to_string())
                 .into(),
         ];
+        out.extend([
+            "--max-detached".into(),
+            self.max_detached
+                .map_or("none".to_owned(), |t| t.as_secs().to_string())
+                .into(),
+        ]);
         if let Some(shell) = &self.shell {
             out.extend(["--shell".into(), shell.clone().into()]);
         }
@@ -135,14 +155,23 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 let value = args.next().ok_or("--port-range needs a value")?;
                 out.port_range = parse_port_range(&value.to_string_lossy())
                     .map_err(|e| format!("--port-range: {e}"))?;
+                out.explicit.port_range = true;
             }
             "--detached-timeout" => {
                 let value = args.next().ok_or("--detached-timeout needs a value")?;
                 out.detached_timeout = parse_timeout(&value.to_string_lossy())
                     .map_err(|e| format!("--detached-timeout: {e}"))?;
+                out.explicit.detached_timeout = true;
+            }
+            "--max-detached" => {
+                let value = args.next().ok_or("--max-detached needs a value")?;
+                out.max_detached = parse_timeout(&value.to_string_lossy())
+                    .map_err(|e| format!("--max-detached: {e}"))?;
+                out.explicit.max_detached = true;
             }
             "--shell" => {
-                out.shell = Some(PathBuf::from(args.next().ok_or("--shell needs a value")?))
+                out.shell = Some(PathBuf::from(args.next().ok_or("--shell needs a value")?));
+                out.explicit.shell = true;
             }
             "--shell-arg" => out
                 .shell_args

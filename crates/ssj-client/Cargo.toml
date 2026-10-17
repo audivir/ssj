@@ -5,22 +5,22 @@ edition.workspace = true
 description.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
-
 [[bin]]
 name = "ssj"
 path = "src/main.rs"
 
 [dependencies]
-ssj-config.workspace = true
-ssj-proto.workspace = true
-ssj-net.workspace = true
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustix = { version = "1.1.5", features = ["termios", "stdio"] }
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "io-util", "io-std", "signal", "time", "sync", "process", "net"] }
+rustix = { version = "1.1.5", features = ["stdio", "termios"] }
 sha2 = "0.11.1"
+ssj-config.workspace = true
+ssj-net.workspace = true
+ssj-proto.workspace = true
+tokio = { version = "1.53.3", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 
 [dev-dependencies]
-ssj-server.workspace = true
 pty-process = "0.5.3"
+ssj-server.workspace = true
+
+[lints]
+workspace = true

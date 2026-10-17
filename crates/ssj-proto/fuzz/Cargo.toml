@@ -7,50 +7,50 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
-[dependencies]
-libfuzzer-sys = "0.4"
-ssj-proto = { path = ".." }
-
 [workspace]
 
 [[bin]]
+bench = false
+doc = false
 name = "decode_client"
 path = "fuzz_targets/decode_client.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "decode_server"
 path = "fuzz_targets/decode_server.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "replay_model"
 path = "fuzz_targets/replay_model.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "parse_connect"
 path = "fuzz_targets/parse_connect.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "env_filter"
 path = "fuzz_targets/env_filter.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "control"
 path = "fuzz_targets/control.rs"
 test = false
-doc = false
-bench = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ssj-proto = { path = ".." }

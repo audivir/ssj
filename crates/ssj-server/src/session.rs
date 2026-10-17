@@ -62,6 +62,8 @@ pub struct SessionConfig {
     pub replay_capacity: usize,
     /// End of the session after this long without a connection. `None` waits forever.
     pub detached_timeout: Option<Duration>,
+    /// Limit for the wait after a deliberate detach. `None` waits forever.
+    pub max_detached: Option<Duration>,
     /// Time a new connection has to send its first frame.
     pub hello_timeout: Duration,
 }
@@ -244,13 +246,14 @@ impl<B: Backend> Session<B> {
                         || exit_due)
             });
             let want_input = pending_offset >= pending_input.len();
-            let deadline = match (
-                active.is_none(),
-                detached_on_purpose,
-                config.detached_timeout,
-                detached_since,
-            ) {
-                (true, false, Some(limit), Some(since)) => Some(since + limit),
+            // a deliberate detach waits for max_detached, a lost connection for detached_timeout
+            let limit = if detached_on_purpose {
+                config.max_detached
+            } else {
+                config.detached_timeout
+            };
+            let deadline = match (active.is_none(), limit, detached_since) {
+                (true, Some(limit), Some(since)) => Some(since + limit),
                 _ => None,
             };
             let event = {
