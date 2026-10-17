@@ -136,9 +136,19 @@ send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
 port_range = "60000:61000"            # UDP ports the server may use
 detached_timeout = 604800             # seconds without a client, or "none"
 max_detached = "none"                 # limit even after a deliberate detach
+replay_capacity = 4194304             # bytes of output kept for a client that is away
 shell = "/bin/zsh"                    # default: $SHELL
 accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
 ```
+
+### Jobs while you are away
+
+A job keeps running while no client is connected. The server keeps the newest `replay_capacity`
+bytes of its output (4 MiB by default). If the job writes more than that while you are away, the
+oldest output is forgotten, and when you come back, the terminal shows
+`[ssj: N bytes of output were dropped]` with the exact number. While you are connected, nothing is
+dropped: a slow connection slows the job down, as with `ssh`. Set a higher `replay_capacity` to
+keep more.
 
 `accept_env` can only be set in the file, never on the command line, because the command line of
 the server is built by the client.

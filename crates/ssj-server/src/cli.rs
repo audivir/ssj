@@ -7,6 +7,11 @@ use std::time::Duration;
 
 use ssj_proto::SessionId;
 
+/// Bounds for the output buffer: a size below the lower one cannot hold a screenful of output, and
+/// the upper one keeps a runaway setting from using all the memory of a shared host.
+pub const MIN_REPLAY_CAPACITY: usize = 64 * 1024;
+pub const MAX_REPLAY_CAPACITY: usize = 1 << 30;
+
 /// Lowest port the server may use, so that it never needs privileges.
 pub const MIN_PORT: u16 = 1024;
 
@@ -34,6 +39,8 @@ pub struct Args {
     pub detached_timeout: Option<Duration>,
     /// Upper limit for a session after a deliberate detach. `None` means no limit.
     pub max_detached: Option<Duration>,
+    /// Bytes of output kept for a client that is away, before the oldest are forgotten.
+    pub replay_capacity: usize,
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
@@ -49,6 +56,7 @@ pub struct Explicit {
     pub port_range: bool,
     pub detached_timeout: bool,
     pub max_detached: bool,
+    pub replay_capacity: bool,
     pub shell: bool,
 }
 
@@ -59,6 +67,7 @@ impl Default for Args {
             port_range: 60000..=61000,
             detached_timeout: Some(Duration::from_secs(7 * 24 * 3600)),
             max_detached: None,
+            replay_capacity: 4 << 20,
             shell: None,
             shell_args: Vec::new(),
             allow_root: false,
@@ -80,6 +89,10 @@ impl Args {
                 .map_or("none".to_owned(), |t| t.as_secs().to_string())
                 .into(),
         ];
+        out.extend([
+            "--replay-capacity".into(),
+            self.replay_capacity.to_string().into(),
+        ]);
         out.extend([
             "--max-detached".into(),
             self.max_detached
@@ -112,6 +125,24 @@ pub fn parse_port_range(text: &str) -> Result<RangeInclusive<u16>, String> {
         return Err("LOW is greater than HIGH".to_owned());
     }
     Ok(low..=high)
+}
+
+/// A number of bytes within the allowed bounds.
+pub fn parse_replay_capacity(text: &str) -> Result<usize, String> {
+    let size: usize = text
+        .parse()
+        .map_err(|_| "expected a number of bytes".to_owned())?;
+    check_replay_capacity(size)
+}
+
+pub fn check_replay_capacity(size: usize) -> Result<usize, String> {
+    if (MIN_REPLAY_CAPACITY..=MAX_REPLAY_CAPACITY).contains(&size) {
+        Ok(size)
+    } else {
+        Err(format!(
+            "must be between {MIN_REPLAY_CAPACITY} and {MAX_REPLAY_CAPACITY} bytes"
+        ))
+    }
 }
 
 pub fn parse_timeout(text: &str) -> Result<Option<Duration>, String> {
@@ -162,6 +193,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 out.detached_timeout = parse_timeout(&value.to_string_lossy())
                     .map_err(|e| format!("--detached-timeout: {e}"))?;
                 out.explicit.detached_timeout = true;
+            }
+            "--replay-capacity" => {
+                let value = args.next().ok_or("--replay-capacity needs a value")?;
+                out.replay_capacity = parse_replay_capacity(&value.to_string_lossy())
+                    .map_err(|e| format!("--replay-capacity: {e}"))?;
+                out.explicit.replay_capacity = true;
             }
             "--max-detached" => {
                 let value = args.next().ok_or("--max-detached needs a value")?;

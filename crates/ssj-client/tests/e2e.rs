@@ -8,6 +8,24 @@ use std::time::{Duration, Instant};
 
 const FAKE_SSH: &str = "#!/bin/sh\n# usage: fake-ssh [options] -- destination command\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nshift\nexec sh -c \"$*\"\n";
 
+/// Starts processes one at a time.
+///
+/// A test binary starts processes from several threads. On macOS a pipe is created and then marked
+/// as not inheritable in a second step, and a process that another thread starts in between
+/// inherits the pipe. The reading side of the test then waits for the end of a pipe that an
+/// unrelated daemon keeps open. Taking a lock around the start avoids that.
+pub trait SpawnLocked {
+    fn spawn_locked(&mut self) -> std::io::Result<std::process::Child>;
+}
+
+impl SpawnLocked for std::process::Command {
+    fn spawn_locked(&mut self) -> std::io::Result<std::process::Child> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.spawn()
+    }
+}
+
 fn server_binary() -> PathBuf {
     static BUILD: Once = Once::new();
     BUILD.call_once(|| {
@@ -31,19 +49,35 @@ fn fake_ssh(script: &str) -> PathBuf {
     path
 }
 
+/// A number that no other test of this process gets. The clock is not enough: on macOS it counts
+/// microseconds, and two tests that start together would write their files into the same place.
 fn rand_suffix() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    u128::from(COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
+/// A UDP port for a server that is free now.
+///
+/// The ports come from a range below the ephemeral ports of macOS (from 49152) and of Linux (from
+/// 32768). A port from the ephemeral range can be taken at any moment by the client socket of
+/// another test, and then the packets for the server go to the wrong socket and a handshake waits
+/// forever. Each test process starts at a different place of the range.
 fn free_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    use std::net::UdpSocket;
+    use std::sync::atomic::{AtomicU16, Ordering};
+
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    let base = 20_000 + (std::process::id() % 400) as u16 * 25;
+    loop {
+        let port = base + NEXT.fetch_add(1, Ordering::Relaxed) % 5_000;
+        // free on both families, since the server listens on a dual stack socket
+        let v4 = UdpSocket::bind(("0.0.0.0", port));
+        let v6 = UdpSocket::bind(("::", port));
+        if v4.is_ok() && v6.is_ok() {
+            return port;
+        }
+    }
 }
 
 /// Runs `ssj` with `input` on stdin and a shell command for the server, and waits for it.
@@ -75,7 +109,7 @@ fn run_client(ssh: &Path, shell_args: &[&str], input: &str) -> Output {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_locked()
         .unwrap();
     child
         .stdin
@@ -231,7 +265,7 @@ fn short_dir() -> PathBuf {
     let dir = PathBuf::from(format!(
         "/tmp/ssjt-c-{}-{}",
         std::process::id(),
-        rand_suffix() % 1_000_000
+        rand_suffix()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -248,7 +282,7 @@ fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_locked()
         .unwrap();
     child
         .stdin
@@ -284,7 +318,7 @@ fn ssj_typing(runtime: &Path, ssh: &Path, words: &[&str], steps: &[(&str, &str)]
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_locked()
         .unwrap();
     let seen = Arc::new(Mutex::new(String::new()));
     let mut stdout = child.stdout.take().unwrap();
@@ -361,7 +395,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_locked()
         .unwrap();
     let dummy = ssj_net::Identity::generate();
     daemon
@@ -526,7 +560,7 @@ impl Host {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_locked()
             .unwrap();
         child
             .stdin

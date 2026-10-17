@@ -13,6 +13,24 @@ use ssj_proto::bootstrap::{Connect, format_pin, parse_connect};
 use ssj_proto::{ClientFrame, ExitStatus, ServerFrame, decode_server};
 use tokio::time::timeout;
 
+/// Starts processes one at a time.
+///
+/// A test binary starts processes from several threads. On macOS a pipe is created and then marked
+/// as not inheritable in a second step, and a process that another thread starts in between
+/// inherits the pipe. The reading side of the test then waits for the end of a pipe that an
+/// unrelated daemon keeps open. Taking a lock around the start avoids that.
+pub trait SpawnLocked {
+    fn spawn_locked(&mut self) -> std::io::Result<std::process::Child>;
+}
+
+impl SpawnLocked for std::process::Command {
+    fn spawn_locked(&mut self) -> std::io::Result<std::process::Child> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.spawn()
+    }
+}
+
 pub struct Launched {
     pub connect: Connect,
     pub stdout: Vec<u8>,
@@ -37,12 +55,27 @@ pub fn free_range() -> (u16, u16) {
     (port, port)
 }
 
+/// A UDP port for a server that is free now.
+///
+/// The ports come from a range below the ephemeral ports of macOS (from 49152) and of Linux (from
+/// 32768). A port from the ephemeral range can be taken at any moment by the client socket of
+/// another test, and then the packets for the server go to the wrong socket and a handshake waits
+/// forever. Each test process starts at a different place of the range.
 pub fn free_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    use std::net::UdpSocket;
+    use std::sync::atomic::{AtomicU16, Ordering};
+
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    let base = 20_000 + (std::process::id() % 400) as u16 * 25;
+    loop {
+        let port = base + NEXT.fetch_add(1, Ordering::Relaxed) % 5_000;
+        // free on both families, since the server listens on a dual stack socket
+        let v4 = UdpSocket::bind(("0.0.0.0", port));
+        let v6 = UdpSocket::bind(("::", port));
+        if v4.is_ok() && v6.is_ok() {
+            return port;
+        }
+    }
 }
 
 pub fn server_command(runtime: &Path) -> Command {
@@ -67,7 +100,7 @@ pub fn run_bootstrap(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_locked()
         .unwrap();
     child
         .stdin
@@ -102,7 +135,7 @@ pub fn run_control(runtime: &Path, args: &[&str], stdin_text: &str) -> Output {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_locked()
         .unwrap();
     child
         .stdin
@@ -128,9 +161,13 @@ pub async fn open(
     connect: &Connect,
 ) -> Result<(quinn::SendStream, quinn::RecvStream, quinn::Connection), Box<dyn std::error::Error>> {
     let addr = ([127, 0, 0, 1], connect.port).into();
-    let conn = endpoint(client, connect.fingerprint)
-        .connect(addr, SERVER_NAME)?
-        .await?;
+    // a handshake that gets no answer must fail the test and not wait for ever
+    let conn = timeout(
+        Duration::from_secs(15),
+        endpoint(client, connect.fingerprint).connect(addr, SERVER_NAME)?,
+    )
+    .await
+    .map_err(|_| "the handshake got no answer within 15 seconds")??;
     let (tx, rx) = conn.open_bi().await?;
     Ok((tx, rx, conn))
 }

@@ -69,7 +69,7 @@ fn resume_and_attach_need_a_running_shell() {
 }
 
 #[test]
-fn resume_accepts_exactly_the_retained_offsets() {
+fn resume_continues_where_the_client_stopped_if_the_output_is_still_there() {
     let out = output(100, 200);
     let resume = |output_offset| Hello::Resume {
         size: size(),
@@ -87,7 +87,22 @@ fn resume_accepts_exactly_the_retained_offsets() {
         );
         assert_eq!(action, Action::Resize(size()));
     }
-    for offset in [0, 99, 201, u64::MAX] {
+}
+
+// Output that nobody acknowledged was forgotten, so the answer starts at the oldest byte left.
+#[test]
+fn resume_skips_forgotten_output_and_refuses_bytes_that_never_existed() {
+    let out = output(100, 200);
+    let resume = |output_offset| Hello::Resume {
+        size: size(),
+        output_offset,
+    };
+
+    for offset in [0, 1, 99] {
+        let (welcome, _) = negotiate(resume(offset), &view(true, &out, 42)).unwrap();
+        assert_eq!(welcome.output_offset, 100, "{offset}");
+    }
+    for offset in [201, u64::MAX] {
         assert_eq!(
             negotiate(resume(offset), &view(true, &out, 42)).unwrap_err(),
             ErrorCode::ReplayGap,
@@ -133,7 +148,13 @@ fn client_refuses_a_welcome_that_contradicts_its_own_state() {
     assert!(check(welcome(30, 500)));
     assert!(!check(welcome(31, 500)), "claims input that was never sent");
     assert!(!check(welcome(9, 500)), "takes back acknowledged input");
-    assert!(!check(welcome(20, 501)), "moves the output offset");
+    // forgotten output moves the offset forward, and nothing ever moves it back
+    assert!(check(welcome(20, 501)));
+    assert!(check(welcome(20, 9_000_000)));
+    assert!(
+        !check(welcome(20, 499)),
+        "takes back output that the client has seen"
+    );
 
     let start = Hello::Start {
         size: size(),

@@ -4,6 +4,7 @@
 //! port_range = "60000:61000"          # UDP ports the server may use
 //! detached_timeout = 604800           # seconds without a client, or "none"
 //! max_detached = "none"               # upper limit even after a deliberate detach
+//! replay_capacity = 4194304           # bytes of output kept for an absent client
 //! shell = "/bin/zsh"                  # default: $SHELL
 //! accept_env = ["TERM", "LANG", "LC_*"]
 //! ```
@@ -17,13 +18,14 @@ use std::time::Duration;
 
 use ssj_proto::EnvFilter;
 
-use crate::cli::{Args, parse_port_range};
+use crate::cli::{Args, check_replay_capacity, parse_port_range};
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
     pub port_range: Option<RangeInclusive<u16>>,
     pub detached_timeout: Option<Option<Duration>>,
     pub max_detached: Option<Option<Duration>>,
+    pub replay_capacity: Option<usize>,
     pub shell: Option<PathBuf>,
     pub accept_env: Option<EnvFilter>,
 }
@@ -42,6 +44,12 @@ impl Config {
         config.max_detached = table
             .take_seconds("max_detached")?
             .map(|s| s.filter(|s| *s > 0).map(Duration::from_secs));
+        if let Some(size) = table.take_unsigned("replay_capacity")? {
+            let size =
+                usize::try_from(size).map_err(|_| "replay_capacity is too large".to_owned())?;
+            config.replay_capacity =
+                Some(check_replay_capacity(size).map_err(|e| format!("replay_capacity: {e}"))?);
+        }
         if let Some(shell) = table.take_text("shell")? {
             if !shell.starts_with('/') {
                 return Err("shell must be an absolute path".to_owned());
@@ -91,6 +99,11 @@ impl Args {
             && let Some(limit) = config.max_detached
         {
             self.max_detached = limit;
+        }
+        if !self.explicit.replay_capacity
+            && let Some(size) = config.replay_capacity
+        {
+            self.replay_capacity = size;
         }
         if !self.explicit.shell && self.shell.is_none() {
             self.shell = config.shell.clone();

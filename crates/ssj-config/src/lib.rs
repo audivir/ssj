@@ -193,6 +193,21 @@ impl Table {
         }
     }
 
+    /// A whole number that is not negative, or `None` if the key is not set.
+    pub fn take_unsigned(&mut self, key: &str) -> Result<Option<u64>, String> {
+        match self.take(key) {
+            None => Ok(None),
+            Some(Entry {
+                value: Value::Int(n),
+                line,
+                ..
+            }) => u64::try_from(n)
+                .map(Some)
+                .map_err(|_| format!("line {line}: {key} must not be negative")),
+            Some(entry) => Err(format!("line {}: {key} must be a whole number", entry.line)),
+        }
+    }
+
     /// Fails if keys are left, which no program asked for.
     pub fn finish(self) -> Result<(), String> {
         match self.0.first() {

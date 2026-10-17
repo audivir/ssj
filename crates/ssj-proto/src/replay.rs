@@ -2,8 +2,9 @@ use std::collections::VecDeque;
 
 /// Bytes sent but not yet acknowledged, addressed by their absolute offset in the stream.
 ///
-/// The capacity is fixed. When the buffer is full, the writer has to wait until the peer
-/// acknowledges data, which is what keeps the memory bounded.
+/// The capacity is fixed, which keeps the memory bounded. When the buffer is full, the writer
+/// either waits until the peer acknowledges data ([`ReplayBuffer::push`]), or forgets the oldest
+/// bytes ([`ReplayBuffer::push_evicting`]) when nobody is there to acknowledge them.
 #[derive(Debug)]
 pub struct ReplayBuffer {
     data: VecDeque<u8>,
@@ -57,6 +58,21 @@ impl ReplayBuffer {
         let n = bytes.len().min(self.free());
         self.data.extend(&bytes[..n]);
         n
+    }
+
+    /// Stores all of `bytes` and forgets the oldest bytes to make room. Returns how many bytes
+    /// the start of the buffer moved, which is the number of bytes that were lost.
+    ///
+    /// If `bytes` alone is larger than the capacity, only its last bytes are kept.
+    pub fn push_evicting(&mut self, bytes: &[u8]) -> u64 {
+        let old_start = self.start;
+        let new_end = self.end() + bytes.len() as u64;
+        let keep_new = bytes.len().min(self.capacity);
+        let keep_old = (self.capacity - keep_new).min(self.data.len());
+        self.data.drain(..self.data.len() - keep_old);
+        self.data.extend(&bytes[bytes.len() - keep_new..]);
+        self.start = new_end - self.data.len() as u64;
+        self.start - old_start
     }
 
     /// Drops all bytes before `offset`. Stale acknowledgements are ignored.

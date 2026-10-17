@@ -104,3 +104,58 @@ fn the_daemon_receives_the_resolved_values() {
         )
     );
 }
+
+#[test]
+fn replay_capacity_comes_from_the_file_and_a_flag_wins() {
+    let mut a = args(&[]);
+    assert_eq!(a.replay_capacity, 4 << 20, "the default is four mebibytes");
+
+    let config = Config::from_text("replay_capacity = 1048576\n").unwrap();
+    a.apply_config(&config);
+    assert_eq!(a.replay_capacity, 1 << 20);
+
+    let mut flagged = args(&["--replay-capacity", "262144"]);
+    flagged.apply_config(&config);
+    assert_eq!(flagged.replay_capacity, 262_144);
+}
+
+#[test]
+fn replay_capacity_is_limited_to_a_sensible_range() {
+    for ok in ["65536", "4194304", "1073741824"] {
+        assert!(
+            parse(["--replay-capacity", ok].iter().map(OsString::from)).is_ok(),
+            "{ok}"
+        );
+        assert!(
+            Config::from_text(&format!("replay_capacity = {ok}")).is_ok(),
+            "{ok}"
+        );
+    }
+    for bad in ["0", "65535", "1073741825", "-1", "big", "1.5", ""] {
+        assert!(
+            parse(["--replay-capacity", bad].iter().map(OsString::from)).is_err(),
+            "{bad:?}"
+        );
+    }
+    for bad in [
+        "replay_capacity = 65535",
+        "replay_capacity = -1",
+        "replay_capacity = \"big\"",
+        "replay_capacity = 1073741825",
+    ] {
+        assert!(Config::from_text(bad).is_err(), "{bad}");
+    }
+    assert!(
+        Config::from_text("replay_capacity = 1")
+            .unwrap_err()
+            .contains("must be between")
+    );
+}
+
+#[test]
+fn the_daemon_receives_the_replay_capacity() {
+    let mut a = args(&[]);
+    a.apply_config(&Config::from_text("replay_capacity = 2097152\n").unwrap());
+    let child = parse(a.to_child_args()).unwrap();
+    assert_eq!(child.replay_capacity, 2 << 20);
+}

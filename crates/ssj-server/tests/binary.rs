@@ -146,7 +146,7 @@ fn config_file_is_validated_and_the_server_refuses_a_bad_one() {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_locked()
             .unwrap();
         let pin = format_pin(&Identity::generate().fingerprint());
         child
@@ -211,7 +211,7 @@ async fn accept_env_of_the_file_decides_which_client_variables_reach_the_shell()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn().unwrap();
+    let mut child = command.spawn_locked().unwrap();
     child
         .stdin
         .take()

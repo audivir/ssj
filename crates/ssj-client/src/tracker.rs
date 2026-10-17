@@ -57,6 +57,15 @@ impl Tracker {
         self.state != State::Ground || self.utf8_pending > 0
     }
 
+    /// Forgets a sequence that is still open, for a place where the stream was cut and the rest
+    /// of the sequence will never come. The remembered title stays.
+    pub fn abandon_sequence(&mut self) {
+        self.state = State::Ground;
+        self.utf8_pending = 0;
+        self.payload.clear();
+        self.payload_overflow = false;
+    }
+
     /// The last title set with OSC 0 or OSC 2.
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()

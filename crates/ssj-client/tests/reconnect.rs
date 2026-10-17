@@ -33,6 +33,14 @@ struct Server {
 }
 
 fn start_server(script: &str, client_pin: ssj_net::Fingerprint) -> Server {
+    start_server_sized(script, client_pin, 256 * 1024)
+}
+
+fn start_server_sized(
+    script: &str,
+    client_pin: ssj_net::Fingerprint,
+    replay_capacity: usize,
+) -> Server {
     let identity = Identity::generate();
     let config = quic_server(server_tls(&identity, client_pin));
     let endpoint = Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
@@ -46,7 +54,8 @@ fn start_server(script: &str, client_pin: ssj_net::Fingerprint) -> Server {
             cwd: None,
         },
         accept_env: EnvFilter::default_patterns(),
-        replay_capacity: 256 * 1024,
+        replay_capacity,
+        away_after: Duration::from_secs(30),
         detached_timeout: None,
         max_detached: None,
         hello_timeout: Duration::from_secs(5),
@@ -699,4 +708,83 @@ async fn the_status_waits_while_the_output_stops_inside_an_escape_sequence() {
         !calls.iter().any(|s| s.contains("no response")),
         "{calls:?}"
     );
+}
+
+fn counted(from: u32, to: u32) -> String {
+    (from..=to).map(|i| format!("{i}\n")).collect()
+}
+
+// The job writes far more than the server keeps while the client is away. When the client comes
+// back, the terminal shows how much was lost, once and exactly, and everything after the gap is
+// intact. The second burst of output proves that the client acknowledges with the new offsets: with
+// the old ones, the server would wait for acknowledgements that never move its buffer.
+#[tokio::test]
+async fn output_dropped_while_away_is_reported_exactly_once_and_the_rest_is_intact() {
+    let marker = std::path::PathBuf::from(format!("/tmp/ssjt-gap-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let count = "awk 'BEGIN { for (i = 1; i <= 400000; i++) print i }'";
+    let script = format!(
+        "stty -echo -opost; echo first; sleep 1; {count}; echo DONE; touch {m}; read x; {count}; echo END",
+        m = marker.display()
+    );
+    let client_id = Identity::generate();
+    let mut server = start_server_sized(&script, client_id.fingerprint(), 64 * 1024);
+    let mut terminal = start_client(&server, client_id);
+    terminal.wait_for("first").await;
+
+    // away: the server refuses connections and the current one ends
+    server.endpoint.set_server_config(None);
+    live_connection(&mut server)
+        .await
+        .close(9u8.into(), b"killed by the test");
+    timeout(Duration::from_secs(40), async {
+        while !marker.exists() {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the job must finish while the client is away");
+    sleep(Duration::from_millis(500)).await;
+
+    server
+        .endpoint
+        .set_server_config(Some(server.config.clone()));
+    terminal.wait_for("DONE\n").await;
+    terminal.type_line("go").await;
+    terminal.wait_for("END\n").await;
+
+    let seen = terminal.seen.clone();
+    let prefix = "\x18\x1b[0m\r\n[ssj: ";
+    let suffix = " bytes of output were dropped]\r\n";
+    assert_eq!(seen.matches("[ssj:").count(), 1, "one notice");
+    let at = seen.find(prefix).expect("the notice");
+    // what came before the gap is what the client had seen before it left
+    assert_eq!(&seen[..at], "first\n");
+    let after = &seen[at + prefix.len()..];
+    let digits = after.find(suffix).expect("the end of the notice");
+    let dropped: usize = after[..digits].parse().unwrap();
+    assert!(dropped > 1_000_000, "{dropped}");
+
+    // exactly the forgotten bytes are missing from the stream, and nothing else
+    let expected = format!(
+        "first\n{}DONE\n{}END\n",
+        counted(1, 400_000),
+        counted(1, 400_000)
+    );
+    let rest = &after[digits + suffix.len()..];
+    // the client had seen "first\n", which is six bytes
+    let want = &expected[6 + dropped..];
+    let first_difference = rest.bytes().zip(want.bytes()).position(|(a, b)| a != b);
+    assert!(
+        rest == want,
+        "the bytes after the gap differ: first difference at {first_difference:?}, lengths {} and {}",
+        rest.len(),
+        want.len()
+    );
+    let finished = timeout(Duration::from_secs(10), terminal.client)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished, Ok(Finished::Exited(0)));
+    let _ = std::fs::remove_file(&marker);
 }

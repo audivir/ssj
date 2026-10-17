@@ -117,3 +117,18 @@ fn comment_detection_follows_the_strings() {
         Some("x \" # still inside".to_owned())
     );
 }
+
+#[test]
+fn unsigned_numbers_are_read_and_checked() {
+    let mut table = parse("size = 4194304\nzero = 0\nneg = -1\ntext = \"5\"\n").unwrap();
+    assert_eq!(table.take_unsigned("size").unwrap(), Some(4_194_304));
+    assert_eq!(table.take_unsigned("zero").unwrap(), Some(0));
+    assert_eq!(table.take_unsigned("absent").unwrap(), None);
+    assert!(table.take_unsigned("neg").unwrap_err().contains("negative"));
+    assert!(
+        table
+            .take_unsigned("text")
+            .unwrap_err()
+            .starts_with("line 4:")
+    );
+}

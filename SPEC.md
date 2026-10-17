@@ -74,8 +74,9 @@ Findings of the M0 spike, whose code and tests now live in `crates/ssj-net`:
 ### Session persistence
 
 - The server process outlives the connection. It keeps the PTY and its child shell running.
-- The server buffers output not yet acknowledged by the client, bounded in size. On reconnect,
-  the client sends the last received offset and the server replays from there.
+- The server buffers output not yet acknowledged by the client, bounded in size (`replay_capacity`,
+  default 4 MiB). On reconnect, the client sends the last received offset and the server replays
+  from there. If the server had to forget output in the meantime, see Output while nobody listens.
 - Client input is also numbered and acknowledged, so no keystroke is lost or duplicated.
 - The server exits when the shell exits or after a configurable detached timeout (default off
   for the shell, on for the pinned client fingerprint before the first connect).
@@ -115,8 +116,10 @@ was lost for good). Then:
    with the input offset it has consumed. The client drops that input from its buffer and sends
    the rest again, so nothing is lost and nothing is repeated, including keystrokes typed during
    the outage. They wait in the bounded input buffer.
-1. If the server no longer has the output (`ReplayGap`) or the session is gone, the client stops
-   with a clear message.
+1. If the server forgot output while the client was away, the answer starts at the oldest byte that
+   is left, the client prints a notice with the exact number of bytes that it missed, and goes on.
+   If the session is gone, or the server claims the client has seen bytes that never existed
+   (`ReplayGap`), the client stops with a clear message.
 1. If the first `Start` may not have arrived, the client tries `Resume` first and falls back to
    `Start` when the server answers `NotStarted`.
 1. While there is no connection, `~.` still works, so the user is never stuck. The server is not
@@ -381,8 +384,10 @@ in-memory streams and real shells.
   continue, so holding them behind a blocked input frame is a deadlock (found by the paste
   test). Input is queued with a byte budget of 2 MiB per connection, which is above the 1 MiB
   that the client may leave unacknowledged. A client that sends more waits, and only it.
-- Output is read from the shell only while the replay buffer has room, so a client that does not
-  acknowledge cannot make the server buffer more than the capacity.
+- While a client acknowledges its output, the shell is read only as far as the replay buffer has
+  room, so a client that is slow cannot make the server buffer more than the capacity, and
+  nothing is lost (backpressure as in `ssh`). Output while nobody listens works differently, see
+  the next section.
 - The client leaves in two ways (see Ending and leaving a session). `Detach` keeps the session
   and disables the detached timeout. A lost connection, or a `Close` before the exit, keeps the
   session with the timeout. The session ends when the shell has exited and the exit was queued for
@@ -390,6 +395,40 @@ in-memory streams and real shells.
   queued but before it arrived, the client finds no server on its next attempt and reports the
   end of the session without the exit code.
 - A new connection replaces the old one. Frames queued for the old one get five seconds to leave.
+
+### Output while nobody listens
+
+A session exists so that a long job (a build, a training run) goes on while the client is away.
+Backpressure would defeat that: after one buffer full of output the shell would block in its
+`write` until a client acknowledged something. So the server forgets the oldest output instead
+whenever nobody is there to acknowledge it, which is the case when
+
+- no client is connected (lost connection or deliberate detach), or
+- a client is connected but has acknowledged nothing for `away_after` (10 seconds) while the buffer
+  stayed full. A connection can die without the server hearing of it (a laptop that sleeps), so
+  silence with a full buffer counts as away.
+
+Rules:
+
+- The reading of the PTY never stops while nobody listens. The newest `replay_capacity` bytes are
+  kept, and the start of the buffer moves forward by exactly the number of bytes that were lost.
+- A connection that is still owed bytes that were forgotten is closed, since it cannot be served
+  anymore. Its client resumes on a new connection.
+- `Resume` with an offset before the start of the buffer is not an error. The `Welcome` carries the
+  start of the buffer as its output offset, and the offset may only move forward. The client takes
+  it over, and the difference is the number of bytes it missed.
+- The client writes the notice into the output at that place: a CAN byte (it cancels an escape
+  sequence the terminal may be in the middle of, since the rest of it was lost), the reset of
+  colors and styles (`ESC [ 0 m`), and the line `[ssj: N bytes of output were dropped]`, with N
+  exact. The notice comes from the client and not from the server, because bytes that the server
+  inserted into the stream would shift the offsets of both sides.
+- `Attach` is not affected: it replays at most the newest 64 KiB and starts at that offset.
+- The output of a job that nobody read is lost for good, as in `tmux` with a limited history. Setting
+  `replay_capacity` higher keeps more of it, at the price of memory on the host.
+- A `Resume` offset beyond the end of the output is still refused with `ReplayGap`.
+- On macOS, the terminal driver can write a carriage return twice (`\r\r\n`) when the reader is
+  slower than the writer. This is a property of that system and happens without `ssj` too, so the
+  tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
 ### Environment forwarding
 
@@ -491,8 +530,9 @@ Session and shell (server):
   Environment forwarding.
 - Window size, frame lengths, and offsets are range checked. An offset outside the retained
   replay buffer closes the connection.
-- When the replay buffer is full, the server stops reading from the PTY (backpressure as in
-  `ssh`) and never drops output.
+- While a client is connected and acknowledging, a full replay buffer stops the reading from the
+  PTY (backpressure as in `ssh`) and no output is dropped. While nobody listens, the oldest output
+  is forgotten instead (see Output while nobody listens), so that a detached job is never frozen.
 - The server disables core dumps (`RLIMIT_CORE` 0) and zeroizes private keys after use.
 - Detach closes all inherited file descriptors and redirects stdio to `/dev/null`, so the `ssh`
   channel closes and its output cannot leak. The server ignores `SIGHUP` and calls `setsid`.

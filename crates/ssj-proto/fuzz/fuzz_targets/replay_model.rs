@@ -14,7 +14,7 @@ fuzz_target!(|ops: &[u8]| {
 
     for op in ops.chunks(2) {
         let arg = usize::from(op.get(1).copied().unwrap_or(0));
-        match op[0] % 3 {
+        match op[0] % 4 {
             0 => {
                 let chunk: Vec<u8> = (0..arg % 40)
                     .map(|_| {
@@ -25,6 +25,19 @@ fuzz_target!(|ops: &[u8]| {
                 let taken = buf.push(&chunk);
                 assert_eq!(taken, chunk.len().min(CAPACITY - (model.len() - start)));
                 model.extend_from_slice(&chunk[..taken]);
+            }
+            3 => {
+                let chunk: Vec<u8> = (0..arg % 90)
+                    .map(|_| {
+                        counter = counter.wrapping_add(1);
+                        counter
+                    })
+                    .collect();
+                let moved = buf.push_evicting(&chunk);
+                model.extend_from_slice(&chunk);
+                let new_start = start.max(model.len().saturating_sub(CAPACITY));
+                assert_eq!(moved, (new_start - start) as u64);
+                start = new_start;
             }
             1 => {
                 let offset = arg % (model.len() + 8);

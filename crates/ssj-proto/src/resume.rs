@@ -43,12 +43,16 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
             if !view.shell_started {
                 return Err(ErrorCode::NotStarted);
             }
-            if output_offset < view.output.start() || output_offset > view.output.end() {
+            // a client cannot have seen bytes that were never produced
+            if output_offset > view.output.end() {
                 return Err(ErrorCode::ReplayGap);
             }
+            // Output that was forgotten while nobody was there to acknowledge it is skipped: the
+            // welcome starts at the oldest byte that is left, and the client works out from the
+            // difference how many bytes it missed.
             let welcome = Welcome {
                 input_offset: view.input_received,
-                output_offset,
+                output_offset: output_offset.max(view.output.start()),
             };
             Ok((welcome, Action::Resize(size)))
         }
@@ -72,7 +76,9 @@ pub struct BadWelcome;
 /// Checks the `Welcome` of the server against the client state.
 ///
 /// `input_acked` and `input_sent` are the acknowledged and the written input offsets. A welcome
-/// that claims input the client never sent, or that takes back acknowledged input, is refused.
+/// that claims input the client never sent, or that takes back acknowledged input, is refused. For
+/// `Resume` the output offset may move forward, never back: the bytes in between were forgotten
+/// by the server.
 pub fn check_welcome(
     hello: &Hello,
     welcome: Welcome,
@@ -82,7 +88,7 @@ pub fn check_welcome(
     let ok = match hello {
         Hello::Start { .. } => welcome.input_offset == 0 && welcome.output_offset == 0,
         Hello::Resume { output_offset, .. } => {
-            welcome.output_offset == *output_offset
+            welcome.output_offset >= *output_offset
                 && (input_acked..=input_sent).contains(&welcome.input_offset)
         }
         // a client without history adopts the offsets of the server

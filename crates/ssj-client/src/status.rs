@@ -56,3 +56,12 @@ impl Status for LineStatus {
         Vec::new()
     }
 }
+
+/// The text written into the output where the server had to forget `count` bytes while the
+/// client was away.
+///
+/// The bytes before and after the gap do not belong together, so the text first cancels any
+/// escape sequence the terminal may be in the middle of (CAN) and resets the colors and styles.
+pub fn dropped_notice(count: u64) -> Vec<u8> {
+    format!("\x18\x1b[0m\r\n[ssj: {count} bytes of output were dropped]\r\n").into_bytes()
+}

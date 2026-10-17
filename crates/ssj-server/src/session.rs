@@ -60,6 +60,9 @@ pub struct SessionConfig {
     pub accept_env: EnvFilter,
     /// Output bytes kept until the client acknowledges them.
     pub replay_capacity: usize,
+    /// How long a connected client may leave the output buffer full without acknowledging
+    /// anything before the server treats it as away (a connection that died without telling).
+    pub away_after: Duration,
     /// End of the session after this long without a connection. `None` waits forever.
     pub detached_timeout: Option<Duration>,
     /// Limit for the wait after a deliberate detach. `None` waits forever.
@@ -218,6 +221,8 @@ impl<B: Backend> Session<B> {
         let mut detached_since = Some(Instant::now());
         // a deliberate detach disables the timeout until the next connection
         let mut detached_on_purpose = false;
+        // since when a connected client has left the output buffer full
+        let mut full_since: Option<Instant> = None;
         let mut buf = vec![0u8; READ_CHUNK];
 
         loop {
@@ -230,10 +235,26 @@ impl<B: Backend> Session<B> {
                 Exited(io::Result<ExitStatus>),
                 CanSend(Result<mpsc::OwnedPermit<ServerFrame>, mpsc::error::SendError<()>>),
                 DetachedTimeout,
+                AwayTimer,
                 Command(Option<SessionCommand>),
             }
 
-            let free = output.free().min(buf.len());
+            // Backpressure holds only while somebody is there to acknowledge the output. With
+            // nobody there (no connection, or one that stays silent while the buffer is full) the
+            // job must go on, so the oldest output is forgotten, as a `tmux` session does.
+            let connected = active.as_ref().is_some_and(|a| a.hello_done);
+            if connected && output.free() == 0 {
+                full_since.get_or_insert_with(Instant::now);
+            } else {
+                full_since = None;
+            }
+            let away = !connected || full_since.is_some_and(|t| t.elapsed() >= config.away_after);
+            let read_len = if away {
+                buf.len()
+            } else {
+                output.free().min(buf.len())
+            };
+            let away_deadline = full_since.filter(|_| !away).map(|t| t + config.away_after);
             let exit_due = match (shell.as_ref(), active.as_ref()) {
                 (Some(s), Some(a)) => ready_for_exit(s, a, &output),
                 _ => false,
@@ -259,7 +280,7 @@ impl<B: Backend> Session<B> {
             let event = {
                 let (reader, writer, exit) = match shell.as_mut() {
                     Some(s) => (
-                        (!s.reader_eof && free > 0).then_some(&mut s.reader),
+                        (!s.reader_eof && read_len > 0).then_some(&mut s.reader),
                         (!want_input).then_some(&mut s.writer),
                         s.exit.as_mut(),
                     ),
@@ -278,11 +299,12 @@ impl<B: Backend> Session<B> {
                     command = async { match commands.as_mut() { Some(rx) => rx.recv().await, None => pending().await } } => Event::Command(command),
                     tagged = control_rx.recv() => Event::Control(tagged),
                     data = async { match input { Some(rx) => rx.recv().await, None => pending().await } } => Event::Input(data),
-                    n = async { match reader { Some(r) => r.read(&mut buf[..free]).await, None => pending().await } } => Event::ShellOutput(n),
+                    n = async { match reader { Some(r) => r.read(&mut buf[..read_len]).await, None => pending().await } } => Event::ShellOutput(n),
                     n = async { match writer { Some(w) => w.write(&pending_input[pending_offset..]).await, None => pending().await } } => Event::InputWritten(n),
                     status = async { match exit { Some(e) => e.await, None => pending().await } } => Event::Exited(status),
                     permit = async { match out { Some(tx) => tx.reserve_owned().await, None => pending().await } } => Event::CanSend(permit),
                     _ = async { match deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::DetachedTimeout,
+                    _ = async { match away_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::AwayTimer,
                 }
             };
 
@@ -321,6 +343,8 @@ impl<B: Backend> Session<B> {
                     detached_on_purpose = false;
                 }
                 Event::DetachedTimeout => return SessionEnd::DetachedTimeout,
+                // the next turn of the loop sees that the client is away now
+                Event::AwayTimer => {}
                 Event::Control(None) => unreachable!("the actor holds a sender"),
                 Event::Control(Some(Tagged {
                     generation: g,
@@ -435,8 +459,20 @@ impl<B: Backend> Session<B> {
                     match result {
                         Ok(0) | Err(_) => s.reader_eof = true,
                         Ok(n) => {
-                            let stored = output.push(&buf[..n]);
-                            debug_assert_eq!(stored, n);
+                            let forgotten = output.push_evicting(&buf[..n]);
+                            debug_assert!(
+                                forgotten == 0 || away,
+                                "output dropped under backpressure"
+                            );
+                            // a connection that was still owed the forgotten bytes cannot go on:
+                            // its client resumes on a new connection and learns what it missed
+                            let owed = active
+                                .as_ref()
+                                .is_some_and(|a| a.hello_done && a.output_sent < output.start());
+                            if forgotten > 0 && owed {
+                                lose(&mut active, &events);
+                                detached_since = Some(Instant::now());
+                            }
                         }
                     }
                 }

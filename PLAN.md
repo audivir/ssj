@@ -70,6 +70,15 @@ real problems last time), `cargo deny`, and a commit of only the files the phase
 
 ### Phase 1. Do not freeze a detached job (ARCH-1)
 
+**Done.** The server forgets the oldest output when nobody listens (no client, or a connected
+client that stays silent with a full buffer for 10 seconds), and `Resume` skips the forgotten bytes.
+The client prints the notice itself, from the jump of the offset, because bytes that the server
+inserted into the stream would shift the offsets of both sides. This changes no frame, so the
+golden file is unchanged. `replay_capacity` is a setting (default 4 MiB, 64 KiB to 1 GiB). Details
+are in `SPEC.md` under "Output while nobody listens". Found on the way: the terminal driver of
+macOS can write a carriage return twice when the reader is slower than the writer, so exact-stream
+tests use `stty -opost`. The text below is the original plan.
+
 This is the most important bug. A background build must keep running while no client is connected.
 
 - Replace the rule "never drop output" by two modes in `session.rs`. While a client is connected,

@@ -26,7 +26,7 @@ use crate::config::Config;
 use crate::escape::{Action, EscapeFilter, HELP};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
-use crate::status::{LineStatus, Status, TitleStatus};
+use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
 use crate::terminal::{RawMode, window_size};
 use crate::tracker::Tracker;
 
@@ -595,6 +595,15 @@ impl Client {
         self.status_shown = self.status_wanted.clone();
     }
 
+    /// Writes the notice for `dropped` forgotten bytes into the output.
+    async fn note_gap(&mut self, dropped: u64) {
+        let _ = self.io.output.write_all(&dropped_notice(dropped)).await;
+        let _ = self.io.output.flush().await;
+        // the rest of an open sequence is gone, so the tracker must not wait for it
+        self.tracker.abandon_sequence();
+        self.sync_status(false).await;
+    }
+
     /// Moves the UDP socket to the current network. QUIC then probes the new path at once, and
     /// the server follows the new address.
     fn rebind(&mut self) {
@@ -695,6 +704,14 @@ impl Client {
         }
         if self.input.ack(welcome.input_offset).is_err() {
             return Attempt::Fatal("the server consumed input that was never sent".to_owned());
+        }
+        // The server forgot output while the client was away. The stream goes on at the new
+        // offset, and the gap is shown in the output where it happened, with its exact size.
+        if let Hello::Resume { output_offset, .. } = hello
+            && welcome.output_offset > *output_offset
+        {
+            self.output_offset = welcome.output_offset;
+            self.note_gap(welcome.output_offset - output_offset).await;
         }
         // everything after the offset of the server is sent again, including what was typed offline
         let mut offset = welcome.input_offset;

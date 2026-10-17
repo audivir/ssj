@@ -29,6 +29,7 @@ fn config(script: &str) -> SessionConfig {
         },
         accept_env: EnvFilter::default_patterns(),
         replay_capacity: 64 * 1024,
+        away_after: Duration::from_secs(30),
         detached_timeout: None,
         max_detached: None,
         hello_timeout: Duration::from_secs(2),
@@ -653,4 +654,237 @@ async fn max_detached_limits_a_deliberate_detach_and_not_a_loss() {
     client.start().await;
     client.send(ClientFrame::Detach).await;
     assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
+}
+
+const JOB_LINES: u32 = 1_500_000;
+const REPLAY: usize = 64 * 1024;
+
+/// What the job (`awk` counting up to 1500000, then `DONE`) writes into the terminal.
+///
+/// The job turns off the output processing of the terminal. Otherwise the driver of macOS turns
+/// `\n` into `\r\n` and sometimes writes the `\r` twice when the reader is slower than the
+/// writer, which is a quirk of that system and would make exact comparisons flaky.
+fn job_output() -> Vec<u8> {
+    let mut out = Vec::new();
+    for i in 1..=JOB_LINES {
+        out.extend_from_slice(format!("{i}\n").as_bytes());
+    }
+    out.extend_from_slice(b"DONE\n");
+    out
+}
+
+/// A file that the job creates after its last line, so that a test can tell that it finished.
+fn marker() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let path = std::path::PathBuf::from(format!(
+        "/tmp/ssjt-job-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
+fn job_config(marker: &std::path::Path, replay_capacity: usize) -> SessionConfig {
+    let mut cfg = config(&format!(
+        "stty -opost; awk 'BEGIN {{ for (i = 1; i <= {JOB_LINES}; i++) print i }}'; echo DONE; touch {}",
+        marker.display()
+    ));
+    cfg.replay_capacity = replay_capacity;
+    cfg
+}
+
+async fn wait_for_file(path: &std::path::Path) {
+    timeout(Duration::from_secs(40), async {
+        while !path.exists() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the job did not finish: {} was not created", path.display()));
+    // the last bytes are still on their way from the terminal into the buffer
+    tokio::time::sleep(Duration::from_millis(400)).await;
+}
+
+/// Reads until the shell exits and acknowledges everything like a client does. Returns the offset
+/// of the welcome, the output that followed, and the exit status.
+async fn drain(client: &mut Client) -> (u64, Vec<u8>, Option<ExitStatus>) {
+    let (mut first, mut offset, mut out, mut exit) = (None, 0u64, Vec::new(), None);
+    while let Some(frame) = client.next().await {
+        match frame {
+            ServerFrame::Welcome(welcome) => {
+                first = Some(welcome.output_offset);
+                offset = welcome.output_offset;
+            }
+            ServerFrame::Output(data) => {
+                offset += data.len() as u64;
+                out.extend_from_slice(&data);
+                client.send(ClientFrame::OutputAck(offset)).await;
+            }
+            ServerFrame::Exit(status) => {
+                exit = Some(status);
+                break;
+            }
+            _ => {}
+        }
+    }
+    (first.expect("a welcome"), out, exit)
+}
+
+// The job writes ten megabytes while the client is away. With backpressure it would stop after
+// the first buffer full and wait for a client that is not there.
+#[tokio::test]
+async fn a_job_runs_to_its_end_while_no_client_is_connected() {
+    let marker = marker();
+    let harness = start(job_config(&marker, REPLAY));
+    let mut first = harness.connect().await;
+    first.start().await;
+    drop(first);
+
+    wait_for_file(&marker).await;
+
+    let mut second = harness.connect().await;
+    second
+        .send(ClientFrame::Hello(Hello::Resume {
+            size: size(),
+            output_offset: 0,
+        }))
+        .await;
+    let (welcome_offset, output, exit) = drain(&mut second).await;
+
+    let expected = job_output();
+    // exactly the newest buffer full is left, and the client can work out what it missed
+    assert_eq!(welcome_offset as usize, expected.len() - REPLAY);
+    assert_eq!(output.len(), REPLAY);
+    // no byte is missing or repeated after the gap
+    assert!(
+        output == expected[welcome_offset as usize..],
+        "the bytes after the gap differ"
+    );
+    assert_eq!(exit, Some(ExitStatus::Code(0)));
+    let _ = std::fs::remove_file(&marker);
+}
+
+// While somebody acknowledges, nothing may be forgotten, however slow that client is.
+#[tokio::test]
+async fn a_connected_client_gets_backpressure_and_loses_nothing() {
+    let marker = marker();
+    let harness = start(job_config(&marker, REPLAY));
+    let mut client = harness.connect().await;
+    client.start().await;
+
+    // the client is connected but acknowledges nothing for a while
+    let mut received = 0usize;
+    while let Ok(Some(frame)) = timeout(Duration::from_millis(1500), client.next()).await {
+        if let ServerFrame::Output(data) = frame {
+            received += data.len();
+        }
+    }
+    assert_eq!(
+        received, REPLAY,
+        "the server sends one buffer full and waits"
+    );
+    assert!(
+        !marker.exists(),
+        "the job must be held back by the full buffer"
+    );
+
+    // now it acknowledges, and everything arrives
+    client.send(ClientFrame::OutputAck(received as u64)).await;
+    let (_, rest, exit) = {
+        let (mut offset, mut out, mut exit) = (received as u64, Vec::new(), None);
+        while let Some(frame) = client.next().await {
+            match frame {
+                ServerFrame::Output(data) => {
+                    offset += data.len() as u64;
+                    out.extend_from_slice(&data);
+                    client.send(ClientFrame::OutputAck(offset)).await;
+                }
+                ServerFrame::Exit(status) => {
+                    exit = Some(status);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        (0, out, exit)
+    };
+    let expected = job_output();
+    assert_eq!(received + rest.len(), expected.len());
+    assert!(rest == expected[received..], "bytes were lost or repeated");
+    assert_eq!(exit, Some(ExitStatus::Code(0)));
+    assert!(marker.exists());
+    let _ = std::fs::remove_file(&marker);
+}
+
+// A connection can die without the server hearing of it: the client sleeps, the network drops.
+// Such a client acknowledges nothing, and the job must not wait for it forever.
+#[tokio::test]
+async fn a_connected_client_that_stays_silent_is_treated_as_away() {
+    let marker = marker();
+    let mut cfg = job_config(&marker, REPLAY);
+    cfg.away_after = Duration::from_millis(400);
+    let harness = start(cfg);
+    let mut client = harness.connect().await;
+    client.start().await;
+    let mut seen_bytes = 0u64;
+
+    wait_for_file(&marker).await;
+
+    // The connection was cut by the server, since it still owed the client bytes that are gone.
+    // What the client got before that is a prefix of the stream.
+    let mut closed = false;
+    while let Ok(frame) = timeout(Duration::from_secs(10), client.next()).await {
+        match frame {
+            Some(ServerFrame::Output(data)) => seen_bytes += data.len() as u64,
+            Some(_) => {}
+            None => {
+                closed = true;
+                break;
+            }
+        }
+    }
+    assert!(closed, "the connection of a silent client must be ended");
+
+    let mut again = harness.connect().await;
+    again
+        .send(ClientFrame::Hello(Hello::Resume {
+            size: size(),
+            output_offset: seen_bytes,
+        }))
+        .await;
+    let (welcome_offset, output, exit) = drain(&mut again).await;
+    let expected = job_output();
+    assert!(
+        welcome_offset > seen_bytes,
+        "output must have been forgotten in between"
+    );
+    assert!(output == expected[welcome_offset as usize..]);
+    assert_eq!(exit, Some(ExitStatus::Code(0)));
+    let _ = std::fs::remove_file(&marker);
+}
+
+// A client that joins later gets the newest part of the output, however much was forgotten.
+#[tokio::test]
+async fn attach_after_forgotten_output_gets_exactly_the_newest_tail() {
+    let marker = marker();
+    let harness = start(job_config(&marker, 256 * 1024));
+    let mut first = harness.connect().await;
+    first.start().await;
+    drop(first);
+    wait_for_file(&marker).await;
+
+    let mut joiner = harness.connect().await;
+    joiner
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    let (welcome_offset, output, exit) = drain(&mut joiner).await;
+
+    let expected = job_output();
+    let tail = ssj_proto::resume::ATTACH_TAIL;
+    assert_eq!(welcome_offset as usize, expected.len() - tail);
+    assert!(output == expected[expected.len() - tail..]);
+    assert_eq!(exit, Some(ExitStatus::Code(0)));
+    let _ = std::fs::remove_file(&marker);
 }

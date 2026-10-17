@@ -69,3 +69,77 @@ fn tail_offset_never_points_before_the_retained_bytes() {
     buf.ack(40).unwrap();
     assert_eq!(buf.tail_offset(500), 40);
 }
+
+#[test]
+fn evicting_push_forgets_the_oldest_bytes_and_reports_how_many() {
+    let mut buf = ReplayBuffer::new(8);
+    assert_eq!(buf.push_evicting(b"abcdef"), 0);
+    assert_eq!((buf.start(), buf.end()), (0, 6));
+
+    // two bytes of the old content go
+    assert_eq!(buf.push_evicting(b"ghij"), 2);
+    assert_eq!((buf.start(), buf.end()), (2, 10));
+    assert_eq!(buf.read_from(2, 100).unwrap(), b"cdefghij");
+
+    // bytes before the start are gone, with the right reason
+    assert_eq!(buf.read_from(1, 1), Err(ReplayError::Gone));
+}
+
+#[test]
+fn evicting_push_of_more_than_the_capacity_keeps_the_newest_bytes() {
+    let mut buf = ReplayBuffer::new(4);
+    buf.push(b"ab");
+    // all old bytes and the first six new ones are lost
+    assert_eq!(buf.push_evicting(b"0123456789"), 8);
+    assert_eq!((buf.start(), buf.end()), (8, 12));
+    assert_eq!(buf.read_from(8, 100).unwrap(), b"6789");
+}
+
+/// xorshift, so that the test needs no dependency and is reproducible.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+}
+
+// Whatever mix of the three ways to add bytes is used, the buffer holds exactly the newest bytes
+// that fit and agrees with a plain vector about every offset.
+#[test]
+fn evicting_and_waiting_pushes_agree_with_a_plain_vector() {
+    let mut rng = Rng(0x2545f4914f6cdd1d);
+    let capacity = 37;
+    let mut buf = ReplayBuffer::new(capacity);
+    let mut model: Vec<u8> = Vec::new();
+    let mut start = 0usize;
+    for round in 0..20_000u32 {
+        let chunk: Vec<u8> = (0..rng.next() % 60)
+            .map(|i| (round as u8).wrapping_add(i as u8))
+            .collect();
+        match rng.next() % 3 {
+            0 => {
+                let taken = buf.push(&chunk);
+                assert_eq!(taken, chunk.len().min(capacity - (model.len() - start)));
+                model.extend_from_slice(&chunk[..taken]);
+            }
+            1 => {
+                let moved = buf.push_evicting(&chunk);
+                model.extend_from_slice(&chunk);
+                let new_start = start.max(model.len().saturating_sub(capacity));
+                assert_eq!(moved, (new_start - start) as u64);
+                start = new_start;
+            }
+            _ => {
+                let offset = start + (rng.next() as usize) % (model.len() - start + 1);
+                buf.ack(offset as u64).unwrap();
+                start = offset;
+            }
+        }
+        assert_eq!((buf.start(), buf.end()), (start as u64, model.len() as u64));
+        assert_eq!(buf.read_from(start as u64, 1000).unwrap(), &model[start..]);
+    }
+}
