@@ -1,0 +1,11 @@
+[package]
+name = "ssj-config"
+version.workspace = true
+edition.workspace = true
+description = "Strict reader for the flat config files of ssj"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

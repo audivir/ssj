@@ -51,14 +51,49 @@ pub struct Args {
     pub server_binary: Option<PathBuf>,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
+    /// Which of `ssh_command`, `escape`, and `send_env` the command line set, since the config
+    /// file only fills in the others.
+    pub explicit: Explicit,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Explicit {
+    pub ssh_command: bool,
+    pub escape: bool,
+    pub send_env: bool,
 }
 
 impl Args {
+    /// Fills in what the command line left open from the config file.
+    pub fn apply_config(&mut self, config: &crate::config::Config) {
+        if !self.explicit.ssh_command {
+            self.ssh_command = config.ssh_command.clone();
+        }
+        if !self.explicit.escape {
+            self.escape = config.escape;
+        }
+        if !self.explicit.send_env {
+            self.send_env = config.send_env.clone();
+        }
+        if self.auto_install.is_none() {
+            self.auto_install = Some(config.auto_install);
+        }
+    }
+
     /// Host part of the destination, without the user.
     pub fn host(&self) -> &str {
         self.destination
             .rsplit_once('@')
             .map_or(&self.destination, |(_, host)| host)
+    }
+}
+
+/// One printable ASCII character, or `none`.
+pub fn parse_escape(text: &str) -> Result<Option<u8>, String> {
+    match text.as_bytes() {
+        b"none" => Ok(None),
+        [byte] if byte.is_ascii() && !byte.is_ascii_control() => Ok(Some(*byte)),
+        _ => Err("expected one printable ASCII character or none".to_owned()),
     }
 }
 
@@ -73,6 +108,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut server_dir = None;
     let mut server_binary = None;
     let mut escape = Some(b'~');
+    let (mut ssh_command_set, mut escape_set) = (false, false);
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -86,6 +122,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                 if ssh_command.is_empty() {
                     return Err("--ssh-command is empty".to_owned());
                 }
+                ssh_command_set = true;
             }
             "--server-path" => server_path = ServerPath::Custom(value("--server-path")?),
             "--server-arg" => server_args.push(value("--server-arg")?),
@@ -104,16 +141,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "--server-binary" => server_binary = Some(PathBuf::from(value("--server-binary")?)),
             "--udp-host" => udp_host = Some(value("--udp-host")?),
             "--escape-char" => {
-                let text = value("--escape-char")?;
-                escape = match text.as_bytes() {
-                    b"none" => None,
-                    [byte] if byte.is_ascii() && !byte.is_ascii_control() => Some(*byte),
-                    _ => {
-                        return Err(
-                            "--escape-char needs one printable ASCII character or none".to_owned()
-                        );
-                    }
-                };
+                escape = parse_escape(&value("--escape-char")?)
+                    .map_err(|e| format!("--escape-char: {e}"))?;
+                escape_set = true;
             }
             "--send-env" => send_env
                 .get_or_insert_with(Vec::new)
@@ -164,6 +194,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     if destination.is_empty() || destination.contains(char::is_whitespace) {
         return Err("invalid destination".to_owned());
     }
+    let send_env_set = send_env.is_some();
     let send_env = match send_env {
         Some(patterns) => EnvFilter::new(patterns).map_err(|e| format!("--send-env: {e:?}"))?,
         None => EnvFilter::default_patterns(),
@@ -180,6 +211,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         server_dir,
         server_binary,
         escape,
+        explicit: Explicit {
+            ssh_command: ssh_command_set,
+            escape: escape_set,
+            send_env: send_env_set,
+        },
     })
 }
 

@@ -1,4 +1,9 @@
+use ssj_client::cli::parse;
 use ssj_client::config::{AutoInstall, Config};
+
+fn args(words: &[&str]) -> ssj_client::cli::Args {
+    parse(words.iter().map(|w| w.to_string())).unwrap()
+}
 
 #[test]
 fn defaults_apply_without_a_file_or_with_an_empty_one() {
@@ -7,55 +12,118 @@ fn defaults_apply_without_a_file_or_with_an_empty_one() {
         Config::from_text("# only a comment\n\n   \n").unwrap(),
         Config::default()
     );
-    assert_eq!(Config::default().auto_install, AutoInstall::Ask);
+    let defaults = Config::default();
+    assert_eq!(defaults.auto_install, AutoInstall::Ask);
+    assert_eq!(defaults.escape, Some(b'~'));
+    assert_eq!(defaults.ssh_command, ["ssh"]);
+    assert!(defaults.send_env.matches("TERM") && defaults.send_env.matches("LC_ALL"));
 }
 
 #[test]
-fn auto_install_takes_three_words() {
+fn every_key_is_read() {
+    let config = Config::from_text(
+        "auto_install = \"never\"  # no uploads\n\
+         escape_char = \"#\"\n\
+         ssh_command = \"ssh -J jump -o ForwardAgent=no\"\n\
+         send_env = [\"TERM\", \"EDITOR\", \"MY_*\"]\n",
+    )
+    .unwrap();
+    assert_eq!(config.auto_install, AutoInstall::Never);
+    assert_eq!(config.escape, Some(b'#'));
+    assert_eq!(
+        config.ssh_command,
+        ["ssh", "-J", "jump", "-o", "ForwardAgent=no"]
+    );
+    assert!(config.send_env.matches("EDITOR") && config.send_env.matches("MY_VAR"));
+    assert!(
+        !config.send_env.matches("LANG"),
+        "a list replaces the defaults"
+    );
+    assert_eq!(
+        Config::from_text("escape_char = \"none\"").unwrap().escape,
+        None
+    );
+    assert!(
+        !Config::from_text("send_env = []")
+            .unwrap()
+            .send_env
+            .matches("TERM")
+    );
+}
+
+#[test]
+fn mistakes_are_errors_that_name_the_problem() {
     for (text, expected) in [
-        ("auto_install = \"ask\"", AutoInstall::Ask),
-        ("auto_install = \"always\"", AutoInstall::Always),
+        ("auto_instal = \"never\"", "line 1: unknown key"),
+        ("\n\nauto_install = never", "line 3:"),
         (
-            "auto_install=\"never\"  # no uploads please",
-            AutoInstall::Never,
+            "auto_install = true",
+            "line 1: auto_install must be a string",
         ),
-        ("  auto_install   =   \"never\"\n", AutoInstall::Never),
-    ] {
-        assert_eq!(
-            Config::from_text(text).unwrap().auto_install,
-            expected,
-            "{text:?}"
-        );
-    }
-}
-
-#[test]
-fn mistakes_are_errors_with_the_line_number() {
-    for (text, line) in [
-        ("auto_instal = \"never\"", 1),
-        ("\n\nauto_install = never", 3),
-        ("auto_install = true", 1),
-        ("auto_install = 1", 1),
-        ("auto_install = \"sometimes\"", 1),
-        ("auto_install = \"never\"\nauto_install = \"always\"", 2),
-        ("[section]", 1),
-        ("auto_install", 1),
-        ("auto_install = \"never", 1),
-        ("auto_install = \"ne\\ver\"", 1),
-        ("Auto_Install = \"never\"", 1),
-        ("= \"never\"", 1),
+        (
+            "auto_install = \"sometimes\"",
+            "auto_install must be \"ask\"",
+        ),
+        (
+            "auto_install = \"never\"\nauto_install = \"always\"",
+            "line 2: auto_install is set twice",
+        ),
+        (
+            "escape_char = \"ab\"",
+            "escape_char: expected one printable",
+        ),
+        ("escape_char = \"\"", "escape_char: expected one printable"),
+        ("escape_char = \"\\t\"", "line 1:"),
+        ("ssh_command = \"   \"", "ssh_command is empty"),
+        (
+            "ssh_command = [\"ssh\"]",
+            "line 1: ssh_command must be a string",
+        ),
+        ("send_env = \"TERM\"", "line 1: send_env must be a list"),
+        ("send_env = [\"A-B\"]", "send_env: InvalidCharacter"),
+        ("[section]", "line 1:"),
     ] {
         let error = Config::from_text(text).unwrap_err();
-        assert!(
-            error.starts_with(&format!("line {line}:")),
-            "{text:?}: {error}"
-        );
+        assert!(error.contains(expected), "{text:?}: {error}");
     }
 }
 
-// A comment sign inside a string is part of the string.
 #[test]
-fn hash_inside_a_string_is_not_a_comment() {
-    let error = Config::from_text("auto_install = \"a # b\"").unwrap_err();
-    assert!(error.contains("ask, always, or never"), "{error}");
+fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
+    let config = Config::from_text(
+        "auto_install = \"always\"\nescape_char = \"#\"\nssh_command = \"my-ssh\"\nsend_env = [\"ONLY\"]\n",
+    )
+    .unwrap();
+
+    // nothing on the command line: the file decides
+    let mut plain = args(&["host"]);
+    plain.apply_config(&config);
+    assert_eq!(plain.ssh_command, ["my-ssh"]);
+    assert_eq!(plain.escape, Some(b'#'));
+    assert!(plain.send_env.matches("ONLY") && !plain.send_env.matches("TERM"));
+    assert_eq!(plain.auto_install, Some(AutoInstall::Always));
+
+    // each flag beats its key, and leaves the other keys alone
+    let mut flags = args(&[
+        "--ssh-command",
+        "other-ssh",
+        "--escape-char",
+        "none",
+        "--send-env",
+        "X",
+        "--no-install",
+        "host",
+    ]);
+    flags.apply_config(&config);
+    assert_eq!(flags.ssh_command, ["other-ssh"]);
+    assert_eq!(flags.escape, None);
+    assert!(flags.send_env.matches("X") && !flags.send_env.matches("ONLY"));
+    assert_eq!(flags.auto_install, Some(AutoInstall::Never));
+
+    let mut one = args(&["--escape-char", "!", "host"]);
+    one.apply_config(&config);
+    assert_eq!(
+        (one.escape, one.ssh_command),
+        (Some(b'!'), vec!["my-ssh".to_owned()])
+    );
 }

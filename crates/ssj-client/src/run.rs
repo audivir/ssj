@@ -114,7 +114,7 @@ async fn resolve(args: &Args, port: u16) -> Result<SocketAddr, String> {
         .ok_or_else(|| format!("{host} has no address"))
 }
 
-async fn session(args: Args) -> u8 {
+async fn session(mut args: Args) -> u8 {
     let config = match Config::load() {
         Ok(config) => config,
         Err(message) => {
@@ -122,6 +122,7 @@ async fn session(args: Args) -> u8 {
             return 2;
         }
     };
+    args.apply_config(&config);
     match args.command.clone() {
         Command::Connect => connect_session(args, &config, &[], false).await,
         Command::Attach(id) => {
