@@ -83,11 +83,15 @@ Any other character after `~` is sent as typed. Set another escape character wit
 
 ### Connection problems
 
-- While the network is down, the window title of the terminal shows `no response from the server`
-  or `connection lost, reconnecting`. The session itself keeps running, and what you type in the
-  meantime is sent when the connection is back. `~.` works even without a connection.
-- The message is written to the window title, so it never draws over the program that runs in
-  the terminal.
+- When the server stops answering, the window title of the terminal shows `no response from the server` after a short time that depends on the speed of your link. When the connection is lost,
+  it shows `connection lost, reconnecting`. The session itself keeps running, and what you type
+  meanwhile is sent when the connection is back. `~.` works even without a connection.
+- `ssj` notices when the network changes or the machine wakes from sleep (through the network
+  state of macOS or netlink on Linux, and a clock check everywhere) and moves to the new path at
+  once instead of waiting for a timeout.
+- The message is written to the window title, so it never draws over the program that runs in the
+  terminal. If the output stops in the middle of an escape sequence, the message waits until the
+  sequence is complete.
 
 ### Timeouts and detached sessions
 

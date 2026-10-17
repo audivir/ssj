@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use quinn::Endpoint;
+use ssj_client::netwatch::Cause;
 use ssj_client::run::{Finished, Io, Params, run_session};
 use ssj_client::status::Status;
 use ssj_net::{Identity, quic_server, server_tls};
@@ -117,7 +118,7 @@ impl Status for Recorded {
         Vec::new()
     }
 
-    fn clear(&mut self) -> Vec<u8> {
+    fn clear(&mut self, _title: Option<&str>) -> Vec<u8> {
         self.0.lock().unwrap().push("<clear>".to_owned());
         Vec::new()
     }
@@ -129,6 +130,8 @@ struct Terminal {
     status: Arc<Mutex<Vec<String>>>,
     client: JoinHandle<Result<Finished, String>>,
     seen: String,
+    /// Sends a change of the network to the client.
+    net: mpsc::UnboundedSender<Cause>,
 }
 
 fn start_client(server: &Server, identity: Identity) -> Terminal {
@@ -155,12 +158,14 @@ fn start_client_with(
     // keep the sender alive for the whole run
     std::mem::forget(_resizes_tx);
     let status = Arc::new(Mutex::new(Vec::new()));
+    let (net, net_rx) = mpsc::unbounded_channel();
     let io = Io {
         input: Box::new(typed_rx),
         output: Box::new(shown_tx),
         size: WindowSize::new(24, 80).unwrap(),
         resizes,
         status: Box::new(Recorded(status.clone())),
+        net: net_rx,
     };
     let params = Params {
         identity,
@@ -180,6 +185,7 @@ fn start_client_with(
         status,
         client,
         seen: String::new(),
+        net,
     }
 }
 
@@ -513,4 +519,184 @@ fn client_id_clone(identity: &Identity) -> Identity {
         cert: identity.cert.clone(),
         key: identity.key.clone_key(),
     }
+}
+
+/// Waits until `check` is true, polling, and says how long it took.
+async fn wait_until(limit: Duration, mut check: impl FnMut() -> bool) -> Option<Duration> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < limit {
+        if check() {
+            return Some(start.elapsed());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    None
+}
+
+#[tokio::test]
+async fn a_change_of_the_network_moves_the_same_connection_to_a_new_address() {
+    let client_id = Identity::generate();
+    let mut server = start_server(ECHO_LINES, client_id.fingerprint());
+    let mut terminal = start_client(&server, client_id);
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+    let conn = live_connection(&mut server).await;
+    let old_address = conn.remote_address();
+
+    terminal.net.send(Cause::NetworkChanged).unwrap();
+    let moved = wait_until(Duration::from_secs(5), || {
+        conn.remote_address() != old_address
+    })
+    .await;
+
+    assert!(moved.is_some(), "the server still sees {old_address}");
+    // the same connection, not a new one, and the session goes on
+    assert!(conn.close_reason().is_none());
+    terminal.type_line("after").await;
+    terminal.wait_for("got:after").await;
+    terminal.settle().await;
+    assert_eq!(terminal.got_lines(), ["got:before", "got:after"]);
+    assert!(
+        !terminal.status().iter().any(|s| s.contains("reconnecting")),
+        "{:?}",
+        terminal.status()
+    );
+}
+
+#[tokio::test]
+async fn silence_after_a_change_starts_a_new_connection_quickly_and_loses_nothing() {
+    for (cause, limit) in [
+        (Cause::Woke, Duration::from_millis(2800)),
+        (Cause::NetworkChanged, Duration::from_millis(3800)),
+    ] {
+        let client_id = Identity::generate();
+        let mut server = start_server(ECHO_LINES, client_id.fingerprint());
+        let proxy = start_proxy(server.addr).await;
+        let mut terminal = start_client_at(&server, client_id, proxy.addr);
+        terminal.type_line("one").await;
+        terminal.wait_for("got:one").await;
+        let first = live_connection(&mut server).await.stable_id();
+
+        // the path is dead and nothing tells the connection so
+        proxy.drop_replies.store(true, Ordering::Relaxed);
+        terminal.type_line("two").await;
+        sleep(Duration::from_millis(300)).await;
+        assert!(!terminal.status().iter().any(|s| s.contains("reconnecting")));
+
+        terminal.net.send(cause).unwrap();
+        let reconnecting = wait_until(limit, || {
+            terminal.status().iter().any(|s| s.contains("reconnecting"))
+        })
+        .await;
+        assert!(
+            reconnecting.is_some(),
+            "{cause:?}: no new connection within {limit:?}: {:?}",
+            terminal.status()
+        );
+
+        proxy.drop_replies.store(false, Ordering::Relaxed);
+        terminal.wait_for("got:two").await;
+        terminal.settle().await;
+        assert_eq!(terminal.got_lines(), ["got:one", "got:two"], "{cause:?}");
+        assert_ne!(
+            live_connection(&mut server).await.stable_id(),
+            first,
+            "{cause:?}: it must be a new connection"
+        );
+    }
+}
+
+// An attempt that hangs on a dead path is the slowest part of a reconnect: the handshake packets
+// are repeated with growing pauses, so a path that comes back is found late.
+#[tokio::test]
+async fn a_change_of_the_network_cuts_short_an_attempt_that_hangs() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_proxy(server.addr).await;
+    let mut terminal = start_client_at(&server, client_id, proxy.addr);
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+
+    // the path dies, the first change finds nothing on the new path, and every attempt after
+    // that is answered by nobody
+    proxy.drop_replies.store(true, Ordering::Relaxed);
+    terminal.type_line("during").await;
+    terminal.net.send(Cause::NetworkChanged).unwrap();
+    let reconnecting = wait_until(Duration::from_secs(5), || {
+        terminal.status().iter().any(|s| s.contains("reconnecting"))
+    })
+    .await;
+    assert!(reconnecting.is_some(), "{:?}", terminal.status());
+    // an attempt is in progress and keeps repeating its handshake into the void
+    sleep(Duration::from_millis(1500)).await;
+
+    proxy.drop_replies.store(false, Ordering::Relaxed);
+    let before = std::time::Instant::now();
+    terminal.net.send(Cause::NetworkChanged).unwrap();
+    terminal.wait_for("got:during").await;
+
+    assert!(
+        before.elapsed() < Duration::from_millis(1500),
+        "{:?}",
+        before.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_silent_server_is_reported_after_a_short_time_and_not_at_once() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_proxy(server.addr).await;
+    let mut terminal = start_client_at(&server, client_id, proxy.addr);
+    terminal.type_line("one").await;
+    terminal.wait_for("got:one").await;
+
+    proxy.drop_replies.store(true, Ordering::Relaxed);
+    let reported = wait_until(Duration::from_secs(6), || {
+        terminal.status().iter().any(|s| s.contains("no response"))
+    })
+    .await;
+
+    let after = reported.expect("a stall must be reported");
+    // not at once (a blip is not a stall), but long before the old five seconds plus a tick
+    assert!(after >= Duration::from_millis(1500), "{after:?}");
+    assert!(after <= Duration::from_millis(3600), "{after:?}");
+    // the message does not repeat on every ping
+    sleep(Duration::from_secs(3)).await;
+    let shown = terminal
+        .status()
+        .iter()
+        .filter(|s| s.contains("no response"))
+        .count();
+    assert!(shown <= 2, "{:?}", terminal.status());
+}
+
+const OPEN_SEQUENCE: &str = "printf '\\033]52;c;AAAA'; read x; printf 'BBBB\\007done\\n'";
+
+// Writing a title into the middle of a clipboard sequence would show the rest as garbage.
+#[tokio::test]
+async fn the_status_waits_while_the_output_stops_inside_an_escape_sequence() {
+    let client_id = Identity::generate();
+    let server = start_server(OPEN_SEQUENCE, client_id.fingerprint());
+    let proxy = start_proxy(server.addr).await;
+    let mut terminal = start_client_at(&server, client_id, proxy.addr);
+    terminal.wait_for("AAAA").await;
+
+    proxy.drop_replies.store(true, Ordering::Relaxed);
+    sleep(Duration::from_secs(5)).await;
+    assert!(
+        terminal.status().is_empty(),
+        "the status was written inside a sequence: {:?}",
+        terminal.status()
+    );
+
+    proxy.drop_replies.store(false, Ordering::Relaxed);
+    terminal.type_line("go").await;
+    terminal.wait_for("done").await;
+    // the sequence ended, and the wish for a status was gone by then, so nothing was ever shown
+    let calls = terminal.status();
+    assert!(
+        !calls.iter().any(|s| s.contains("no response")),
+        "{calls:?}"
+    );
 }

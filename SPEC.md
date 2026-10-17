@@ -122,14 +122,39 @@ was lost for good). Then:
 1. While there is no connection, `~.` still works, so the user is never stuck. The server is not
    told, and the session keeps running with its timeout.
 
-The client sends a `Ping` every two seconds. After five seconds without any frame from the
-server, it shows `no response from the server for Ns` and removes the message with the next frame.
+The client sends a `Ping` every second. It reports a stall when no frame has come for four round
+trips of the connection, but not sooner than 2 seconds and not later than 10, so a good link
+reports quickly and a slow link does not report all the time. The message is `no response from the server`, with the time added in steps of five seconds after ten seconds, and it is removed with
+the next frame.
 
-Status messages go to the window title, with the title stack of xterm (`CSI 22;0t` and
-`CSI 23;0t`) to restore the old title. The client has no copy of the screen, so it must not draw
-over the application. A known limit: a message written in the middle of an escape sequence of the
-remote side, which the output stream may be split inside, would corrupt that sequence. Without a
-terminal, the messages go to stderr as lines.
+Network changes and wakes from sleep:
+
+- A source sends a cause on one channel: `NetworkChanged` or `Woke` (stronger). Sources are a clock
+  watch that runs everywhere (a timer that fires 3 seconds late means that the process was
+  suspended, judged on whichever of the wall clock and the monotonic clock saw more time pass),
+  the dynamic store of SystemConfiguration on macOS, and a netlink socket for link, address, and
+  route changes on Linux. The platform sources sit behind the cargo feature `netwatch`, on by
+  default. A source that fails to start only makes the reaction slower.
+- Notifications are collected until they stop for 300 milliseconds, since a change of network
+  produces many. Then the client moves its UDP socket to a new one (`Endpoint::rebind`), so QUIC
+  probes the new path at once and the server follows the new address, and sends a `Ping`. If
+  nothing comes back within 2 seconds (1 second after a wake), the old connection is dropped and a
+  new one is made with `Resume`.
+- A cause during the pause between attempts ends the pause. A cause during an attempt that hangs
+  ends that attempt and starts a new one on the new socket.
+- No source can be tested without a real change of the network. The clock watch, the collecting,
+  and the reaction are tested with injected causes. The macOS source starts in a test, and
+  `cargo test -p ssj-client --test netwatch -- --ignored` waits for a real change. The Linux source
+  has been compiled but not run. `cargo run -p ssj-client --example netwatch` prints what the
+  sources report.
+
+Status messages go to the window title. The client follows the output of the server just far
+enough to know whether it stopped inside an escape sequence or inside a multi-byte character, and
+holds the message back until it did not (it never changes or drops output). When the message goes,
+the title stack of xterm is popped and the last title that the remote side set (read from OSC 0
+and OSC 2 in the output) is set by name, since not every terminal has the stack. At the end of the
+session the message is removed even inside a sequence. Without a terminal, the messages go to
+stderr as lines.
 
 ### Address of the UDP connection
 

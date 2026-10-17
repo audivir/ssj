@@ -21,6 +21,19 @@ tokio = { version = "1.53.3", features = ["io-std", "io-util", "macros", "net", 
 [dev-dependencies]
 pty-process = "0.5.3"
 ssj-server.workspace = true
+tokio = { version = "1.53.3", features = ["test-util"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+netlink-sys = "0.9.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10.1"
+system-configuration = "0.8.0"
+
+[features]
+default = ["netwatch"]
+# Watch the network through the APIs of the system. Without it, only the clock watch runs.
+netwatch = []
 
 [lints]
 workspace = true

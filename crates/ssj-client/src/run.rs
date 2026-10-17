@@ -25,8 +25,10 @@ use crate::cli::{Args, Command};
 use crate::config::Config;
 use crate::escape::{Action, EscapeFilter, HELP};
 use crate::install::{Decision, confirm, decide, install, interactive};
+use crate::netwatch::Cause;
 use crate::status::{LineStatus, Status, TitleStatus};
 use crate::terminal::{RawMode, window_size};
+use crate::tracker::Tracker;
 
 /// Unacknowledged input the client keeps. Must stay below the input budget of the server.
 const INPUT_BUFFER: usize = 1 << 20;
@@ -42,9 +44,18 @@ const BACKOFF: [Duration; 5] = [
     Duration::from_secs(2),
     Duration::from_secs(3),
 ];
-const PING_EVERY: Duration = Duration::from_secs(2);
-/// Silence of the server after which the client says so.
-const STALL_AFTER: Duration = Duration::from_secs(5);
+const PING_EVERY: Duration = Duration::from_secs(1);
+/// The client says that the server is silent after four round trips, but not sooner than this
+/// and not later than the maximum, so that a good link reports a stall quickly and a slow link
+/// does not report one all the time.
+const STALL_MIN: Duration = Duration::from_secs(2);
+const STALL_MAX: Duration = Duration::from_secs(10);
+/// A change of network produces many notifications. One reaction follows when they stop.
+const CHANGE_QUIET: Duration = Duration::from_millis(300);
+/// Time the server gets to answer after the client moved to a new network path, before the client
+/// starts a new connection. A wake from sleep leaves less hope for the old path.
+const PROBE_AFTER_CHANGE: Duration = Duration::from_secs(2);
+const PROBE_AFTER_WAKE: Duration = Duration::from_secs(1);
 
 /// How the session ended.
 #[derive(Debug, PartialEq, Eq)]
@@ -75,6 +86,8 @@ pub struct Io {
     /// New window sizes.
     pub resizes: mpsc::UnboundedReceiver<WindowSize>,
     pub status: Box<dyn Status>,
+    /// Changes of the network and wakes from sleep. A channel that never sends is fine.
+    pub net: mpsc::UnboundedReceiver<Cause>,
 }
 
 pub fn run(args: Args) -> ExitCode {
@@ -317,6 +330,7 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
         size: window_size(),
         resizes,
         status,
+        net: crate::netwatch::start().events,
     };
     let result = run_session(
         Params {
@@ -394,6 +408,14 @@ async fn write_frames(
     let _ = timeout(FLUSH_TIMEOUT, send.stopped()).await;
 }
 
+/// The next cause from the watch, or never if there is none.
+async fn next_cause(net: &mut Option<mpsc::UnboundedReceiver<Cause>>) -> Option<Cause> {
+    match net {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 fn exit_code(status: ExitStatus) -> u8 {
     match status {
         ExitStatus::Code(code) => code,
@@ -403,7 +425,7 @@ fn exit_code(status: ExitStatus) -> u8 {
 
 /// One connection to the server with its reader and writer.
 struct Link {
-    _conn: quinn::Connection,
+    conn: quinn::Connection,
     out: mpsc::UnboundedSender<ClientFrame>,
     writer: JoinHandle<()>,
     reader: FrameReader,
@@ -447,6 +469,11 @@ struct Client {
     size: WindowSize,
     /// Whether a `Start` may have reached the server already.
     started: bool,
+    net: Option<mpsc::UnboundedReceiver<Cause>>,
+    tracker: Tracker,
+    /// The message that should be on the screen, and the one that is.
+    status_wanted: Option<String>,
+    status_shown: Option<String>,
 }
 
 pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
@@ -465,10 +492,16 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
     )));
     let size = io.size;
     let escape = EscapeFilter::new(params.escape);
+    let mut io = io;
+    let net = Some(std::mem::replace(&mut io.net, mpsc::unbounded_channel().1));
     Client {
         endpoint,
         params,
         io,
+        net,
+        tracker: Tracker::new(),
+        status_wanted: None,
+        status_shown: None,
         input: ReplayBuffer::new(INPUT_BUFFER),
         output_offset: 0,
         escape,
@@ -498,9 +531,9 @@ impl Client {
                     env: self.params.env.clone(),
                 }
             };
-            match self.establish(&hello).await {
+            match self.establish_watched(&hello).await {
                 Attempt::Fatal(message) => {
-                    self.clear_status().await;
+                    self.clear_status_at_end().await;
                     return Err(message);
                 }
                 Attempt::Linked(mut link) => {
@@ -510,7 +543,7 @@ impl Client {
                     match self.pump(&mut link).await? {
                         Pumped::Done(finished) => {
                             link.finish().await;
-                            self.clear_status().await;
+                            self.clear_status_at_end().await;
                             return Ok(finished);
                         }
                         Pumped::Lost => {}
@@ -525,22 +558,72 @@ impl Client {
             .await;
             let pause = BACKOFF[attempts.saturating_sub(1).min(BACKOFF.len() - 1)];
             if let Some(finished) = self.wait_offline(pause).await? {
-                self.clear_status().await;
+                self.clear_status_at_end().await;
                 return Ok(finished);
             }
         }
     }
 
     async fn show_status(&mut self, text: &str) {
-        let bytes = self.io.status.show(text);
-        let _ = self.io.output.write_all(&bytes).await;
-        let _ = self.io.output.flush().await;
+        self.status_wanted = Some(text.to_owned());
+        self.sync_status(false).await;
     }
 
     async fn clear_status(&mut self) {
-        let bytes = self.io.status.clear();
+        self.status_wanted = None;
+        self.sync_status(false).await;
+    }
+
+    /// Ends the display for good, even inside a sequence: nothing more will arrive to finish it.
+    async fn clear_status_at_end(&mut self) {
+        self.status_wanted = None;
+        self.sync_status(true).await;
+    }
+
+    /// Writes the status change that is waiting, unless that would split a sequence of the remote
+    /// side or a character. It is retried after every piece of output.
+    async fn sync_status(&mut self, force: bool) {
+        if self.status_wanted == self.status_shown || (!force && self.tracker.in_sequence()) {
+            return;
+        }
+        let bytes = match &self.status_wanted {
+            Some(text) => self.io.status.show(text),
+            None => self.io.status.clear(self.tracker.title()),
+        };
         let _ = self.io.output.write_all(&bytes).await;
         let _ = self.io.output.flush().await;
+        self.status_shown = self.status_wanted.clone();
+    }
+
+    /// Moves the UDP socket to the current network. QUIC then probes the new path at once, and
+    /// the server follows the new address.
+    fn rebind(&mut self) {
+        let local: SocketAddr = if self.params.addr.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        }
+        .parse()
+        .expect("valid");
+        if let Ok(socket) = std::net::UdpSocket::bind(local) {
+            let _ = self.endpoint.rebind(socket);
+        }
+    }
+
+    /// Makes an attempt to connect that a change of the network cuts short and starts again.
+    async fn establish_watched(&mut self, hello: &Hello) -> Attempt {
+        let mut net = self.net.take();
+        let attempt = loop {
+            tokio::select! {
+                attempt = self.establish(hello) => break attempt,
+                cause = next_cause(&mut net) => match cause {
+                    Some(_) => self.rebind(),
+                    None => net = None,
+                },
+            }
+        };
+        self.net = net;
+        attempt
     }
 
     /// Connects, sends the hello, and resends the input that the server has not consumed.
@@ -552,7 +635,7 @@ impl Client {
             let (out, out_rx) = mpsc::unbounded_channel();
             let writer = tokio::spawn(write_frames(send, out_rx));
             let mut link = Link {
-                _conn: conn,
+                conn,
                 out,
                 writer,
                 reader: FrameReader {
@@ -647,6 +730,14 @@ impl Client {
                     }
                 }
                 Some(size) = self.io.resizes.recv() => self.size = size,
+                cause = next_cause(&mut self.net) => match cause {
+                    // the network is different now, so waiting longer makes no sense
+                    Some(_) => {
+                        self.rebind();
+                        return Ok(None);
+                    }
+                    None => self.net = None,
+                },
             }
         }
     }
@@ -688,9 +779,14 @@ impl Client {
     async fn pump(&mut self, link: &mut Link) -> Result<Pumped, String> {
         let mut ping = interval(PING_EVERY);
         let mut stalled = false;
+        // a change of the network that is waiting for the notifications to stop
+        let mut change: Option<(Cause, tokio::time::Instant)> = None;
+        // when the server has to have answered after the client moved to a new path
+        let mut probe: Option<tokio::time::Instant> = None;
         loop {
             // two bytes of reserve: the escape can turn one typed byte into two
             let room = self.input.free().saturating_sub(2).min(self.chunk.len());
+            let change_at = change.map(|(_, at)| at);
             tokio::select! {
                 read = self.io.input.read(&mut self.chunk[..room]), if self.stdin_open && room > 0 => {
                     match read {
@@ -707,6 +803,7 @@ impl Client {
                 frame = link.reader.next() => {
                     let Some(frame) = frame? else { return Ok(Pumped::Lost) };
                     link.last_heard = Instant::now();
+                    probe = None;
                     if std::mem::take(&mut stalled) {
                         self.clear_status().await;
                     }
@@ -715,6 +812,9 @@ impl Client {
                             if self.io.output.write_all(&data).await.and(self.io.output.flush().await).is_err() {
                                 return Err("cannot write to the terminal".to_owned());
                             }
+                            self.tracker.feed(&data);
+                            // a status that was held back because of a sequence can go out now
+                            self.sync_status(false).await;
                             self.output_offset += data.len() as u64;
                             if !link.reader.frame_ready() {
                                 link.send(ClientFrame::OutputAck(self.output_offset));
@@ -738,12 +838,37 @@ impl Client {
                     self.size = size;
                     link.send(ClientFrame::Resize(size));
                 }
+                cause = next_cause(&mut self.net) => match cause {
+                    Some(cause) => {
+                        let strongest = change.map_or(cause, |(old, _)| old.max(cause));
+                        change = Some((strongest, tokio::time::Instant::now() + CHANGE_QUIET));
+                    }
+                    None => self.net = None,
+                },
+                _ = async { tokio::time::sleep_until(change_at.expect("guarded")).await }, if change_at.is_some() => {
+                    let (cause, _) = change.take().expect("guarded");
+                    self.rebind();
+                    link.send(ClientFrame::Ping);
+                    let wait = if cause == Cause::Woke { PROBE_AFTER_WAKE } else { PROBE_AFTER_CHANGE };
+                    probe = Some(tokio::time::Instant::now() + wait);
+                }
+                _ = async { tokio::time::sleep_until(probe.expect("guarded")).await }, if probe.is_some() => {
+                    // the new path did not bring an answer, so the old connection is not worth keeping
+                    return Ok(Pumped::Lost);
+                }
                 _ = ping.tick() => {
                     link.send(ClientFrame::Ping);
                     let silent = link.last_heard.elapsed();
-                    if silent > STALL_AFTER {
+                    let stall_after = (link.conn.rtt() * 4).clamp(STALL_MIN, STALL_MAX);
+                    if silent > stall_after {
                         stalled = true;
-                        self.show_status(&format!("no response from the server for {}s", silent.as_secs())).await;
+                        // the number changes in steps of five seconds, so the title does not flicker
+                        let text = if silent < Duration::from_secs(10) {
+                            "no response from the server".to_owned()
+                        } else {
+                            format!("no response from the server for {}s", silent.as_secs() / 5 * 5)
+                        };
+                        self.show_status(&text).await;
                     }
                 }
             }

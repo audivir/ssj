@@ -88,6 +88,10 @@ This is the most important bug. A background build must keep running while no cl
 
 ### Phase 2. Client robustness (NET-4, PROTO-2, PROTO-3, ARCH-3)
 
+**Done:** the network and wake trigger (D6), adaptive stall detection, and the safe status
+(ARCH-3) with title restoration. **Open:** DNS re-resolution (NET-4), `-e none` (PROTO-2), and the
+resize debounce (PROTO-3).
+
 - **Re-resolve on reconnect.** Resolve the host inside the reconnect loop, on every third attempt.
   Test with a resolver stub that changes its answer.
 - **Debounce resizes.** A trailing-edge timer of 50 ms in the client. The server also coalesces
