@@ -42,30 +42,16 @@ Ideas of the fallback proposal:
 | Session names (9.8) | **Build.** It needs no wire change. |
 | `.tar.gz` releases (9.7) | **Build.** The archive must hold the server builds for all host systems. |
 
-## 2. Decisions I need from you
+## 2. Decisions
 
-**D1. Protocol compatibility (PROTO-1).** `PROTO-1` is real, but `PROTOCOL` is still 1 and nothing
-is released, so there is no lockout today. Options: (a) keep one protocol per binary, make the
-handshake error say which release to use, and keep old server files side by side, which you
-already decided; (b) offer two versions in the ALPN list. I recommend (a) for now and revisiting
-when the first protocol bump is needed. The plan below needs no protocol bump before the first
-release.
-
-**D2. Defaults I assumed earlier and you never confirmed.** The detached timeout of 7 days, and
-`ssj-server` refusing to run as root. I recommend both.
-
-**D3. Speculative local echo.** I recommend not building it. It needs a terminal state machine to
-be safe, and `PROBLEMS.md` itself shows two failures it cannot avoid (full-screen programs, and
-passwords during a latency spike).
-
-**D4. UDP port range (NET-1).** Keep the configurable range, but default to a **random** start
-inside it with a retry, which is already done. To defeat squatting, the server can also accept an
-`--any-port` mode (`bind(0)`) for hosts without a firewall in the way. I recommend adding only
-that flag.
-
-**D5. Dependencies for the CLI.** `clap` plus `clap_complete` and `clap_mangen` in a `build.rs`
-add about 30 crates. I recommend it for the client only, behind the existing `cargo deny` gates.
-The alternative is to keep the small hand-written parser and write the completions by hand.
+| ID | Decision |
+| --- | --- |
+| D1 | One protocol per binary, as before. The handshake error names the release to use, and old server files stay side by side. Revisit at the first protocol bump. |
+| D2 | **No default detached timeout.** `detached_timeout` defaults to `none`, and `max_detached` stays an optional hard limit. **Root is allowed but warned about** on stderr and in the log, and `--allow-root` is no longer needed. |
+| D3 | Speculative echo is not part of this plan's phases. It is an optional late feature (Phase 9), opt-in, with the epoch rule of mosh: no prediction is shown after Enter until the server has echoed one character. |
+| D4 | The UDP port range stays configurable with the default 60000 to 61000. `port_range = "0"` (or `--port-range 0`) means any port the kernel gives. There is no `--any-port` flag. |
+| D5 | The client CLI moves to `clap`, with completions and a man page generated in `build.rs`. |
+| D6 | Wake and network change are handled through platform APIs where available (macOS, Linux), behind one platform-independent trigger, with the clock-jump check as an always-on fallback. |
 
 ## 3. Phases
 
@@ -112,8 +98,18 @@ This is the most important bug. A background build must keep running while no cl
   "inside an escape or OSC sequence" (about 60 lines, no screen state). Replace the title stack by
   setting the title and restoring the remembered title with OSC 0 (decision of `PROBLEMS.md` 6.3,
   which I agree with). Test with a stream cut inside an OSC 52 sequence.
-- **Wake-from-sleep without FFI.** Detect a jump of the wall clock against the monotonic clock in
-  the ping timer, and start a reconnect probe at once. Test with an injected clock.
+- **Wake and network change (D6).** One `Trigger` channel in the client ("network changed" or
+  "woke up"). On a trigger the client rebinds its UDP socket with `Endpoint::rebind`, so that QUIC
+  probes the new path at once, and sends a ping, with a short reconnect probe if that fails. Sources:
+  - the clock-jump check (wall clock against monotonic clock) in the ping timer, always on;
+  - macOS: network change notifications through the `system-configuration` crate, behind a cargo
+    feature;
+  - Linux: route and address changes through netlink, behind a cargo feature.
+    Our crates stay free of `unsafe`; the dependencies hold it, so each one goes through `cargo deny`
+    and a review. A power-state API is not used: waking always brings interfaces back, which fires the
+    network trigger. The core and the clock-jump source get automated tests with an injected source.
+    The platform adapters can only be tested by hand (sleep the laptop, switch Wi-Fi), so the plan
+    lists that as a manual check in the release checklist.
 
 ### Phase 3. Server hardening (SEC-1, SEC-2, NET-1, D2)
 
@@ -123,8 +119,10 @@ This is the most important bug. A background build must keep running while no cl
   directory and refusing a directory that belongs to another host.
 - Check the values of `TERM`, `LANG`, and `LC_*` before they reach the shell: allowed characters
   `A-Za-z0-9._@-`, no path separators, length limit. Reject the whole set, as for the other limits.
-- Refuse to run as root unless `--allow-root` (already implemented, add the decision to the docs).
-- `--any-port` (D4), and a clear message when the range is exhausted that names the flag.
+- Root is allowed (D2): print a warning to stderr and put it in the first line of the log, and
+  remove `--allow-root`. Change the default `detached_timeout` to `none`.
+- `port_range = "0"` for any port (D4), and a clear message when the range is exhausted that
+  suggests setting it to 0 or widening it.
 - Key zeroization of the private keys after the handshake, using `zeroize` if the dependency
   review passes, otherwise by dropping them early. Be honest in the docs about what is not covered.
 
@@ -195,6 +193,21 @@ any pair of byte streams.
 - Record the final decisions D1 to D5.
 - `PROTOCOLS.md` row, golden file, a tagged release, and a first run of the whole release workflow.
 
+### Phase 9. Optional: speculative local echo (D3)
+
+Only after the release, and only if latency over bad links still hurts.
+
+- Off by default (`local_echo = "off" | "auto"` in `client.toml`).
+- Predict only for printable characters on a plain shell line, drawn dim; confirm against the
+  server output, and wipe on anything unexpected.
+- Epoch rule: after Enter, show nothing until the server has echoed one character in the new
+  epoch. This closes the password race without any knowledge of `smcup`.
+- The server reports `ECHO` and canonical mode from `tcgetattr` as an extra signal; it is an
+  addition to the epoch rule, not a replacement. Full-screen programs are covered by the rule that
+  prediction stops at the first escape sequence in the output.
+- Needs a protocol change (a new server frame), so it must land before the first release or wait
+  for protocol 2. Decide this when Phase 8 is done.
+
 ## 4. Order and size
 
 | Phase | Depends on | Size |
@@ -208,6 +221,7 @@ any pair of byte streams.
 | 6 CLI and packaging | 5 | medium |
 | 7 Performance | 4 | medium |
 | 8 Docs and release | all | small |
+| 9 Speculative echo (optional) | 8 | medium |
 
 Phases 1, 2, 3, and 5 are independent and can run in any order. I would do 0, 1, 2, 3 first,
 because they fix bugs in what already exists, then 4 and 5 for the features, then 6, 7, and 8.
