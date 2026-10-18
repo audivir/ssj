@@ -105,6 +105,9 @@ pub enum ClientFrame {
     Detach,
     /// Asks the server to answer with `Pong`, which shows that the path works.
     Ping,
+    /// Input that is compressed (see [`crate::compress`]). It holds the same as an `Input` frame
+    /// and counts for the input offset by its uncompressed length.
+    Compressed(Vec<u8>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +124,9 @@ pub enum ServerFrame {
     /// them (see `slow_client`). The stream goes on after them, and the client adds the number
     /// to its output offset.
     Gap(u64),
+    /// Output that is compressed (see [`crate::compress`]). It holds the same as an `Output`
+    /// frame and counts for the output offset by its uncompressed length.
+    Compressed(Vec<u8>),
 }
 
 const HELLO: u8 = 0x01;
@@ -130,6 +136,7 @@ const OUTPUT_ACK: u8 = 0x04;
 const CLOSE: u8 = 0x05;
 const DETACH: u8 = 0x06;
 const PING: u8 = 0x07;
+const CLIENT_COMPRESSED: u8 = 0x08;
 
 const WELCOME: u8 = 0x81;
 const OUTPUT: u8 = 0x82;
@@ -138,6 +145,7 @@ const EXIT: u8 = 0x84;
 const ERROR: u8 = 0x85;
 const PONG: u8 = 0x86;
 const GAP: u8 = 0x87;
+const COMPRESSED: u8 = 0x88;
 
 const HELLO_START: u8 = 0;
 const HELLO_RESUME: u8 = 1;
@@ -260,6 +268,7 @@ impl ClientFrame {
                 Ok(())
             }
             Self::Input(data) => put_data(out, INPUT, data),
+            Self::Compressed(data) => put_data(out, CLIENT_COMPRESSED, data),
             Self::Resize(size) => {
                 out.push(RESIZE);
                 put_size(out, *size);
@@ -320,6 +329,7 @@ impl ClientFrame {
                 _ => return Err(DecodeError::InvalidValue),
             }),
             INPUT => Self::Input(body.data()?),
+            CLIENT_COMPRESSED => Self::Compressed(body.data()?),
             RESIZE => Self::Resize(body.size()?),
             OUTPUT_ACK => Self::OutputAck(body.u64()?),
             CLOSE => Self::Close,
@@ -367,6 +377,7 @@ impl ServerFrame {
                 out.push(PONG);
                 Ok(())
             }
+            Self::Compressed(data) => put_data(out, COMPRESSED, data),
             Self::Gap(skipped) => {
                 out.push(GAP);
                 out.extend_from_slice(&skipped.to_be_bytes());
@@ -392,6 +403,7 @@ impl ServerFrame {
                 output_offset: body.u64()?,
             }),
             OUTPUT => Self::Output(body.data()?),
+            COMPRESSED => Self::Compressed(body.data()?),
             INPUT_ACK => Self::InputAck(body.u64()?),
             GAP => {
                 let skipped = body.u64()?;

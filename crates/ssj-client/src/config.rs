@@ -7,6 +7,7 @@
 //! send_env = ["TERM", "LANG", "LC_*"]
 //! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
+//! compress = "off"                # "off" (default) or "auto": compress while the link is the limit
 //! local_echo = "off"              # "off" (default) or "auto": show typed characters at once
 //! ```
 //!
@@ -14,7 +15,9 @@
 
 use ssj_proto::EnvFilter;
 
-use crate::cli::{LocalEcho, Transport, parse_escape, parse_local_echo, parse_transport};
+use crate::cli::{
+    LocalEcho, Transport, parse_compress, parse_escape, parse_local_echo, parse_transport,
+};
 
 /// What to do when the server is not installed on the host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,6 +41,8 @@ pub struct Config {
     pub transport: Transport,
     pub auto_attach: bool,
     pub local_echo: LocalEcho,
+    /// `None` when the file does not say.
+    pub compress: Option<bool>,
 }
 
 impl Default for Config {
@@ -50,6 +55,7 @@ impl Default for Config {
             transport: Transport::default(),
             auto_attach: false,
             local_echo: LocalEcho::Off,
+            compress: None,
         }
     }
 }
@@ -80,6 +86,9 @@ impl Config {
         }
         if let Some(patterns) = table.take_list("send_env")? {
             config.send_env = EnvFilter::new(patterns).map_err(|e| format!("send_env: {e:?}"))?;
+        }
+        if let Some(text) = table.take_text("compress")? {
+            config.compress = Some(parse_compress(&text).map_err(|e| format!("compress: {e}"))?);
         }
         if let Some(text) = table.take_text("local_echo")? {
             config.local_echo = parse_local_echo(&text).map_err(|e| format!("local_echo: {e}"))?;

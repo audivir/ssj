@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::time::Duration;
 
+use ssj_proto::compress::{Compressor, inflate};
 use ssj_proto::frame::{MAX_DATA_LEN, MAX_FRAME_LEN};
 use ssj_proto::resume::{Action, ServerView, negotiate};
 use ssj_proto::{
@@ -36,6 +37,12 @@ const OUT_QUEUE: usize = 2;
 /// in the same byte stream as the input and are what lets the shell continue. The client limits
 /// its unacknowledged input to less than this, so the reader does not block on the budget.
 pub const INPUT_BUDGET: usize = 2 * 1024 * 1024;
+
+/// Output is compressed only while at least this many bytes are not acknowledged by the client
+/// (waiting or on the way), which means that the link is slower than the shell.
+const COMPRESS_BACKLOG: u64 = 256 * 1024;
+/// Chunks shorter than this are not worth compressing.
+const COMPRESS_MIN_CHUNK: usize = 1024;
 
 /// Byte stream pair of one client connection.
 pub struct Connection {
@@ -73,6 +80,8 @@ pub struct SessionConfig {
     /// Output bytes kept until the client acknowledges them.
     pub replay_capacity: usize,
     pub slow_client: SlowClient,
+    /// Compress output for a client when the link holds it back (see [`COMPRESS_BACKLOG`]).
+    pub compress: bool,
     /// With [`SlowClient::Drop`]: the most output that may wait to be sent to a connected client.
     /// What the shell wrote before the client connected (the replay) does not count.
     pub live_backlog: usize,
@@ -257,6 +266,7 @@ impl<B: Backend> Session<B> {
         // since when a connected client has left the output buffer full
         let mut full_since: Option<Instant> = None;
         let mut buf = vec![0u8; READ_CHUNK];
+        let mut compressor = Compressor::new();
 
         loop {
             enum Event {
@@ -589,8 +599,21 @@ impl<B: Backend> Session<B> {
                         let chunk = output
                             .read_from(a.output_sent, MAX_DATA_LEN)
                             .expect("sent offset lies inside the buffer");
+                        // How much the client has not taken yet: what waits to be sent and what
+                        // was sent and is not acknowledged. Compressing costs time, and it only
+                        // pays when the link is what holds the output back. A link that keeps
+                        // up has little of this, because the acknowledgements come back at once.
+                        let waiting = output.end() - output.start();
                         a.output_sent += chunk.len() as u64;
-                        ServerFrame::Output(chunk)
+                        let packed = (config.compress
+                            && waiting >= COMPRESS_BACKLOG
+                            && chunk.len() >= COMPRESS_MIN_CHUNK)
+                            .then(|| compressor.compress(&chunk))
+                            .flatten();
+                        match packed {
+                            Some(packed) => ServerFrame::Compressed(packed),
+                            None => ServerFrame::Output(chunk),
+                        }
                     } else if let Some(s) = shell.as_mut().filter(|s| ready_for_exit(s, a, &output))
                     {
                         s.exit_queued = true;
@@ -802,6 +825,14 @@ async fn read_connection(
                 }
             };
             pending.drain(..used);
+            // compressed input is the same as plain input once it is inflated
+            let frame = match frame {
+                ClientFrame::Compressed(packed) if got_hello => match inflate(&packed) {
+                    Ok(data) => ClientFrame::Input(data),
+                    Err(_) => return send(Control::Violation(ErrorCode::Violation)).await,
+                },
+                other => other,
+            };
             match (frame, got_hello) {
                 (ClientFrame::Hello(hello), false) => {
                     got_hello = true;
@@ -826,6 +857,10 @@ async fn read_connection(
                 (ClientFrame::Close, true) => return send(Control::Close).await,
                 (ClientFrame::Detach, true) => return send(Control::Detach).await,
                 (ClientFrame::Ping, true) => send(Control::Ping).await,
+                // inflated above, and refused before the hello
+                (ClientFrame::Compressed(_), _) => {
+                    return send(Control::Violation(ErrorCode::BadHello)).await;
+                }
             }
         }
         // a header that announces more than a frame may hold is rejected by the decoder, so

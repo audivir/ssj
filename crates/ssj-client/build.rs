@@ -37,7 +37,10 @@ How to reach the server.
 \fBauto_attach\fR = true | false
 Join the only session without a client.
 .TP
-\\fBlocal_echo\\fR = "off" | "auto"
+\fBcompress\fR = "off" | "auto"
+Compress input and output while the link is the limit. Off by default, since compressing text of an attacker with a secret can leak the secret.
+.TP
+\fBlocal_echo\fR = "off" | "auto"
 Show typed characters at once, before the server has echoed them.
 .RE
 .TP
@@ -56,6 +59,9 @@ An upper limit that also applies after a deliberate detach.
 .TP
 \fBreplay_capacity\fR = bytes
 The output kept for a client that is away.
+.TP
+\fBcompress\fR = "off" | "auto"
+Compress output while the link is the limit (default off).
 .TP
 \fBslow_client\fR = "drop" | "wait"
 What the server does with output that a connected client is too slow to take: "drop" (default) never lets the job wait for the link and skips the oldest output, with a notice; "wait" slows the job down, as ssh does.

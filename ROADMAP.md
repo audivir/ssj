@@ -7,13 +7,12 @@ Order: performance (2), then the release (3).
 
 ## 2. Performance
 
-- Compression of the output direction (`flate2` with the Rust backend), only when there is unsent
-  backlog, negotiated in the hello. Add an `ssh -C` row to the benchmark with a text producer.
 - BBR instead of Cubic, to be measured under `netem` with loss.
 - Measure and shorten the start (bootstrap through `ssh`, then the handshake).
 - Larger UDP socket buffers (a safe setter such as `socket2`), to be measured on Linux.
-- Run `bench.yml` once on GitHub, compare the glibc and musl servers, choose the default build for
-  automatic installs, and then gate on the numbers.
+- Run `bench.yml` once on GitHub to confirm the numbers on a clean machine. It has never run, and
+  the benchmark by hand in containers showed no difference between glibc and musl, so nothing
+  depends on it. Then gate on the numbers.
 
 ## 3. Release
 

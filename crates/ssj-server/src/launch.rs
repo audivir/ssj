@@ -213,7 +213,9 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
     };
     let (conns, conns_rx) = tokio_mpsc::channel(4);
     let mut frontend = Frontend::new(id.clone(), args.port_range.clone(), conns, HELLO_TIMEOUT)
-        .with_transports(args.udp, args.tcp);
+        .with_transports(args.udp, args.tcp)
+        // QUIC takes no more unacknowledged output than may wait for a connected client
+        .with_send_window(args.live_backlog as u64);
     let connect = match frontend.open(pin).await {
         Ok(connect) => connect,
         Err(err) => return fail(&err.to_string(), 1),
@@ -257,6 +259,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         away_after: args.away_after,
         slow_client: args.slow_client,
         live_backlog: args.live_backlog,
+        compress: args.compress,
         detached_timeout: args.detached_timeout,
         max_detached: args.max_detached,
         hello_timeout: HELLO_TIMEOUT,

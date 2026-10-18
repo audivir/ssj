@@ -59,6 +59,24 @@ fn start_server_with(
     slow_client: ssj_server::session::SlowClient,
     live_backlog: usize,
 ) -> Server {
+    start_server_full(
+        script,
+        client_pin,
+        replay_capacity,
+        slow_client,
+        live_backlog,
+        false,
+    )
+}
+
+fn start_server_full(
+    script: &str,
+    client_pin: ssj_net::Fingerprint,
+    replay_capacity: usize,
+    slow_client: ssj_server::session::SlowClient,
+    live_backlog: usize,
+    compress: bool,
+) -> Server {
     let identity = Identity::generate();
     let config = quic_server(server_tls(&identity, client_pin));
     let endpoint = Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
@@ -81,6 +99,7 @@ fn start_server_with(
         exit_grace: Duration::from_secs(60),
         slow_client,
         live_backlog,
+        compress,
     };
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();
@@ -370,6 +389,7 @@ fn start_client_inner(
         env: Env::default(),
         escape: Some(b'~'),
         local_echo: false,
+        compress: false,
         attach,
     };
     let client = tokio::spawn(run_session(params, io));
@@ -1203,4 +1223,33 @@ async fn a_client_that_is_too_slow_does_not_hold_the_job_up_and_shows_what_it_mi
         "no notice of the skipped output"
     );
     let _ = std::fs::remove_file(&marker);
+}
+
+// Compressed output goes through the real client and reaches the terminal exactly as written,
+// every line in its place.
+#[tokio::test]
+async fn compressed_output_reaches_the_terminal_intact() {
+    let script = "stty -opost -echo; awk 'BEGIN { for (i = 1; i <= 50000; i++) print \"line \" i \" of the build log\" }'; echo FINISHED; read x";
+    let client_id = Identity::generate();
+    let server = start_server_full(
+        script,
+        client_id.fingerprint(),
+        4 * 1024 * 1024,
+        ssj_server::session::SlowClient::Wait,
+        1 << 20,
+        true,
+    );
+    let mut terminal = start_client(&server, client_id);
+    // a terminal that reads late makes the link the limit
+    sleep(Duration::from_secs(1)).await;
+    terminal.wait_for("FINISHED").await;
+    let expected: String = (1..=50_000)
+        .map(|i| format!("line {i} of the build log\n"))
+        .collect();
+    assert!(
+        terminal.seen.starts_with(&expected),
+        "the output differs from what the shell wrote (got {} bytes, expected {})",
+        terminal.seen.len(),
+        expected.len()
+    );
 }

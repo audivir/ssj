@@ -263,15 +263,31 @@ pub const INITIAL_CONGESTION_WINDOW: u64 = 256 * 1024;
 
 /// Receive limits of the server, which only gets small input from the client.
 pub const SERVER_RECEIVE_WINDOW: u32 = 2 * 1024 * 1024;
+/// How much the server may have sent to the client without an acknowledgement from QUIC. Without
+/// this the transport would take the output of the shell as fast as it comes, up to the whole
+/// receive window of the client, and a slow link would hold megabytes that the server can neither
+/// skip nor compress. With it the rest waits in the buffer of the server, where it can be.
+pub const SERVER_SEND_WINDOW: u64 = 1024 * 1024;
 /// Receive limits of the client, which gets the (large) output of the shell.
 pub const CLIENT_RECEIVE_WINDOW: u32 = 4 * 1024 * 1024;
 
 pub fn quic_server(tls: rustls::ServerConfig) -> quinn::ServerConfig {
+    quic_server_with_send_window(tls, SERVER_SEND_WINDOW)
+}
+
+/// Like [`quic_server`], with the most that QUIC may hold unacknowledged. A long link with a high
+/// bandwidth needs more than the default (the window divided by the round trip time is the
+/// ceiling of the throughput), and a larger window also means more output queued after Ctrl-C.
+pub fn quic_server_with_send_window(
+    tls: rustls::ServerConfig,
+    send_window: u64,
+) -> quinn::ServerConfig {
     let crypto = QuicServerConfig::try_from(tls).expect("QUIC-compatible TLS config");
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
     let mut transport = base_transport();
     transport.receive_window(SERVER_RECEIVE_WINDOW.into());
     transport.stream_receive_window((SERVER_RECEIVE_WINDOW / 2).into());
+    transport.send_window(send_window);
     config.transport_config(Arc::new(transport));
     // one session, so only a handful of handshakes may be in flight at once
     config.max_incoming(16);

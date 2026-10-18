@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use quinn::Endpoint;
 use ssj_net::{Identity, SERVER_NAME, client_tls, quic_client};
 use ssj_proto::bootstrap::{Connect, sanitize};
+use ssj_proto::compress::{Compressor, inflate};
 use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
 use ssj_proto::resume::check_welcome;
@@ -65,6 +66,10 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A resize is sent when no newer one has come for this long.
 const RESIZE_QUIET: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(1);
+/// Input is compressed only while at least this many bytes wait for the server to take them.
+const COMPRESS_BACKLOG: u64 = 256 * 1024;
+/// Chunks shorter than this are not worth compressing.
+const COMPRESS_MIN_CHUNK: usize = 1024;
 /// Most output that is written to the terminal in one go.
 const OUTPUT_BATCH: usize = 256 * 1024;
 /// How long a status waits for a sequence of the remote side to end before it cancels it.
@@ -149,6 +154,8 @@ pub struct Params {
     pub attach: bool,
     /// Show typed characters before the server echoes them (see [`crate::echo`]).
     pub local_echo: bool,
+    /// Compress input while the link is the limit (the server decides for its output).
+    pub compress: bool,
 }
 
 /// The terminal side of a session, so that tests can stand in for it.
@@ -217,6 +224,13 @@ async fn session(mut args: Args) -> u8 {
         }
     };
     args.apply_config(&config);
+    // the server compresses its output when the user asked for compression (or for none)
+    if let Some(on) = args.compress {
+        args.server_args.extend([
+            "--compress".to_owned(),
+            if on { "auto" } else { "off" }.to_owned(),
+        ]);
+    }
     if args.batch {
         // nobody can answer a prompt of a background refresh, and nobody waits for it
         args.ssh_command
@@ -617,6 +631,7 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
             escape: args.escape,
             attach,
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
+            compress: args.compress == Some(true),
         },
         io,
     )
@@ -854,6 +869,8 @@ struct Client {
     output_offset: u64,
     escape: EscapeFilter,
     echo: Echo,
+    compress: bool,
+    compressor: Compressor,
     stdin_open: bool,
     chunk: Vec<u8>,
     size: WindowSize,
@@ -875,6 +892,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
     let size = io.size;
     let escape = EscapeFilter::new(params.escape);
     let echo = Echo::new(params.local_echo, size.cols());
+    let compress = params.compress;
     let mut io = io;
     let net = Some(std::mem::replace(&mut io.net, mpsc::unbounded_channel().1));
     Client {
@@ -894,6 +912,8 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         output_offset: 0,
         escape,
         echo,
+        compress,
+        compressor: Compressor::new(),
         stdin_open: true,
         chunk: vec![0u8; 16 * 1024],
         size,
@@ -1288,6 +1308,20 @@ impl Client {
         }
     }
 
+    /// The frame for typed bytes: compressed when the uplink is what holds the input back (a
+    /// paste over a slow link), plain otherwise. Typing is a few bytes and never compressed.
+    fn input_frame(&mut self, bytes: &[u8]) -> ClientFrame {
+        let waiting = self.input.end() - self.input.start();
+        if self.compress
+            && waiting >= COMPRESS_BACKLOG
+            && bytes.len() >= COMPRESS_MIN_CHUNK
+            && let Some(packed) = self.compressor.compress(bytes)
+        {
+            return ClientFrame::Compressed(packed);
+        }
+        ClientFrame::Input(bytes.to_vec())
+    }
+
     /// Applies typed bytes: input for the shell, or a local escape.
     async fn handle_typed(
         &mut self,
@@ -1303,7 +1337,8 @@ impl Client {
                         return Err("the input buffer overflowed".to_owned());
                     }
                     if let Some(link) = link {
-                        let _ = link.send(ClientFrame::Input(bytes.clone()));
+                        let frame = self.input_frame(&bytes);
+                        let _ = link.send(frame);
                         // only with a connection: without one the echo cannot come
                         let drawn = self.echo.typed(&bytes, Instant::now());
                         if !drawn.is_empty() {
@@ -1361,6 +1396,14 @@ impl Client {
                     if std::mem::take(&mut stalled) {
                         self.clear_status().await;
                     }
+                    // compressed output is the same as plain output once it is inflated
+                    let frame = match frame {
+                        ServerFrame::Compressed(packed) => ServerFrame::Output(
+                            inflate(&packed)
+                                .map_err(|e| format!("the server sent bad compressed output: {e:?}"))?,
+                        ),
+                        other => other,
+                    };
                     match frame {
                         ServerFrame::Output(mut data) => {
                             // Frames that are here already go to the terminal in one write. A
@@ -1409,6 +1452,8 @@ impl Client {
                         }
                         ServerFrame::Error(code) => return Err(format!("the server ended the session: {code:?}")),
                         ServerFrame::Welcome(_) => return Err("the server sent a second welcome".to_owned()),
+                        // turned into output above
+                        ServerFrame::Compressed(_) => unreachable!("inflated above"),
                     }
                 }
                 Some(size) = self.io.resizes.recv() => {

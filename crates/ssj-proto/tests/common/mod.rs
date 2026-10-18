@@ -27,6 +27,7 @@ pub fn client_frames() -> Vec<ClientFrame> {
         ClientFrame::Hello(Hello::Attach { size: size() }),
         ClientFrame::Input(b"ls\r".to_vec()),
         ClientFrame::Input(vec![7; MAX_DATA_LEN]),
+        ClientFrame::Compressed(vec![0x4b, 0x4c, 0x4a, 0x06, 0x00]),
         ClientFrame::Resize(WindowSize::new(1, WindowSize::MAX).unwrap()),
         ClientFrame::OutputAck(12345),
         ClientFrame::Close,
@@ -49,5 +50,6 @@ pub fn server_frames() -> Vec<ServerFrame> {
         ServerFrame::Error(ErrorCode::ReplayGap),
         ServerFrame::Pong,
         ServerFrame::Gap(1 << 40),
+        ServerFrame::Compressed(vec![0x4b, 0x4c, 0x4a, 0x06, 0x00]),
     ]
 }

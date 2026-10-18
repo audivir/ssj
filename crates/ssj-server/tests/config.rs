@@ -25,6 +25,7 @@ fn every_key_is_read() {
          max_detached = 86400\n\
          away_after = 30\n\
          slow_client = \"wait\"\n\
+         compress = \"off\"\n\
          live_backlog = 300000\n\
          shell = \"/bin/zsh\"\n\
          accept_env = [\"TERM\", \"EDITOR\"]\n",
@@ -38,6 +39,7 @@ fn every_key_is_read() {
     assert_eq!(a.away_after, Duration::from_secs(30));
     assert_eq!(a.slow_client, ssj_server::session::SlowClient::Wait);
     assert_eq!(a.live_backlog, 300_000);
+    assert!(!a.compress);
     assert_eq!(a.shell.as_deref(), Some(std::path::Path::new("/bin/zsh")));
     assert!(config.accept_env().matches("EDITOR") && !config.accept_env().matches("LANG"));
 }
@@ -99,6 +101,7 @@ fn mistakes_are_errors_that_name_the_problem() {
             "slow_client: expected drop or wait",
         ),
         ("live_backlog = 10", "live_backlog: must be between"),
+        ("compress = \"zlib\"", "compress: expected auto or off"),
         ("shell = \"zsh\"", "absolute path"),
         ("accept_env = [\"A B\"]", "accept_env: InvalidCharacter"),
         ("accept_env = \"TERM\"", "line 1: accept_env must be a list"),

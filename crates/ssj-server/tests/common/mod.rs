@@ -131,12 +131,9 @@ pub fn run_bootstrap_with(
         .stderr(Stdio::piped())
         .spawn_locked()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin_text.as_bytes())
-        .unwrap();
+    // A server that refuses its arguments exits without reading the pin, and the write then fails
+    // with a broken pipe. That is the case under test, so the error is not one.
+    let _ = child.stdin.take().unwrap().write_all(stdin_text.as_bytes());
     let start = Instant::now();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     child.stdout.take().unwrap().read_to_end(&mut out).unwrap();

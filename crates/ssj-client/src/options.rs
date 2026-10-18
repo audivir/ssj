@@ -39,6 +39,10 @@ pub struct Options {
     #[arg(long, value_name = "WHEN", overrides_with = "local_echo")]
     pub local_echo: Option<String>,
 
+    /// Compress input and output while the link is the limit: off or auto
+    #[arg(long, value_name = "WHEN", overrides_with = "compress")]
+    pub compress: Option<String>,
+
     /// Command that replaces ssh, split at whitespace
     #[arg(
         long,

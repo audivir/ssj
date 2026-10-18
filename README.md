@@ -154,6 +154,7 @@ send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
 transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
 auto_attach = false                   # `ssj host` joins the only session without a client
 local_echo = "off"                    # "off" or "auto": show typed characters at once
+compress = "off"                      # "off" or "auto": compress while the link is the limit
 ```
 
 `$XDG_CONFIG_HOME/ssj/server.toml` on the host:
@@ -164,6 +165,7 @@ detached_timeout = "none"             # seconds without a client (default: none)
 max_detached = "none"                 # limit even after a deliberate detach
 replay_capacity = 4194304             # bytes of output kept for a client that is away
 slow_client = "drop"                  # "drop": the job never waits for the link; "wait": like ssh
+compress = "off"                      # "off" or "auto": compress output when the link is the limit
 live_backlog = 1048576                # bytes that may wait for a connected client (drop)
 away_after = 10                       # seconds a silent client may block the output (wait)
 shell = "/bin/zsh"                    # default: $SHELL
@@ -187,6 +189,15 @@ the real echo replaces it. It is off by default, because it is a guess.
   wrap would scroll the screen. A prompt with wide characters can make its estimate of the column
   wrong, and then a prediction near the edge can leave a stray dimmed character until the shell
   redraws the line.
+
+### Compression
+
+On a slow link, `compress = "auto"` (in `client.toml` or `server.toml`, or `--compress auto`)
+compresses input and output (zstd) while the link is the limit. A build log or a pasted text
+shrinks to a fifth or less. It is off by default: compressing text of an attacker together with a secret can
+leak the secret through the size of the data, as with `ssh -C`. Typing is never compressed, and
+each frame is compressed alone. See the specification before turning it on for a shell where you
+paste secrets or print them next to text from others.
 
 ### Jobs while you are away
 

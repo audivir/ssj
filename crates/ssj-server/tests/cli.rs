@@ -71,6 +71,8 @@ fn child_arguments_carry_every_setting() {
         "wait",
         "--live-backlog",
         "200000",
+        "--compress",
+        "off",
         "--shell",
         "/bin/zsh",
         "--shell-arg",
@@ -140,4 +142,13 @@ fn the_job_does_not_wait_for_a_slow_client_unless_asked() {
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
+}
+
+#[test]
+fn compression_is_automatic_unless_turned_off() {
+    assert!(!args(&[]).unwrap().compress, "off unless asked for");
+    assert!(args(&["--compress", "auto"]).unwrap().compress);
+    assert!(!args(&["--compress", "off"]).unwrap().compress);
+    assert!(args(&["--compress", "on"]).is_err());
+    assert!(args(&["--compress"]).is_err());
 }

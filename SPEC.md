@@ -280,35 +280,78 @@ which is how the glibc and the musl build are compared. The workflow `bench.yml`
 with and without `netem` on a GitHub runner against its own `sshd`, by hand. `bench/linux-bench.sh`
 runs the same inside a container (`docker run ... sh bench/linux-bench.sh`).
 
-Bulk output with `--raw-bulk` (no `tr`, which limits every client on some systems), 256 MiB, the
-best of three rounds; the paste is 8 MiB; the latency is the median of 150 to 200 samples:
+Each number is one run on one machine (the Linux ones in a container on an aarch64 virtual
+machine, with `sshd` in the same container), so differences of a few percent are noise. The bulk
+column is MB/s, the latency is the median in milliseconds, and the paste is 8 MiB (2 MiB on the
+slow link, 4 MiB on the lossy one) in seconds. `udp-z` is `ssj` with `compress = "auto"`, and
+`ssh-C` is `ssh -C`. Every `ssj` row runs with `slow_client = "wait"`, so every byte arrives and
+the rows mean the same thing.
 
-| system | client | bulk MB/s | median ms | paste s |
-| ------ | ------ | --------- | --------- | ------- |
-| Linux aarch64, glibc, `sshd` in a container | ssh | 180 | 9.6 | 0.11 |
-| | udp | 193 | 0.89 | 0.08 |
-| | tcp | 174 | 1.11 | 0.08 |
-| | stdio | 189 | 1.46 | 0.09 |
-| macOS 26, Apple silicon, `localhost` | ssh | 84 | 9.3 | 1.25 |
-| | udp | 74 | 0.58 | 1.31 |
-| | tcp | 62 | 0.64 | 1.74 |
+Loopback, zeros (`--raw-bulk`, 256 MiB; this measures the transport and the program):
+
+| client | glibc bulk | glibc latency | glibc paste | musl bulk | musl latency | musl paste | macOS bulk | macOS latency | macOS paste |
+| ------ | ---------- | ------------- | ----------- | --------- | ------------ | ---------- | ---------- | ------------- | ----------- |
+| ssh | 175 | 9.7 | 0.11 | 177 | 10.7 | 0.11 | 87 | 8.6 | 1.24 |
+| ssh -C | 131 | 9.7 | 0.13 | 147 | 9.9 | 0.13 | 88 | 8.3 | 1.25 |
+| udp | 190 | 0.96 | 0.10 | 167 | 0.83 | 0.08 | 75 | 0.40 | 1.25 |
+| udp-z | 169 | 0.96 | 0.07 | 151 | 0.84 | 0.08 | 70 | 0.40 | 1.25 |
+| tcp | 177 | 1.31 | 0.09 | 154 | 1.11 | 0.09 | 65 | 0.53 | 1.68 |
+| stdio | 198 | 1.61 | 0.09 | 146 | 1.40 | 0.10 | 59 | 0.55 | 1.51 |
+
+Slow link (`tc netem rate 8mbit delay 25ms` on a loopback with an MTU of 1500, log-like text, 8
+MiB; the link carries about 1 MB/s):
+
+| client | glibc bulk | glibc latency | glibc paste | musl bulk | musl latency | musl paste |
+| ------ | ---------- | ------------- | ----------- | --------- | ------------ | ---------- |
+| ssh | 0.8 | 59.7 | 2.52 | 0.8 | 67.3 | 2.50 |
+| ssh -C | 3.4 | 62.1 | 0.41 | 2.9 | 63.7 | 0.41 |
+| udp | 0.9 | 58.5 | 2.37 | 0.9 | 58.4 | 2.36 |
+| udp-z | 5.5 | 59.1 | 0.63 | 2.9 | 57.1 | 0.62 |
+| tcp | 0.4 | 119.8 | 4.85 | 0.4 | 119.3 | 4.90 |
+| stdio | 0.8 | 62.4 | 2.69 | 0.8 | 62.7 | 2.55 |
+
+Lossy link (`delay 40ms loss 1%`, MTU 1500, zeros; only the rows without compression mean
+anything, because zeros compress a thousand to one):
+
+| client | glibc bulk | glibc latency | musl bulk | musl latency |
+| ------ | ---------- | ------------- | --------- | ------------ |
+| ssh | 0.2 | 103 | 0.3 | 104 |
+| udp | 0.7 | 92 | 0.5 | 91 |
+| tcp | 0.2 | 180 | 0.2 | 180 |
+| stdio | 0.3 | 86 | 0.2 | 88 |
 
 Reading them:
 
 - The latency of `ssh` is dominated by its keystroke timing obfuscation (OpenSSH 9.5 and later
   sends keystrokes in 20 ms ticks while typing), so the comparison there says little about the
-  transport. `ssj` answers a key in under a millisecond.
-- On Linux `ssj` over UDP is as fast as `ssh` for bulk output and faster for a paste.
+  transport. `ssj` answers a key in under a millisecond on the loopback, and in one round trip
+  plus a millisecond on a link with a delay.
+- On Linux `ssj` over UDP is as fast as `ssh` for bulk output (glibc 190 against 175, musl 167
+  against 177) and as fast for a paste. The musl and glibc builds of the server are within noise
+  of each other, so the choice of the default build for automatic installs does not depend on
+  speed; musl stays the default because it runs on every distribution.
 - On macOS the pseudo terminal hands out its data in pieces of exactly 1024 bytes (Linux: up to
   4 KiB), so every kilobyte of output is one pass through the event loop of the server. The shell
-  alone reaches 115 MB/s there, `ssh` 84, and `ssj` 74. The TCP tier is slower because its bytes
-  also pass through an `ssh -W` process. The gap to `ssh` on macOS is about 12 percent.
+  alone reaches 115 MB/s there, `ssh` 87, and `ssj` 75. The TCP tier is slower because its bytes
+  also pass through an `ssh -W` process. The gap to `ssh` on macOS is about 14 percent.
+- On a slow link compression is what matters. Without it `ssj` and `ssh` both fill the link
+  (0.8 to 0.9 MB/s). With it `ssj` carries log-like text at 3 to 5 MB/s, as `ssh -C` does, and a
+  paste in a quarter of the time. `ssh -C` compresses a paste better (0.41 s against 0.63 s)
+  because its zlib stream keeps its dictionary across the whole connection, which `ssj` does not
+  do on purpose (see Compression).
+- On a lossy link QUIC beats TCP: with 1 percent loss `ssj` over UDP gets two to three times the
+  throughput of `ssh`. The first measurement of this showed the opposite, and the reason was the
+  test: the loopback has an MTU of 64 KiB, so a TCP segment is 40 times larger than a QUIC
+  packet and the same loss rate hits it much less often. With an MTU of 1500 the comparison is
+  fair.
+- The TCP tier is slower than the others on every link and takes twice the latency, since it adds
+  a hop through `ssh -W`. It exists for hosts where UDP is blocked.
 
 What the measurements changed (each found with `sample`, CPU times from `ps`, and counters):
 
 - Both programs use a single-threaded runtime. With several threads every wake-up for a small
   chunk of output crossed threads, and the server used two cores for 47 MB/s; it now uses less
-  than one core for 74.
+  than one core for 75.
 - The client writes all output frames that are already waiting to the terminal in one write
   (up to 256 KiB). Each write goes through the blocking pool of tokio, and with frames of 2 KiB
   that cost 4.8 s of a 5.9 s transfer. Before this, the throughput also depended on the size of
@@ -320,8 +363,59 @@ What the measurements changed (each found with `sample`, CPU times from `ps`, an
   plain text without stepping through it.
 - The QUIC endpoints ask the peer to acknowledge every eighth packet (ACK frequency extension)
   and not every second one, which saved about 10 percent on macOS and nothing for latency.
+- QUIC may hold only `live_backlog` bytes unacknowledged (`send_window`). Without it QUIC took
+  the output as fast as it came, up to the whole receive window of the client, so a slow link
+  had megabytes queued below the buffer of the server. Nothing could be skipped or compressed
+  there, and compression sent exactly as many bytes as no compression.
 
 Nothing is gated yet.
+
+### Compression (`compress`)
+
+Optional and off by default (`compress = "auto"` in `client.toml` or `server.toml`, or
+`--compress auto`; the client passes its value to the server it starts). It exists for slow links:
+a build log or a pasted text shrinks to a fifth or less.
+
+- Both directions have a compressed frame: `Compressed` (server, tag `0x88`) for output and
+  `Compressed` (client, tag `0x08`) for input. The body is a zstd frame of what the plain frame
+  would hold, at most 32 KiB, and the offsets count the plain bytes. The algorithm is zstd
+  at level 3 (the C library through the `zstd` crate; `ring` needs a C compiler anyway, and
+  `cargo zigbuild` builds both). Each frame is compressed on its own, with no dictionary and no
+  state from earlier frames, so a frame can be sent or left out and a new connection can start
+  anywhere. The receiver is strict, because the bytes come from the other side: the frame must
+  state its content size, the size may not exceed 32 KiB (checked before anything is allocated, so
+  a bomb is refused from its header), the decoder window is limited to 128 KiB, and a frame that
+  is not valid is a protocol violation.
+- Why zstd 3 and no dictionary (measured on colored `ls -lR`, `git log -p`, `cargo` output,
+  source, `ps`, and test logs; 32 KiB frames; Apple silicon): the packed size relative to the
+  original is 26.0 percent for deflate level 1 (419 MB/s to compress, 578 to decompress), 20.1
+  for deflate 6 (131, 715), 22.2 for zstd 1 (834, 2161), and 21.5 for zstd 3 (692, 2133). With
+  frames of 4 KiB: 30.3 percent for deflate 1, 28.1 for zstd 3. A dictionary trained on the other
+  files did not help (21.5 percent with a 64 KiB dictionary, at half the speed) and was worse for
+  some kinds of output: terminal traffic is too varied for one built-in dictionary.
+  Both sides always understand compressed frames; the setting only decides what a side sends.
+- A side compresses a chunk only when at least 256 KiB are not acknowledged by the peer yet (the
+  link is the limit; a link that keeps up has acknowledgements back before so much builds up), the
+  chunk is at least 1 KiB (a terminal program gets at most 4 KiB per read on Linux), and the result
+  is at least an eighth smaller. Typing stays plain because no backlog builds. The server counts what
+  waits and what was sent without an acknowledgement of the client, the same for every transport.
+  For QUIC the server also limits what the transport may hold unacknowledged to `live_backlog`
+  (1 MiB by default; `send_window`). The throughput ceiling is that window divided by the round
+  trip time (10 MB/s at 100 ms), so a user on a long fast link raises `live_backlog`. Otherwise QUIC would take all output at once, up to the receive window of the
+  client, and nothing would ever wait in the buffer of the server, where it can be compressed or
+  skipped (this was found when `--compress auto` sent as many bytes as no compression). A fast link never
+  pays the CPU time, and typing is never compressed, because a keystroke is a few bytes and no
+  backlog builds.
+- The risk: compressing text of an attacker together with a secret leaks the secret through the
+  size of what is sent (CRIME and BREACH). The attacker must get chosen text into the same
+  compressed frame as the secret, see the sizes on the network, and repeat that with other
+  guesses. `ssj` limits this in four ways. Compression is opt-in. Typed input, which is where
+  passwords are, is never compressed. A frame is compressed alone, so the guess and the secret
+  must lie in the same 32 KiB, not anywhere in the session. And it applies only while the link is
+  the limit. What remains: a large paste that contains both a secret and text from somebody else
+  while the uplink is saturated, and command output that mixes a secret with text from somebody
+  else, both seen by an observer who can make the user repeat it. `ssh -C` has the same exposure.
+  Padding frames to a multiple of a block would blunt the size signal and is not done.
 
 ### Installation of the server
 

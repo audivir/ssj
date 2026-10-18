@@ -4,7 +4,9 @@ use std::io;
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
-use ssj_net::{Identity, quic_server, server_tls, tls_acceptor};
+use ssj_net::{
+    Identity, SERVER_SEND_WINDOW, quic_server_with_send_window, server_tls, tls_acceptor,
+};
 use ssj_proto::SessionId;
 use ssj_proto::bootstrap::Connect;
 use tokio::sync::mpsc;
@@ -22,6 +24,7 @@ pub struct Frontend {
     range: RangeInclusive<u16>,
     conns: mpsc::Sender<Connection>,
     stream_timeout: Duration,
+    send_window: u64,
     current: Option<quinn::Endpoint>,
     listener: Option<tokio::task::JoinHandle<()>>,
 }
@@ -40,6 +43,7 @@ impl Frontend {
             range,
             conns,
             stream_timeout,
+            send_window: SERVER_SEND_WINDOW,
             current: None,
             listener: None,
         }
@@ -48,6 +52,12 @@ impl Frontend {
     /// Turns the network transports on or off. With both off, only `--stdio` reaches the session.
     pub fn with_transports(mut self, udp: bool, tcp: bool) -> Self {
         (self.udp, self.tcp) = (udp, tcp);
+        self
+    }
+
+    /// How much output QUIC may hold unacknowledged (see `quic_server_with_send_window`).
+    pub fn with_send_window(mut self, bytes: u64) -> Self {
+        self.send_window = bytes;
         self
     }
 
@@ -76,7 +86,10 @@ impl Frontend {
                     Err(err) => return Err(err),
                 }
             };
-            let endpoint = endpoint_on(socket, quic_server(server_tls(&identity, pin)))?;
+            let endpoint = endpoint_on(
+                socket,
+                quic_server_with_send_window(server_tls(&identity, pin), self.send_window),
+            )?;
             udp = Some(endpoint.local_addr()?.port());
             tokio::spawn(serve(
                 endpoint.clone(),

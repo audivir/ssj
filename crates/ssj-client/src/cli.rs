@@ -45,6 +45,14 @@ pub fn parse_local_echo(text: &str) -> Result<LocalEcho, String> {
     }
 }
 
+pub fn parse_compress(text: &str) -> Result<bool, String> {
+    match text {
+        "auto" => Ok(true),
+        "off" => Ok(false),
+        _ => Err("expected auto or off".to_owned()),
+    }
+}
+
 pub fn parse_transport(text: &str) -> Result<Transport, String> {
     match text {
         "auto" => Ok(Transport::Auto),
@@ -101,6 +109,8 @@ pub struct Args {
     /// Join the only session without a client instead of starting another one.
     pub auto_attach: bool,
     pub local_echo: LocalEcho,
+    /// Compression of input and output; `None` leaves it to the files.
+    pub compress: Option<bool>,
     /// `list` prints JSON.
     pub json: bool,
     /// Never prompt and give up early: for refreshes that nobody waits for.
@@ -140,6 +150,7 @@ impl Args {
             transport: Transport::Auto,
             auto_attach: false,
             local_echo: LocalEcho::Off,
+            compress: None,
             json: false,
             batch: false,
             explicit: Explicit::default(),
@@ -156,6 +167,9 @@ impl Args {
         }
         if !self.explicit.auto_attach {
             self.auto_attach = config.auto_attach;
+        }
+        if self.compress.is_none() {
+            self.compress = config.compress;
         }
         if !self.explicit.local_echo {
             self.local_echo = config.local_echo;
@@ -246,6 +260,11 @@ fn from_options(options: Options) -> Result<Args, String> {
         .transport
         .as_deref()
         .map(|text| parse_transport(text).map_err(|e| format!("--transport: {e}")))
+        .transpose()?;
+    let compress = options
+        .compress
+        .as_deref()
+        .map(|text| parse_compress(text).map_err(|e| format!("--compress: {e}")))
         .transpose()?;
     let local_echo = options
         .local_echo
@@ -340,6 +359,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         transport: transport.unwrap_or_default(),
         auto_attach: auto_attach.unwrap_or(false),
         local_echo: local_echo.unwrap_or_default(),
+        compress,
         json: options.json,
         batch: options.batch,
     })

@@ -37,6 +37,7 @@ fn config(script: &str) -> SessionConfig {
         exit_grace: Duration::from_secs(60),
         slow_client: ssj_server::session::SlowClient::Wait,
         live_backlog: 1 << 20,
+        compress: false,
     }
 }
 
@@ -55,6 +56,8 @@ struct Client {
     reader: ReadHalf<DuplexStream>,
     writer: WriteHalf<DuplexStream>,
     buf: Vec<u8>,
+    /// How many frames arrived compressed. They are inflated in `next`, like a client does.
+    compressed: usize,
 }
 
 #[derive(Default, Debug)]
@@ -85,6 +88,7 @@ impl Harness {
             reader,
             writer,
             buf: Vec::new(),
+            compressed: 0,
         }
     }
 
@@ -113,7 +117,16 @@ impl Client {
             if let Some((frame, used)) = decode_server(&self.buf).expect("server sent a bad frame")
             {
                 self.buf.drain(..used);
-                return Some(frame);
+                return Some(match frame {
+                    ServerFrame::Compressed(packed) => {
+                        self.compressed += 1;
+                        ServerFrame::Output(
+                            ssj_proto::compress::inflate(&packed)
+                                .expect("a valid compressed frame"),
+                        )
+                    }
+                    other => other,
+                });
             }
             let mut chunk = [0u8; 8192];
             match timeout(Duration::from_secs(10), self.reader.read(&mut chunk))
@@ -142,6 +155,8 @@ impl Client {
                 Some(ServerFrame::Welcome(welcome)) => seen.welcome = Some(welcome),
                 Some(ServerFrame::Pong) => seen.pongs += 1,
                 Some(ServerFrame::Gap(skipped)) => seen.gaps.push(skipped),
+                // inflated by `next`
+                Some(ServerFrame::Compressed(_)) => unreachable!("inflated in next"),
             }
         }
         seen
@@ -237,6 +252,7 @@ async fn large_paste_into_a_chatty_program_does_not_deadlock() {
         mut reader,
         writer,
         mut buf,
+        ..
     } = client;
     let writer = std::sync::Arc::new(tokio::sync::Mutex::new(writer));
     let paste_writer = writer.clone();
@@ -1144,4 +1160,89 @@ async fn a_skip_does_not_cut_a_character_in_two() {
     assert!(gaps_seen > 0, "nothing was skipped, so nothing was tested");
     assert!(starts_ok, "a skip started inside a character");
     let _ = std::fs::remove_file(&marker);
+}
+
+// While the link is the limit, output that compresses is sent compressed, and it arrives exactly
+// as the shell wrote it. Without the setting nothing is compressed.
+#[tokio::test]
+async fn output_is_compressed_while_the_link_holds_it_back_and_arrives_intact() {
+    for (compress, expect_packed) in [(true, true), (false, false)] {
+        let marker = marker();
+        let mut cfg = drop_config(&marker, 16 * 1024 * 1024, 8 * 1024 * 1024);
+        cfg.slow_client = ssj_server::session::SlowClient::Wait;
+        cfg.compress = compress;
+        let harness = start(cfg);
+        let mut client = harness.connect().await;
+        client.start().await;
+        // the client takes nothing while the job runs, so output piles up: a slow link
+        wait_for_file_or_full(&marker).await;
+
+        let expected = job_output();
+        let (received, gaps, exit) = read_and_place(&mut client, 0, &expected).await;
+        assert!(gaps.is_empty());
+        assert_eq!(received as usize, expected.len());
+        assert_eq!(exit, Some(ExitStatus::Code(0)));
+        assert_eq!(
+            client.compressed > 0,
+            expect_packed,
+            "compress = {compress}"
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+}
+
+/// With `Wait` the job stops when the buffer is full, so the marker may not appear before the
+/// client reads. Give the job time to fill the buffer, then go on.
+async fn wait_for_file_or_full(marker: &std::path::Path) {
+    for _ in 0..40 {
+        if marker.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+// Input that the client compressed is the same as plain input once the server has inflated it,
+// and the input offset counts the plain bytes.
+#[tokio::test]
+async fn compressed_input_reaches_the_shell_as_plain_input() {
+    let harness = start(config(
+        "stty raw -echo; echo ready; head -c 20000 | wc -c; exit 0",
+    ));
+    let mut client = harness.connect().await;
+    client.start().await;
+    // the terminal must be raw before the input comes, or the line discipline cuts it
+    client.read_until(|s| contains(&s.output, "ready")).await;
+    let text: Vec<u8> = (0..20_000u32)
+        .map(|i| b"abcdefghij"[(i % 10) as usize])
+        .collect();
+    let mut compressor = ssj_proto::compress::Compressor::new();
+    let packed = compressor.compress(&text).expect("text compresses");
+    assert!(packed.len() < 1000);
+    client.send(ClientFrame::Compressed(packed)).await;
+    let seen = client.read_until(|s| s.exit.is_some()).await;
+    assert!(
+        contains(&seen.output, "20000"),
+        "{:?}",
+        String::from_utf8_lossy(&seen.output)
+    );
+    assert_eq!(seen.input_acks.last(), Some(&20_000));
+}
+
+#[tokio::test]
+async fn bad_compressed_input_and_compressed_input_before_the_hello_are_refused() {
+    let harness = start(config("sleep 5"));
+    let mut client = harness.connect().await;
+    client.start().await;
+    client.send(ClientFrame::Compressed(vec![0xff; 40])).await;
+    let seen = client.read_until(|s| s.error.is_some() || s.closed).await;
+    assert!(seen.error.is_some() || seen.closed);
+
+    let mut early = harness.connect().await;
+    early.send(ClientFrame::Compressed(vec![1, 2, 3])).await;
+    let seen = early.read_until(|s| s.error.is_some() || s.closed).await;
+    assert!(
+        seen.error == Some(ErrorCode::BadHello) || seen.closed,
+        "{seen:?}"
+    );
 }

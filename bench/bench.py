@@ -30,6 +30,7 @@ class Terminal:
         if self.pid == 0:
             os.execvp(argv[0], argv)
         self.buffer = b""
+        self.seen = b""
 
     def send(self, data):
         if isinstance(data, str):
@@ -48,7 +49,11 @@ class Terminal:
             chunk = os.read(self.fd, 1 << 20)
         except OSError:
             chunk = b""
+        # a terminal answers a request for the cursor position, and busybox `ash` waits for it
+        for _ in range(chunk.count(b"\x1b[6n")):
+            os.write(self.fd, b"\x1b[24;80R")
         self.buffer += chunk
+        self.seen = (self.seen + chunk)[-300:]
         return chunk
 
     def wait_for(self, text, timeout=300):
@@ -66,7 +71,7 @@ class Terminal:
             total += max(0, len(self.buffer) - keep)
             self.buffer = self.buffer[-keep:] if keep else b""
             if time.monotonic() > end:
-                raise TimeoutError(f"no {text!r}")
+                raise TimeoutError(f"no {text!r}, the last output was {self.seen[-300:]!r}")
             readable, _, _ = select.select([self.fd], [], [], 1)
             if readable and not self.read_some():
                 raise EOFError("the client ended")
@@ -95,9 +100,15 @@ class Terminal:
 
 def clients(args):
     ssj = [args.ssj, "--server-path", args.server, "--ssh-command", args.ssh_command]
+    if not args.allow_drop:
+        # every byte must arrive for the numbers to mean the same for every client
+        ssj += ["--server-arg", "--slow-client", "--server-arg", "wait"]
+    compress = ["--compress", "auto"]
     return {
         "ssh": ["ssh", "-tt", "-o", "BatchMode=yes", args.host],
+        "ssh-C": ["ssh", "-tt", "-C", "-o", "BatchMode=yes", args.host],
         "udp": ssj + ["--transport", "udp", args.host],
+        "udp-z": ssj + compress + ["--transport", "udp", args.host],
         "tcp": ssj + ["--transport", "tcp", args.host],
         "stdio": ssj + ["--transport", "stdio", args.host],
     }
@@ -107,18 +118,30 @@ def session(argv):
     terminal = Terminal(argv)
     # the shell is ready when it answers a command
     terminal.send("echo READY$((6*7))\n")
-    terminal.wait_for("READY42")
+    terminal.wait_for("READY42", 60)
     return terminal
 
 
-def bulk(argv, megabytes, raw=False):
+TEXT_LINE = "2026-10-18 12:00:%02d INFO worker-%d handled request id=%d status=200 bytes=%d"
+
+
+def bulk(argv, megabytes, raw=False, text=False):
     terminal = session(argv)
-    # `tr` makes text of the zeros, and it is slower than the transports on some systems, so the
-    # numbers would show `tr`. With `raw` the zeros go to the terminal as they are.
-    producer = "" if raw else " | tr '\\0' a"
-    terminal.send(
-        f"dd if=/dev/zero bs=1048576 count={megabytes} 2>/dev/null{producer}; echo {MARK[:3]}$((6*7))\n"
-    )
+    if text:
+        # lines like a log, which compress about the way build and server output does
+        lines = megabytes * 1048576 // 80
+        terminal.send(
+            f"awk 'BEGIN {{ for (i = 0; i < {lines}; i++) "
+            f'printf "{TEXT_LINE}\\n", i % 60, i % 8, (i * 7919) % 100000, (i * 31) % 5000 }}\''
+            f"; echo {MARK[:3]}$((6*7))\n"
+        )
+    else:
+        # `tr` makes text of the zeros, and it is slower than the transports on some systems, so
+        # the numbers would show `tr`. With `raw` the zeros go to the terminal as they are.
+        producer = "" if raw else " | tr '\\0' a"
+        terminal.send(
+            f"dd if=/dev/zero bs=1048576 count={megabytes} 2>/dev/null{producer}; echo {MARK[:3]}$((6*7))\n"
+        )
     start = time.monotonic()
     terminal.wait_for(MARK)
     seconds = time.monotonic() - start
@@ -153,14 +176,19 @@ def latency(argv, samples):
     }
 
 
-def paste(argv, megabytes):
+def paste(argv, megabytes, text=False):
     terminal = session(argv)
     size = megabytes * 1048576
     terminal.send(f"stty raw -echo; head -c {size} > /dev/null; echo {MARK[:3]}$((6*7))\n")
     time.sleep(0.5)
     terminal.buffer = b""
     start = time.monotonic()
-    terminal.send(b"x" * size)
+    if text:
+        lines = [(TEXT_LINE % (i % 60, i % 8, (i * 7919) % 100000, (i * 31) % 5000)) + "\n" for i in range(size // 80 + 1)]
+        payload = "".join(lines).encode()[:size]
+    else:
+        payload = b"x" * size
+    terminal.send(payload)
     terminal.wait_for(MARK)
     seconds = time.monotonic() - start
     terminal.close()
@@ -173,7 +201,9 @@ def netem(args, action):
     command = ["tc", "qdisc", action, "dev", "lo", "root"]
     if action == "add":
         command += ["netem"] + args.netem.split()
-    subprocess.run(["sudo", "-n"] + command, check=False)
+    # root (a container) needs no sudo
+    prefix = [] if os.geteuid() == 0 else ["sudo", "-n"]
+    subprocess.run(prefix + command, check=False)
 
 
 def main():
@@ -182,7 +212,9 @@ def main():
     parser.add_argument("--ssj", default="target/release/ssj")
     parser.add_argument("--server", default="target/release/ssj-server")
     parser.add_argument("--ssh-command", default="ssh")
-    parser.add_argument("--only", help="comma separated: ssh,udp,tcp,stdio")
+    parser.add_argument("--only", help="comma separated: ssh,ssh-C,udp,udp-z,tcp,stdio")
+    parser.add_argument("--text-bulk", action="store_true", help="log-like text for bulk and paste")
+    parser.add_argument("--allow-drop", action="store_true", help="let ssj skip output on a slow link")
     parser.add_argument("--bulk-mb", type=int, default=256)
     parser.add_argument("--raw-bulk", action="store_true", help="bulk output without tr")
     parser.add_argument("--paste-mb", type=int, default=8)
@@ -201,8 +233,8 @@ def main():
     try:
         for name, argv in chosen.items():
             print(f"{name} ...", file=sys.stderr)
-            rounds = [bulk(argv, args.bulk_mb, args.raw_bulk) for _ in range(args.rounds)]
-            pastes = [paste(argv, args.paste_mb) for _ in range(args.rounds)]
+            rounds = [bulk(argv, args.bulk_mb, args.raw_bulk, args.text_bulk) for _ in range(args.rounds)]
+            pastes = [paste(argv, args.paste_mb, args.text_bulk) for _ in range(args.rounds)]
             results[name] = {
                 "bulk": max(rounds, key=lambda r: r["megabytes_per_second"]),
                 "latency": latency(argv, args.samples),

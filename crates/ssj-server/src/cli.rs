@@ -54,6 +54,8 @@ pub struct Args {
     pub away_after: Duration,
     pub slow_client: SlowClient,
     pub live_backlog: usize,
+    /// Compress output when the link is the limit. Off by default.
+    pub compress: bool,
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
@@ -75,6 +77,7 @@ pub struct Explicit {
     pub away_after: bool,
     pub slow_client: bool,
     pub live_backlog: bool,
+    pub compress: bool,
     pub shell: bool,
 }
 
@@ -91,6 +94,7 @@ impl Default for Args {
             away_after: Duration::from_secs(10),
             slow_client: SlowClient::default(),
             live_backlog: DEFAULT_LIVE_BACKLOG,
+            compress: false,
             shell: None,
             shell_args: Vec::new(),
             udp: true,
@@ -135,6 +139,8 @@ impl Args {
             .into(),
             "--live-backlog".into(),
             self.live_backlog.to_string().into(),
+            "--compress".into(),
+            if self.compress { "auto" } else { "off" }.into(),
         ]);
         out.extend([
             "--max-detached".into(),
@@ -208,6 +214,14 @@ pub fn parse_slow_client(text: &str) -> Result<SlowClient, String> {
         "drop" => Ok(SlowClient::Drop),
         "wait" => Ok(SlowClient::Wait),
         _ => Err("expected drop or wait".to_owned()),
+    }
+}
+
+pub fn parse_compress(text: &str) -> Result<bool, String> {
+    match text {
+        "auto" => Ok(true),
+        "off" => Ok(false),
+        _ => Err("expected auto or off".to_owned()),
     }
 }
 
@@ -310,6 +324,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 out.slow_client = parse_slow_client(&value.to_string_lossy())
                     .map_err(|e| format!("--slow-client: {e}"))?;
                 out.explicit.slow_client = true;
+            }
+            "--compress" => {
+                let value = args.next().ok_or("--compress needs a value")?;
+                out.compress = parse_compress(&value.to_string_lossy())
+                    .map_err(|e| format!("--compress: {e}"))?;
+                out.explicit.compress = true;
             }
             "--live-backlog" => {
                 let value = args.next().ok_or("--live-backlog needs a value")?;
