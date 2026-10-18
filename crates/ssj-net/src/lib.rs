@@ -7,16 +7,25 @@ use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::client::Resumption;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
+pub use rustls::pki_types::ServerName;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, UnixTime};
 use rustls::server::NoServerSessionStorage;
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 use sha2::{Digest, Sha256};
 
+pub use tokio_rustls::client::TlsStream as ClientStream;
+pub use tokio_rustls::{TlsAcceptor, TlsConnector};
+
 pub type Fingerprint = [u8; 32];
 
 /// Name sent as SNI. Not validated, since trust comes from the pinned fingerprint.
 pub const SERVER_NAME: &str = "ssj";
+
+/// The name for the TLS handshake of a client, see [`SERVER_NAME`].
+pub fn server_name() -> ServerName<'static> {
+    ServerName::try_from(SERVER_NAME).expect("a valid name")
+}
 
 /// Ephemeral self-signed certificate with its private key.
 pub struct Identity {
@@ -212,6 +221,16 @@ pub fn client_tls_with(
     config.enable_early_data = false;
     config.resumption = Resumption::disabled();
     config
+}
+
+/// Acceptor for TLS over TCP with the same pinned mutual authentication as the QUIC server.
+pub fn tls_acceptor(identity: &Identity, client_pin: Fingerprint) -> TlsAcceptor {
+    TlsAcceptor::from(Arc::new(server_tls(identity, client_pin)))
+}
+
+/// Connector for TLS over any byte stream with the same pinning as the QUIC client.
+pub fn tls_connector(identity: &Identity, server_pin: Fingerprint) -> TlsConnector {
+    TlsConnector::from(Arc::new(client_tls(identity, server_pin)))
 }
 
 /// Limits shared by both roles: no datagrams, no unidirectional streams, few bidirectional ones.

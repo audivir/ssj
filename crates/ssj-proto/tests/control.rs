@@ -28,12 +28,14 @@ fn info(state: SessionState) -> SessionInfo {
 fn requests_have_a_fixed_shape_and_survive_a_round_trip() {
     assert_eq!(format_request(&Request::Status), "STATUS\n");
     assert_eq!(format_request(&Request::Kill), "KILL\n");
+    assert_eq!(format_request(&Request::Stream), "STREAM\n");
     assert_eq!(
         format_request(&Request::Attach(fingerprint())),
         format!("ATTACH {HEX}\n")
     );
     for request in [
         Request::Status,
+        Request::Stream,
         Request::Kill,
         Request::Attach(fingerprint()),
     ] {
@@ -57,6 +59,8 @@ fn malformed_requests_are_refused() {
         "STATUS \n".into(),
         "STATUS extra\n".into(),
         "KILL 1\n".into(),
+        "STREAM 1\n".into(),
+        "stream\n".into(),
         "ATTACH\n".into(),
         "ATTACH \n".into(),
         format!("ATTACH {upper}\n"),
@@ -78,7 +82,15 @@ fn malformed_requests_are_refused() {
 fn replies_survive_a_round_trip() {
     let replies = [
         Reply::Connect(Connect {
-            port: 60123,
+            id: SessionId::parse("abcdef012345").unwrap(),
+            udp: Some(60123),
+            tcp: Some(40123),
+            fingerprint: fingerprint(),
+        }),
+        Reply::Connect(Connect {
+            id: SessionId::parse("abcdef012345").unwrap(),
+            udp: None,
+            tcp: None,
             fingerprint: fingerprint(),
         }),
         Reply::Info(info(SessionState::Connected)),
@@ -152,7 +164,9 @@ fn buffer_can_start_in_the_middle_of_a_stream() {
 #[test]
 fn a_reply_with_more_than_one_line_is_refused() {
     let connect = format_reply(&Reply::Connect(Connect {
-        port: 1234,
+        id: SessionId::parse("abcdef012345").unwrap(),
+        udp: Some(1234),
+        tcp: None,
         fingerprint: fingerprint(),
     }));
     assert!(parse_reply(connect.as_bytes()).is_ok());

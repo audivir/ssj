@@ -55,6 +55,7 @@ ssj --ssh-command 'ssh -J jump' user@host
 ssj --udp-host 203.0.113.7 user@host  # UDP address when it differs from the host name
 ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
+ssj --transport tcp user@host        # auto (default), udp, tcp (ssh -W), or stdio (the ssh channel)
 ssj install user@host               # upload the server file to the host
 ```
 
@@ -103,13 +104,22 @@ Any other character after `~` is sent as typed. Set another escape character wit
 - `ssj list user@host` shows every session with its state and age. An administrator or you can
   set `max_detached` in `server.toml` as an upper limit that also applies to deliberate detaches.
 
+### Blocked UDP and jump hosts
+
+`ssj` tries UDP first. When UDP is blocked, or `ssh` goes through a jump host, it falls back to TLS
+over TCP through `ssh -W`, and then to the `ssh` channel itself. These two start a new `ssh` for
+every connection and cannot ask for a passphrase, so use an agent or a shared connection
+(`ControlMaster auto`, `ControlPersist 10m` in your `ssh` configuration). Choose a transport with
+`--transport` or `transport` in `client.toml`. See the specification for the details.
+
 ### Security notes
 
 - Authentication is done by `ssh`. `ssj` stores no passwords or keys. Each session uses fresh
   certificates on both sides, which are pinned through the `ssh` bootstrap, and nothing is
   written to disk.
 - Only the holder of the pinned client key can open a session. An open UDP port allows handshake
-  attempts only, and these are limited by address validation and strict resource limits.
+  attempts only, and these are limited by address validation and strict resource limits. The TCP
+  port listens on the loopback address only and needs the same certificate.
 - A session without timeout is a running shell in the background. Use `ssj list` to find forgotten
   sessions.
 - Terminal escape sequences in the output of the remote host (such as clipboard writes) reach
@@ -128,6 +138,7 @@ auto_install = "ask"                  # "ask", "always", or "never"
 escape_char = "~"                     # one character, or "none"
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
+transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
 ```
 
 `$XDG_CONFIG_HOME/ssj/server.toml` on the host:

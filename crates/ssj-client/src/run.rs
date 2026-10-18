@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use quinn::Endpoint;
 use ssj_net::{Identity, SERVER_NAME, client_tls, quic_client};
-use ssj_proto::bootstrap::Connect;
+use ssj_proto::bootstrap::{Connect, sanitize};
 use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
 use ssj_proto::resume::check_welcome;
@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
 use crate::bootstrap::{StartError, run_remote, start_server};
-use crate::cli::{Args, Command};
+use crate::cli::{Args, Command, Transport};
 use crate::config::Config;
 use crate::debounce::Debounce;
 use crate::escape::{Action, EscapeFilter, HELP};
@@ -32,6 +32,7 @@ use crate::netwatch::Cause;
 use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
 use crate::terminal::{RawMode, window_size};
 use crate::tracker::Tracker;
+use crate::tunnel::Kind;
 
 /// Unacknowledged input the client keeps. Must stay below the input budget of the server.
 const INPUT_BUFFER: usize = 1 << 20;
@@ -47,6 +48,14 @@ const BACKOFF: [Duration; 5] = [
     Duration::from_secs(2),
     Duration::from_secs(3),
 ];
+/// Failed attempts on a tier that worked before, until the next tier is tried.
+const TIER_PATIENCE: usize = 3;
+/// Time the first tier gets in the first connection when other tiers follow.
+pub const FIRST_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(1500);
+/// A stream that stays silent this long is given up. The server answers a ping every second.
+pub const STREAM_DEAD_AFTER: Duration = Duration::from_secs(10);
+/// Longest note about a failed attempt in the status message.
+const NOTE_CHARS: usize = 60;
 /// A new lookup of the server address happens before every attempt after this many failed ones.
 const RESOLVE_EVERY: usize = 3;
 /// Time a lookup may take before the old address is kept.
@@ -79,15 +88,54 @@ pub enum Finished {
 pub type Resolver =
     Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<SocketAddr, String>> + Send>> + Send>;
 
+pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
+pub type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+
+/// An open byte stream to the server on a transport other than QUIC.
+pub struct Stream {
+    pub reader: Reader,
+    pub writer: Writer,
+    /// Something that must live as long as the stream, such as the `ssh` process behind it.
+    pub guard: Option<Box<dyn Send + Sync>>,
+}
+
+/// Opens a new stream to the server.
+pub type Dial =
+    Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<Stream, String>> + Send>> + Send>;
+
+/// One way to reach the server.
+pub enum Tier {
+    /// QUIC over UDP.
+    Udp {
+        addr: SocketAddr,
+        /// Finds the address again when it may have changed. `None` keeps `addr` for good.
+        resolver: Option<Resolver>,
+    },
+    /// A byte stream with TLS (TCP through `ssh -W`) or without (the `ssh` channel itself).
+    Stream { name: &'static str, dial: Dial },
+}
+
+impl Tier {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Udp { .. } => "udp",
+            Self::Stream { name, .. } => name,
+        }
+    }
+}
+
 /// Everything needed to talk to a started server.
 pub struct Params {
     pub identity: Identity,
     pub connect: Connect,
-    pub addr: SocketAddr,
-    /// Finds the address again when it may have changed. `None` keeps `addr` for good.
-    pub resolver: Option<Resolver>,
+    /// The ways to reach the server, in the order to try them.
+    pub tiers: Vec<Tier>,
     /// Time for one attempt to connect and to get the welcome.
     pub attempt_timeout: Duration,
+    /// Time the first tier gets in the first connection, before the next one is tried.
+    pub first_attempt_timeout: Duration,
+    /// Silence after which a stream (TCP or `ssh` channel) is given up.
+    pub stream_dead_after: Duration,
     pub env: Env,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
@@ -132,6 +180,15 @@ fn local_env(args: &Args) -> Result<Env, String> {
         .filter(|(name, _)| args.send_env.matches(name))
         .collect();
     Env::new(vars).map_err(|e| format!("the selected environment is not valid: {e:?}"))
+}
+
+/// The address that binds a UDP socket of the same family as `peer`.
+fn wildcard(peer: &SocketAddr) -> SocketAddr {
+    if peer.is_ipv4() {
+        SocketAddr::from(([0, 0, 0, 0], 0))
+    } else {
+        SocketAddr::from(([0u16; 8], 0))
+    }
 }
 
 async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
@@ -300,18 +357,78 @@ async fn kill_session(args: &Args, id: Option<ssj_proto::SessionId>) -> u8 {
     }
 }
 
+/// The ways to reach the server, in the order to try them, from the choice of the user and what
+/// the server offers.
+async fn build_tiers(
+    args: &Args,
+    identity: &Identity,
+    connect: &Connect,
+) -> Result<Vec<Tier>, String> {
+    let choice = args.transport;
+    // UDP does not travel through a jump host, so it is not even tried there
+    let jump = choice == Transport::Auto && crate::tunnel::uses_jump_host(args).await;
+    let order =
+        crate::tunnel::tier_order(choice, jump, connect.udp.is_some(), connect.tcp.is_some());
+    let mut tiers = Vec::new();
+    let mut notes = Vec::new();
+    for kind in order {
+        match kind {
+            Kind::Udp => {
+                let port = connect.udp.expect("offered");
+                let host = args
+                    .udp_host
+                    .clone()
+                    .unwrap_or_else(|| args.host().to_owned());
+                match resolve(&host, port).await {
+                    Ok(addr) => tiers.push(Tier::Udp {
+                        addr,
+                        resolver: Some(Box::new(move || {
+                            let host = host.clone();
+                            Box::pin(async move { resolve(&host, port).await })
+                        })),
+                    }),
+                    Err(message) => notes.push(message),
+                }
+            }
+            Kind::Tcp => tiers.push(crate::tunnel::tcp_tier(
+                args,
+                ssj_net::tls_connector(identity, connect.fingerprint),
+                connect.tcp.expect("offered"),
+                ATTEMPT_TIMEOUT,
+            )),
+            Kind::Stdio => tiers.push(crate::tunnel::stdio_tier(
+                args,
+                &connect.id,
+                ATTEMPT_TIMEOUT,
+            )),
+        }
+    }
+    if tiers.is_empty() {
+        match choice {
+            Transport::Udp if connect.udp.is_none() => {
+                notes.push("the server offers no UDP port".to_owned())
+            }
+            Transport::Tcp if connect.tcp.is_none() => {
+                notes.push("the server offers no TCP port".to_owned())
+            }
+            _ => {}
+        }
+        return Err(notes.join("; "));
+    }
+    Ok(tiers)
+}
+
 async fn connect_session(args: Args, config: &Config, extra: &[String], attach: bool) -> u8 {
     let identity = Identity::generate();
     let prepared = async {
         let connect =
             start_or_install(&args, config, &identity.fingerprint(), extra, attach).await?;
         let env = local_env(&args)?;
-        let host = args.udp_host.as_deref().unwrap_or_else(|| args.host());
-        let addr = resolve(host, connect.port).await?;
-        Ok::<_, String>((connect, env, addr))
+        let tiers = build_tiers(&args, &identity, &connect).await?;
+        Ok::<_, String>((connect, env, tiers))
     }
     .await;
-    let (connect, env, addr) = match prepared {
+    let (connect, env, tiers) = match prepared {
         Ok(prepared) => prepared,
         Err(message) => {
             eprintln!("ssj: {message}");
@@ -353,19 +470,10 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
         Params {
             identity,
             connect,
-            addr,
-            resolver: Some(Box::new({
-                let host = args
-                    .udp_host
-                    .clone()
-                    .unwrap_or_else(|| args.host().to_owned());
-                let port = connect.port;
-                move || {
-                    let host = host.clone();
-                    Box::pin(async move { resolve(&host, port).await })
-                }
-            })),
+            tiers,
             attempt_timeout: ATTEMPT_TIMEOUT,
+            first_attempt_timeout: FIRST_ATTEMPT_TIMEOUT,
+            stream_dead_after: STREAM_DEAD_AFTER,
             env,
             escape: args.escape,
             attach,
@@ -390,7 +498,7 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
 
 /// Reads server frames from a stream, keeping bytes of incomplete frames between calls.
 struct FrameReader {
-    recv: quinn::RecvStream,
+    recv: Reader,
     buf: Vec<u8>,
 }
 
@@ -408,8 +516,8 @@ impl FrameReader {
             }
             let mut chunk = [0u8; 16 * 1024];
             match self.recv.read(&mut chunk).await {
-                Ok(Some(n)) => self.buf.extend_from_slice(&chunk[..n]),
-                Ok(None) | Err(_) => return Ok(None),
+                Ok(0) | Err(_) => return Ok(None),
+                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
             }
         }
     }
@@ -420,21 +528,55 @@ impl FrameReader {
     }
 }
 
+/// The sending side of a connection.
+enum Out {
+    Quic(quinn::SendStream),
+    Stream(Writer),
+}
+
+impl Out {
+    async fn write_all(&mut self, bytes: &[u8]) -> bool {
+        match self {
+            Self::Quic(send) => send.write_all(bytes).await.is_ok(),
+            Self::Stream(writer) => writer.write_all(bytes).await.is_ok(),
+        }
+    }
+
+    /// Ends the stream after the data, and waits until the peer has it.
+    async fn finish(&mut self) {
+        match self {
+            Self::Quic(send) => {
+                let _ = send.finish();
+                // the peer must have the last frame before the process ends
+                let _ = timeout(FLUSH_TIMEOUT, send.stopped()).await;
+            }
+            Self::Stream(writer) => {
+                let _ = timeout(FLUSH_TIMEOUT, async {
+                    let _ = writer.flush().await;
+                    let _ = writer.shutdown().await;
+                })
+                .await;
+            }
+        }
+    }
+}
+
 /// Sends frames from a channel, so that a stalled stream never blocks reading.
-async fn write_frames(
-    mut send: quinn::SendStream,
-    mut frames: mpsc::UnboundedReceiver<ClientFrame>,
-) {
+async fn write_frames(mut out: Out, mut frames: mpsc::UnboundedReceiver<ClientFrame>) {
     let mut bytes = Vec::new();
     while let Some(frame) = frames.recv().await {
         bytes.clear();
-        if frame.encode(&mut bytes).is_err() || send.write_all(&bytes).await.is_err() {
+        if frame.encode(&mut bytes).is_err() || !out.write_all(&bytes).await {
+            return;
+        }
+        // a stream with a buffer must not hold a keystroke back
+        if let Out::Stream(writer) = &mut out
+            && writer.flush().await.is_err()
+        {
             return;
         }
     }
-    let _ = send.finish();
-    // the peer must have the last frame before the process ends
-    let _ = timeout(FLUSH_TIMEOUT, send.stopped()).await;
+    out.finish().await;
 }
 
 /// The next cause from the watch, or never if there is none.
@@ -454,14 +596,36 @@ fn exit_code(status: ExitStatus) -> u8 {
 
 /// One connection to the server with its reader and writer.
 struct Link {
-    conn: quinn::Connection,
+    /// The QUIC connection, if the link is one.
+    quic: Option<quinn::Connection>,
     out: mpsc::UnboundedSender<ClientFrame>,
     writer: JoinHandle<()>,
     reader: FrameReader,
     last_heard: Instant,
+    _guard: Option<Box<dyn Send + Sync>>,
 }
 
 impl Link {
+    fn new(
+        quic: Option<quinn::Connection>,
+        out: Out,
+        reader: Reader,
+        guard: Option<Box<dyn Send + Sync>>,
+    ) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Self {
+            quic,
+            out: tx,
+            writer: tokio::spawn(write_frames(out, rx)),
+            reader: FrameReader {
+                recv: reader,
+                buf: Vec::new(),
+            },
+            last_heard: Instant::now(),
+            _guard: guard,
+        }
+    }
+
     fn send(&self, frame: ClientFrame) {
         let _ = self.out.send(frame);
     }
@@ -487,8 +651,17 @@ enum Pumped {
 }
 
 struct Client {
-    endpoint: Endpoint,
+    /// The UDP socket, made when the first UDP attempt needs it.
+    endpoint: Option<Endpoint>,
     params: Params,
+    /// The tier that is tried now.
+    current: usize,
+    /// Failed attempts on the current tier since the last success.
+    failures: usize,
+    /// Whether a connection was ever made, so that the order of the tiers is settled.
+    linked_once: bool,
+    /// What the last failed attempt said, for the status message.
+    note: Option<String>,
     io: Io,
     input: ReplayBuffer,
     output_offset: u64,
@@ -506,26 +679,20 @@ struct Client {
 }
 
 pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
-    let bind: SocketAddr = if params.addr.is_ipv4() {
-        "0.0.0.0:0"
-    } else {
-        "[::]:0"
+    if params.tiers.is_empty() {
+        return Err("no way to reach the server".to_owned());
     }
-    .parse()
-    .expect("valid");
-    let mut endpoint =
-        Endpoint::client(bind).map_err(|e| format!("cannot open a UDP socket: {e}"))?;
-    endpoint.set_default_client_config(quic_client(client_tls(
-        &params.identity,
-        params.connect.fingerprint,
-    )));
     let size = io.size;
     let escape = EscapeFilter::new(params.escape);
     let mut io = io;
     let net = Some(std::mem::replace(&mut io.net, mpsc::unbounded_channel().1));
     Client {
-        endpoint,
+        endpoint: None,
         params,
+        current: 0,
+        failures: 0,
+        linked_once: false,
+        note: None,
         io,
         net,
         tracker: Tracker::new(),
@@ -570,6 +737,8 @@ impl Client {
                 }
                 Attempt::Linked(mut link) => {
                     attempts = 0;
+                    self.failures = 0;
+                    self.linked_once = true;
                     self.started = true;
                     self.clear_status().await;
                     match self.pump(&mut link).await? {
@@ -581,13 +750,18 @@ impl Client {
                         Pumped::Lost => {}
                     }
                 }
-                Attempt::Retry => {}
+                Attempt::Retry => {
+                    if self.try_next_tier() {
+                        continue;
+                    }
+                }
             }
             attempts += 1;
-            self.show_status(&format!(
-                "connection lost, reconnecting (attempt {attempts})"
-            ))
-            .await;
+            let text = match self.note.take() {
+                Some(note) => format!("connection lost, reconnecting (attempt {attempts}, {note})"),
+                None => format!("connection lost, reconnecting (attempt {attempts})"),
+            };
+            self.show_status(&text).await;
             let pause = BACKOFF[attempts.saturating_sub(1).min(BACKOFF.len() - 1)];
             if let Some(finished) = self.wait_offline(pause).await? {
                 self.clear_status_at_end().await;
@@ -639,35 +813,105 @@ impl Client {
     /// Moves the UDP socket to the current network. QUIC then probes the new path at once, and
     /// the server follows the new address.
     fn rebind(&mut self) {
-        let local: SocketAddr = if self.params.addr.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        }
-        .parse()
-        .expect("valid");
-        if let Ok(socket) = std::net::UdpSocket::bind(local) {
-            let _ = self.endpoint.rebind(socket);
+        let Some(endpoint) = &self.endpoint else {
+            return;
+        };
+        let Some(addr) = self.params.tiers.iter().find_map(|t| match t {
+            Tier::Udp { addr, .. } => Some(*addr),
+            Tier::Stream { .. } => None,
+        }) else {
+            return;
+        };
+        if let Ok(socket) = std::net::UdpSocket::bind(wildcard(&addr)) {
+            let _ = endpoint.rebind(socket);
         }
     }
 
     /// Looks up the address of the server again, since a move or a long sleep may have changed
     /// it. A failed lookup keeps the old address.
     async fn refresh_address(&mut self) {
-        let Some(resolver) = self.params.resolver.as_mut() else {
+        let Some(Tier::Udp {
+            addr,
+            resolver: Some(resolver),
+        }) = self.params.tiers.get_mut(self.current)
+        else {
             return;
         };
-        let Ok(Ok(addr)) = timeout(RESOLVE_TIMEOUT, resolver()).await else {
+        let Ok(Ok(found)) = timeout(RESOLVE_TIMEOUT, resolver()).await else {
             return;
         };
-        if addr != self.params.addr {
-            let family_changed = addr.is_ipv4() != self.params.addr.is_ipv4();
-            self.params.addr = addr;
+        if found != *addr {
+            let family_changed = found.is_ipv4() != addr.is_ipv4();
+            *addr = found;
             if family_changed {
                 // the socket must be of the same family as the address
                 self.rebind();
             }
         }
+    }
+
+    /// After a failed attempt: whether the next tier should be tried at once.
+    ///
+    /// Before the first connection every failure moves on, and a pause follows only after the last
+    /// tier. After a connection was made, the tier that worked is kept for a few failures, since
+    /// the network is the likelier culprit.
+    fn try_next_tier(&mut self) -> bool {
+        let count = self.params.tiers.len();
+        if count < 2 {
+            return false;
+        }
+        if !self.linked_once {
+            self.current = (self.current + 1) % count;
+            return self.current != 0;
+        }
+        self.failures += 1;
+        if self.failures >= TIER_PATIENCE {
+            self.failures = 0;
+            self.current = (self.current + 1) % count;
+        }
+        false
+    }
+
+    /// The UDP socket, made on first use.
+    fn udp_endpoint(&mut self, addr: SocketAddr) -> Result<Endpoint, String> {
+        if let Some(endpoint) = &self.endpoint {
+            return Ok(endpoint.clone());
+        }
+        let mut endpoint = Endpoint::client(wildcard(&addr))
+            .map_err(|e| format!("cannot open a UDP socket: {e}"))?;
+        endpoint.set_default_client_config(quic_client(client_tls(
+            &self.params.identity,
+            self.params.connect.fingerprint,
+        )));
+        self.endpoint = Some(endpoint.clone());
+        Ok(endpoint)
+    }
+
+    /// Opens the connection of the current tier.
+    async fn open_link(&mut self) -> Result<Link, String> {
+        let udp = match &self.params.tiers[self.current] {
+            Tier::Udp { addr, .. } => Some(*addr),
+            Tier::Stream { .. } => None,
+        };
+        if let Some(addr) = udp {
+            let endpoint = self.udp_endpoint(addr)?;
+            let connecting = endpoint
+                .connect(addr, SERVER_NAME)
+                .map_err(|e| format!("udp: {e}"))?;
+            let conn = connecting.await.map_err(|e| format!("udp: {e}"))?;
+            let (send, recv) = conn.open_bi().await.map_err(|e| format!("udp: {e}"))?;
+            return Ok(Link::new(Some(conn), Out::Quic(send), Box::new(recv), None));
+        }
+        let Tier::Stream { name, dial } = &mut self.params.tiers[self.current] else {
+            unreachable!("not a UDP tier");
+        };
+        let stream = dial().await.map_err(|e| format!("{name}: {e}"))?;
+        Ok(Link::new(
+            None,
+            Out::Stream(stream.writer),
+            stream.reader,
+            stream.guard,
+        ))
     }
 
     /// Makes an attempt to connect that a change of the network cuts short and starts again.
@@ -688,29 +932,34 @@ impl Client {
 
     /// Connects, sends the hello, and resends the input that the server has not consumed.
     async fn establish(&mut self, hello: &Hello) -> Attempt {
-        let attempt = timeout(self.params.attempt_timeout, async {
-            let connecting = self.endpoint.connect(self.params.addr, SERVER_NAME).ok()?;
-            let conn = connecting.await.ok()?;
-            let (send, recv) = conn.open_bi().await.ok()?;
-            let (out, out_rx) = mpsc::unbounded_channel();
-            let writer = tokio::spawn(write_frames(send, out_rx));
-            let mut link = Link {
-                conn,
-                out,
-                writer,
-                reader: FrameReader {
-                    recv,
-                    buf: Vec::new(),
-                },
-                last_heard: Instant::now(),
-            };
+        // the first tier gets little time in the first connection, so that a blocked UDP port is
+        // found out quickly
+        let limit = if !self.linked_once && self.current == 0 && self.params.tiers.len() > 1 {
+            self.params.first_attempt_timeout
+        } else {
+            self.params.attempt_timeout
+        };
+        let attempt = timeout(limit, async {
+            let link = self.open_link().await?;
             link.send(ClientFrame::Hello(hello.clone()));
+            let mut link = link;
             let reply = link.reader.next().await;
-            Some((link, reply))
+            Ok::<_, String>((link, reply))
         })
         .await;
-        let Ok(Some((link, reply))) = attempt else {
-            return Attempt::Retry;
+        let (link, reply) = match attempt {
+            Ok(Ok(opened)) => opened,
+            Ok(Err(note)) => {
+                self.note = Some(sanitize(note.as_bytes(), NOTE_CHARS));
+                return Attempt::Retry;
+            }
+            Err(_) => {
+                self.note = Some(format!(
+                    "{}: no answer",
+                    self.params.tiers[self.current].name()
+                ));
+                return Attempt::Retry;
+            }
         };
         let welcome = match reply {
             Ok(Some(ServerFrame::Welcome(welcome))) => welcome,
@@ -814,7 +1063,7 @@ impl Client {
     async fn handle_typed(
         &mut self,
         typed: &[u8],
-        link: Option<&Link>,
+        link: Option<&mpsc::UnboundedSender<ClientFrame>>,
     ) -> Result<Option<Finished>, String> {
         for action in self.escape.feed(typed) {
             match action {
@@ -825,12 +1074,12 @@ impl Client {
                         return Err("the input buffer overflowed".to_owned());
                     }
                     if let Some(link) = link {
-                        link.send(ClientFrame::Input(bytes));
+                        let _ = link.send(ClientFrame::Input(bytes));
                     }
                 }
                 Action::Detach => {
                     if let Some(link) = link {
-                        link.send(ClientFrame::Detach);
+                        let _ = link.send(ClientFrame::Detach);
                     }
                     return Ok(Some(Finished::Detached));
                 }
@@ -861,7 +1110,7 @@ impl Client {
                     match read {
                         Ok(n) if n > 0 => {
                             let typed = self.chunk[..n].to_vec();
-                            if let Some(finished) = self.handle_typed(&typed, Some(link)).await? {
+                            if let Some(finished) = self.handle_typed(&typed, Some(&link.out)).await? {
                                 return Ok(Pumped::Done(finished));
                             }
                         }
@@ -933,7 +1182,16 @@ impl Client {
                 _ = ping.tick() => {
                     link.send(ClientFrame::Ping);
                     let silent = link.last_heard.elapsed();
-                    let stall_after = (link.conn.rtt() * 4).clamp(STALL_MIN, STALL_MAX);
+                    let stall_after = link
+                        .quic
+                        .as_ref()
+                        .map_or(STALL_MIN, |conn| (conn.rtt() * 4).clamp(STALL_MIN, STALL_MAX));
+                    // QUIC finds a returning network by itself and survives long outages. A
+                    // stream has no way to notice that its path is gone, and the `ssh` behind it
+                    // would hang, so a long silence ends it and a new one is made.
+                    if link.quic.is_none() && silent > self.params.stream_dead_after {
+                        return Ok(Pumped::Lost);
+                    }
                     if silent > stall_after {
                         stalled = true;
                         // the number changes in steps of five seconds, so the title does not flicker

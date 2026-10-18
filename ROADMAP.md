@@ -3,7 +3,7 @@
 Everything that is decided but not built yet. Finished work is documented in `SPEC.md` and
 `README.md` and is not listed here. An entry is removed when it is implemented and tested.
 
-Order: the features first (2 and 3), then packaging, performance, and the release (4 to 6).
+Order: the features first (2), then packaging, performance, and the release (3 to 5).
 
 ## Decisions to record in `SPEC.md`
 
@@ -14,28 +14,7 @@ These were decided and still need to be written into the spec when their phase l
   bump.
 - The client CLI uses `clap`.
 
-## 2. Transport tiers
-
-For jump hosts, blocked UDP, and hosts behind NAT. The session core stays unchanged, since it works
-on any pair of byte streams.
-
-1. One stream type in `ssj-net` for QUIC streams and for TLS over TCP.
-1. Bootstrap line v2: `SSJ CONNECT <udp|none> tcp:<port> <fingerprint>`, with a strict parser and a
-   fuzz target. The server also binds TCP on `127.0.0.1:0` (kernel assigned). `--no-udp` and
-   `--no-tcp`.
-1. Tier 1, TCP over `ssh -e none -W localhost:<port>`, mutual TLS 1.3 with the same pinned
-   verifier, `TCP_NODELAY`, and the application ping deadline so that a half-open socket is noticed
-   within seconds.
-1. Tier 2, `ssj-server --stdio`, for hosts that forbid forwarding. It attaches to the running daemon
-   through the control socket. It starts with a 16-byte sync header, `\0SSJ_SYNC_STREAM\n`, and the
-   client skips everything before it (output of shell profiles).
-1. Selection: `--transport auto|udp|tcp|stdio`. `auto` goes straight to Tier 1 when `ssh -G`
-   shows a jump host, otherwise tries UDP for 1.5 seconds, then Tier 1, then Tier 2 when forwarding
-   is refused.
-1. Tests with a fake `ssh` that relays `-W`: jump host, dropped datagrams, forbidden forwarding,
-   a banner before the sync header, and reconnect on every tier.
-
-## 3. Names, destinations, and `ssh -G`
+## 2. Names, destinations, and `ssh -G`
 
 - Look up `hostname`, `user`, `port`, `proxyjump`, and `proxycommand` with `ssh -G`. This fixes the
   UDP address for aliases and replaces `--udp-host` as the default.
@@ -47,7 +26,7 @@ on any pair of byte streams.
   leading `-` kept. Fuzz it.
 - `ssj attach` without an id when exactly one session exists (done); with several, list them.
 
-## 4. CLI and packaging
+## 3. CLI and packaging
 
 - Move the client CLI to `clap` (derive), keeping every flag and test. Generate completions for
   Bash, Zsh, and Fish and the man page in `build.rs`.
@@ -60,7 +39,7 @@ on any pair of byte streams.
 - Optional: `ssj install --download`, fetching the server file from the release of the same version
   and checking it against `SHA256SUMS`.
 
-## 5. Performance
+## 4. Performance
 
 - Benchmark harness (an ignored test and a CI job) that compares `ssh`, `ssj` over UDP, and `ssj`
   over TCP: bulk output, keystroke latency, and the 8 MiB paste under `tc netem` (Linux only).
@@ -69,7 +48,7 @@ on any pair of byte streams.
 - First run without gates to see real numbers. Then gate on them (the proposal suggested 5 percent
   for throughput and 1 ms for latency, which nobody has measured).
 
-## 6. Release
+## 5. Release
 
 - Push the repository to a remote so that `ci.yml`, `fuzz.yml`, and `supply-chain.yml` run. They
   have never run, and the Linux tests have never been executed anywhere. Expect to fix things.

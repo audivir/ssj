@@ -97,7 +97,7 @@ fn single_port_range_is_used_and_a_busy_range_is_reported() {
     let client = Identity::generate();
     let range = free_range();
     let launched = launch(&runtime, &client, range, "cat");
-    assert_eq!(launched.connect.port, range.0);
+    assert_eq!(launched.connect.udp, Some(range.0));
 
     // the port is taken by the daemon now, so a second server finds nothing
     let pin = format_pin(&client.fingerprint());
@@ -118,9 +118,9 @@ fn port_range_zero_takes_any_port() {
     let client = Identity::generate();
     let first = launch(&runtime, &client, (0, 0), "cat");
     let second = launch(&runtime, &client, (0, 0), "cat");
-    assert_ne!(first.connect.port, 0);
-    assert_ne!(second.connect.port, 0);
-    assert_ne!(first.connect.port, second.connect.port);
+    assert_ne!(first.connect.udp, None);
+    assert_ne!(second.connect.udp, None);
+    assert_ne!(first.connect.udp, second.connect.udp);
 }
 
 #[test]

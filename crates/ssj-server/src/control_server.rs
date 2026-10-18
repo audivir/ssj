@@ -15,6 +15,7 @@ use tokio::time::timeout;
 use crate::control_socket::IO_TIMEOUT;
 use crate::frontend::Frontend;
 use crate::session::SessionCommand;
+use crate::stream::bridge;
 
 /// What the control socket needs to know and to do.
 pub struct Context {
@@ -42,6 +43,8 @@ impl Context {
                 let _ = self.commands.send(SessionCommand::Kill);
                 Reply::Ok
             }
+            // handled by the caller, since the connection itself is needed
+            Request::Stream => Reply::Error("not a stream".to_owned()),
             Request::Attach(pin) => match self.frontend.lock().await.open(pin).await {
                 Ok(connect) => Reply::Connect(connect),
                 Err(err) => Reply::Error(err.to_string()),
@@ -65,13 +68,27 @@ async fn handle(stream: UnixStream, context: Arc<Context>) {
     }
     let (reader, mut writer) = stream.into_split();
     let mut line = Vec::new();
-    let read = timeout(
-        IO_TIMEOUT,
-        BufReader::new(reader.take(MAX_LINE as u64)).read_until(b'\n', &mut line),
-    )
-    .await;
+    let mut lines = BufReader::new(reader.take(MAX_LINE as u64));
+    let read = timeout(IO_TIMEOUT, lines.read_until(b'\n', &mut line)).await;
     let reply = match read {
         Ok(Ok(n)) if n > 0 && line.ends_with(b"\n") => match parse_request(&line) {
+            Ok(Request::Stream) => {
+                // the connection becomes the byte stream of a client; the client sends nothing
+                // before the answer, so no input is lost with the buffer of the reader
+                let reader = lines.into_inner().into_inner();
+                if writer
+                    .write_all(format_reply(&Reply::Ok).as_bytes())
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                if let Ok(stream) = reader.reunite(writer) {
+                    let conns = context.frontend.lock().await.conns();
+                    let _ = conns.send(bridge(stream)).await;
+                }
+                return;
+            }
             Ok(request) => context.dispatch(request).await,
             Err(_) => Reply::Error("unknown request".to_owned()),
         },

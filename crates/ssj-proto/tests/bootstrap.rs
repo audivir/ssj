@@ -1,3 +1,4 @@
+use ssj_proto::SessionId;
 use ssj_proto::bootstrap::{
     BootstrapError, Connect, format_connect, format_pin, parse_connect, parse_pin, sanitize,
 };
@@ -8,18 +9,22 @@ fn connect() -> Connect {
         *byte = (i * 8 + 3) as u8;
     }
     Connect {
-        port: 60123,
+        id: SessionId::parse("abcdef012345").unwrap(),
+        udp: Some(60123),
+        tcp: Some(40123),
         fingerprint,
     }
 }
 
+const BODY: &str =
+    "abcdef012345 udp:1 tcp:2 030b131b232b333b434b535b636b737b838b939ba3abb3bbc3cbd3dbe3ebf3fb";
 const HEX: &str = "030b131b232b333b434b535b636b737b838b939ba3abb3bbc3cbd3dbe3ebf3fb";
 
 #[test]
 fn line_has_a_fixed_shape() {
     assert_eq!(
         format_connect(&connect()),
-        format!("SSJ CONNECT 60123 {HEX}\n")
+        format!("SSJ CONNECT abcdef012345 udp:60123 tcp:40123 {HEX}\n")
     );
 }
 
@@ -51,10 +56,10 @@ fn waits_for_the_complete_line() {
 #[test]
 fn prefix_must_be_at_the_start_of_the_line() {
     for text in [
-        format!(" SSJ CONNECT 1 {HEX}\n"),
-        format!("echo SSJ CONNECT 1 {HEX}\n"),
-        format!("ssj CONNECT 1 {HEX}\n"),
-        format!("SSJ  CONNECT 1 {HEX}\n"),
+        format!(" SSJ CONNECT {BODY}\n"),
+        format!("echo SSJ CONNECT {BODY}\n"),
+        format!("ssj CONNECT {BODY}\n"),
+        format!("SSJ  CONNECT {BODY}\n"),
     ] {
         assert_eq!(parse_connect(text.as_bytes()), Ok(None), "{text:?}");
     }
@@ -63,21 +68,40 @@ fn prefix_must_be_at_the_start_of_the_line() {
 #[test]
 fn malformed_lines_are_errors_and_not_ignored() {
     let upper = HEX.to_uppercase();
+    let id = "abcdef012345";
     let cases = [
-        format!("SSJ CONNECT 0 {HEX}\n"),
-        format!("SSJ CONNECT 65536 {HEX}\n"),
-        format!("SSJ CONNECT 080 {HEX}\n"),
-        format!("SSJ CONNECT +80 {HEX}\n"),
-        format!("SSJ CONNECT -1 {HEX}\n"),
-        format!("SSJ CONNECT 123456 {HEX}\n"),
-        format!("SSJ CONNECT  {HEX}\n"),
-        format!("SSJ CONNECT 80 {upper}\n"),
-        format!("SSJ CONNECT 80 {}\n", &HEX[1..]),
-        format!("SSJ CONNECT 80 {HEX}00\n"),
-        format!("SSJ CONNECT 80 {}g\n", &HEX[..63]),
-        format!("SSJ CONNECT 80\t{HEX}\n"),
-        format!("SSJ CONNECT 80 {HEX} extra\n"),
-        format!("SSJ CONNECT 80 {HEX} \n"),
+        // the port
+        format!("SSJ CONNECT {id} udp:0 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:65536 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:080 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:+80 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:-1 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:123456 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp: tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:1 tcp:0 {HEX}\n"),
+        // the kind of the transport
+        format!("SSJ CONNECT {id} tcp:1 udp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} 80 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} UDP:80 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} None tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} - tcp:2 {HEX}\n"),
+        // the id
+        format!("SSJ CONNECT short udp:1 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT ABCDEF012345 udp:1 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT ../etc/passwd udp:1 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT udp:1 tcp:2 {HEX}\n"),
+        // the fingerprint
+        format!("SSJ CONNECT {id} udp:1 tcp:2 {upper}\n"),
+        format!("SSJ CONNECT {id} udp:1 tcp:2 {}\n", &HEX[1..]),
+        format!("SSJ CONNECT {id} udp:1 tcp:2 {HEX}00\n"),
+        format!("SSJ CONNECT {id} udp:1 tcp:2 {}g\n", &HEX[..63]),
+        // the separators
+        format!("SSJ CONNECT {id} udp:1\ttcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id}  udp:1 tcp:2 {HEX}\n"),
+        format!("SSJ CONNECT {id} udp:1 tcp:2 {HEX} extra\n"),
+        format!("SSJ CONNECT {id} udp:1 tcp:2 {HEX} \n"),
+        // the old line of one port
+        format!("SSJ CONNECT 80 {HEX}\n"),
         "SSJ CONNECT \n".to_owned(),
     ];
     for text in cases {
@@ -136,7 +160,7 @@ fn pin_line_round_trips_and_rejects_everything_else() {
     );
 
     for bad in [
-        format!("SSJ CONNECT 1 {HEX}\n"),
+        format!("SSJ CONNECT {BODY}\n"),
         format!("SSJ PIN {}\n", HEX.to_uppercase()),
         format!("SSJ PIN {}\n", &HEX[2..]),
         format!("SSJ PIN {HEX}00\n"),
@@ -151,4 +175,46 @@ fn pin_line_round_trips_and_rejects_everything_else() {
             "{bad:?}"
         );
     }
+}
+
+#[test]
+fn each_transport_may_be_off() {
+    for (udp, tcp, text) in [
+        (Some(1), None, "udp:1 none"),
+        (None, Some(2), "none tcp:2"),
+        (None, None, "none none"),
+        (Some(65535), Some(65535), "udp:65535 tcp:65535"),
+    ] {
+        let mut connect = connect();
+        (connect.udp, connect.tcp) = (udp, tcp);
+        let line = format!("SSJ CONNECT abcdef012345 {text} {HEX}\n");
+        assert_eq!(format_connect(&connect), line);
+        assert_eq!(parse_connect(line.as_bytes()), Ok(Some(connect)));
+    }
+}
+
+#[test]
+fn the_stream_of_stdio_starts_after_the_sync_header_whatever_came_before() {
+    use ssj_proto::bootstrap::{SYNC_HEADER, find_sync};
+
+    assert_eq!(find_sync(SYNC_HEADER), Some(SYNC_HEADER.len()));
+    let noisy = [
+        b"Welcome to host\r\nlast login: today\n".as_slice(),
+        SYNC_HEADER,
+        b"\x01\x02",
+    ]
+    .concat();
+    let end = find_sync(&noisy).unwrap();
+    assert_eq!(&noisy[end..], b"\x01\x02");
+    // the first header counts
+    let twice = [SYNC_HEADER, b"x", SYNC_HEADER].concat();
+    assert_eq!(find_sync(&twice), Some(SYNC_HEADER.len()));
+
+    // an incomplete header, or the text of it without the leading NUL, is not the header
+    for cut in 0..SYNC_HEADER.len() {
+        assert_eq!(find_sync(&SYNC_HEADER[..cut]), None, "cut at {cut}");
+    }
+    assert_eq!(find_sync(&SYNC_HEADER[1..]), None);
+    assert_eq!(find_sync(b"SSJ_SYNC_STREAM\n"), None);
+    assert_eq!(find_sync(b""), None);
 }

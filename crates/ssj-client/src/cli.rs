@@ -15,6 +15,27 @@ pub enum ServerPath {
     Custom(String),
 }
 
+/// How the client reaches the server.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Transport {
+    /// UDP first, then TCP through `ssh -W`, then the `ssh` channel itself.
+    #[default]
+    Auto,
+    Udp,
+    Tcp,
+    Stdio,
+}
+
+pub fn parse_transport(text: &str) -> Result<Transport, String> {
+    match text {
+        "auto" => Ok(Transport::Auto),
+        "udp" => Ok(Transport::Udp),
+        "tcp" => Ok(Transport::Tcp),
+        "stdio" => Ok(Transport::Stdio),
+        _ => Err("expected auto, udp, tcp, or stdio".to_owned()),
+    }
+}
+
 /// What the client is asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -51,6 +72,7 @@ pub struct Args {
     pub server_binary: Option<PathBuf>,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
+    pub transport: Transport,
     /// Which of `ssh_command`, `escape`, and `send_env` the command line set, since the config
     /// file only fills in the others.
     pub explicit: Explicit,
@@ -61,6 +83,7 @@ pub struct Explicit {
     pub ssh_command: bool,
     pub escape: bool,
     pub send_env: bool,
+    pub transport: bool,
 }
 
 impl Args {
@@ -71,6 +94,9 @@ impl Args {
         }
         if !self.explicit.escape {
             self.escape = config.escape;
+        }
+        if !self.explicit.transport {
+            self.transport = config.transport;
         }
         if !self.explicit.send_env {
             self.send_env = config.send_env.clone();
@@ -109,6 +135,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut server_binary = None;
     let mut escape = Some(b'~');
     let (mut ssh_command_set, mut escape_set) = (false, false);
+    let mut transport = None;
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -139,6 +166,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "--no-install" => auto_install = Some(AutoInstall::Never),
             "--server-dir" => server_dir = Some(PathBuf::from(value("--server-dir")?)),
             "--server-binary" => server_binary = Some(PathBuf::from(value("--server-binary")?)),
+            "--transport" => {
+                transport = Some(
+                    parse_transport(&value("--transport")?)
+                        .map_err(|e| format!("--transport: {e}"))?,
+                );
+            }
             "--udp-host" => udp_host = Some(value("--udp-host")?),
             "--escape-char" => {
                 escape = parse_escape(&value("--escape-char")?)
@@ -211,10 +244,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         server_dir,
         server_binary,
         escape,
+        transport: transport.unwrap_or_default(),
         explicit: Explicit {
             ssh_command: ssh_command_set,
             escape: escape_set,
             send_env: send_env_set,
+            transport: transport.is_some(),
         },
     })
 }

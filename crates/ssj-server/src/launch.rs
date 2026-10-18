@@ -167,7 +167,8 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         return fail("cannot create a session id", 1);
     };
     let (conns, conns_rx) = tokio_mpsc::channel(4);
-    let mut frontend = Frontend::new(args.port_range.clone(), conns, HELLO_TIMEOUT);
+    let mut frontend = Frontend::new(id.clone(), args.port_range.clone(), conns, HELLO_TIMEOUT)
+        .with_transports(args.udp, args.tcp);
     let connect = match frontend.open(pin).await {
         Ok(connect) => connect,
         Err(err) => return fail(&err.to_string(), 1),

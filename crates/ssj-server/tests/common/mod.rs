@@ -90,7 +90,19 @@ pub fn run_bootstrap(
     port_range: (u16, u16),
     script: &str,
 ) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>, Duration) {
+    run_bootstrap_with(runtime, stdin_text, port_range, script, &[])
+}
+
+/// Like [`run_bootstrap`] with more arguments for the server.
+pub fn run_bootstrap_with(
+    runtime: &Path,
+    stdin_text: &str,
+    port_range: (u16, u16),
+    script: &str,
+    extra: &[&str],
+) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>, Duration) {
     let mut child = server_command(runtime)
+        .args(extra)
         .args([
             "--port-range",
             &if port_range == (0, 0) {
@@ -121,8 +133,19 @@ pub fn run_bootstrap(
 }
 
 pub fn launch(runtime: &Path, client: &Identity, port_range: (u16, u16), script: &str) -> Launched {
+    launch_with(runtime, client, port_range, script, &[])
+}
+
+pub fn launch_with(
+    runtime: &Path,
+    client: &Identity,
+    port_range: (u16, u16),
+    script: &str,
+    extra: &[&str],
+) -> Launched {
     let pin = format_pin(&client.fingerprint());
-    let (status, stdout, stderr, closed_after) = run_bootstrap(runtime, &pin, port_range, script);
+    let (status, stdout, stderr, closed_after) =
+        run_bootstrap_with(runtime, &pin, port_range, script, extra);
     assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
     let connect = parse_connect(&stdout).unwrap().expect("a CONNECT line");
     Launched {
@@ -164,7 +187,7 @@ pub async fn open(
     client: &Identity,
     connect: &Connect,
 ) -> Result<(quinn::SendStream, quinn::RecvStream, quinn::Connection), Box<dyn std::error::Error>> {
-    let addr = ([127, 0, 0, 1], connect.port).into();
+    let addr = ([127, 0, 0, 1], connect.udp.expect("a UDP port")).into();
     // a handshake that gets no answer must fail the test and not wait for ever
     let conn = timeout(
         Duration::from_secs(15),

@@ -5,13 +5,14 @@
 //! escape_char = "~"               # one character, or "none"
 //! ssh_command = "ssh -J jump"     # replaces `ssh`
 //! send_env = ["TERM", "LANG", "LC_*"]
+//! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
 //! ```
 //!
 //! Flags on the command line override the file.
 
 use ssj_proto::EnvFilter;
 
-use crate::cli::parse_escape;
+use crate::cli::{Transport, parse_escape, parse_transport};
 
 /// What to do when the server is not installed on the host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub struct Config {
     pub escape: Option<u8>,
     pub ssh_command: Vec<String>,
     pub send_env: EnvFilter,
+    pub transport: Transport,
 }
 
 impl Default for Config {
@@ -41,6 +43,7 @@ impl Default for Config {
             escape: Some(b'~'),
             ssh_command: vec!["ssh".to_owned()],
             send_env: EnvFilter::default_patterns(),
+            transport: Transport::default(),
         }
     }
 }
@@ -71,6 +74,9 @@ impl Config {
         }
         if let Some(patterns) = table.take_list("send_env")? {
             config.send_env = EnvFilter::new(patterns).map_err(|e| format!("send_env: {e:?}"))?;
+        }
+        if let Some(text) = table.take_text("transport")? {
+            config.transport = parse_transport(&text).map_err(|e| format!("transport: {e}"))?;
         }
         table.finish()?;
         Ok(config)

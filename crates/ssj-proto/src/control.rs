@@ -25,6 +25,9 @@ pub enum Request {
     /// Replaces the pinned client and opens a new endpoint.
     Attach([u8; 32]),
     Status,
+    /// Turns the connection into the byte stream of a client (the `ssh` channel as transport).
+    /// The reply `OK` comes first, and everything after it is frames.
+    Stream,
     /// Ends the session as if the terminal had been closed.
     Kill,
 }
@@ -79,6 +82,7 @@ pub fn format_request(request: &Request) -> String {
     match request {
         Request::Attach(pin) => crate::bootstrap::format_pin(pin).replace("SSJ PIN ", "ATTACH "),
         Request::Status => "STATUS\n".to_owned(),
+        Request::Stream => "STREAM\n".to_owned(),
         Request::Kill => "KILL\n".to_owned(),
     }
 }
@@ -88,6 +92,7 @@ pub fn parse_request(line: &[u8]) -> Result<Request, ControlError> {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     match line {
         b"STATUS" => Ok(Request::Status),
+        b"STREAM" => Ok(Request::Stream),
         b"KILL" => Ok(Request::Kill),
         _ => {
             let hex = line

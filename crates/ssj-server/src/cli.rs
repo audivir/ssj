@@ -29,6 +29,9 @@ pub enum Mode {
     Version,
     /// End a running session.
     Kill(Option<SessionId>),
+    /// Carry the stream of a client over stdin and stdout, for hosts that allow only the `ssh`
+    /// channel.
+    Stdio(Option<SessionId>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +49,9 @@ pub struct Args {
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
+    /// Whether the UDP (QUIC) and the TCP transport are offered.
+    pub udp: bool,
+    pub tcp: bool,
     /// Set by the bootstrap process when it starts the real server.
     pub daemon_child: bool,
     /// Which settings the command line gave, since the config file only fills in the others.
@@ -73,6 +79,8 @@ impl Default for Args {
             away_after: Duration::from_secs(10),
             shell: None,
             shell_args: Vec::new(),
+            udp: true,
+            tcp: true,
             daemon_child: false,
             explicit: Explicit::default(),
         }
@@ -115,6 +123,12 @@ impl Args {
         }
         for arg in &self.shell_args {
             out.extend(["--shell-arg".into(), arg.clone()]);
+        }
+        if !self.udp {
+            out.push("--no-udp".into());
+        }
+        if !self.tcp {
+            out.push("--no-tcp".into());
         }
         out
     }
@@ -200,6 +214,11 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--kill" => {
                 out.mode = Mode::Kill(session_id(&mut args).map_err(|e| format!("--kill: {e}"))?)
             }
+            "--stdio" => {
+                out.mode = Mode::Stdio(session_id(&mut args).map_err(|e| format!("--stdio: {e}"))?)
+            }
+            "--no-udp" => out.udp = false,
+            "--no-tcp" => out.tcp = false,
             "--list" => out.mode = Mode::List,
             "--version" => out.mode = Mode::Version,
             "--port-range" => {

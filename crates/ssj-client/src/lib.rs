@@ -11,3 +11,4 @@ pub mod run;
 pub mod status;
 pub mod terminal;
 pub mod tracker;
+pub mod tunnel;

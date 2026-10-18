@@ -103,6 +103,86 @@ pub fn run(args: &Args) -> ExitCode {
                 },
             }
         }
+        Mode::Stdio(id) => match choose(sessions, id.as_ref()) {
+            Err(message) => fail(&message),
+            Ok(found) => stdio(&found.path),
+        },
         Mode::Serve | Mode::Version => unreachable!("handled by the caller"),
     }
+}
+
+/// Time the server gets to deliver the last bytes after the client closed its side.
+const STDIO_DRAIN: Duration = Duration::from_secs(2);
+
+/// Joins stdin and stdout to the session: the control socket turns into the byte stream.
+fn stdio(path: &std::path::Path) -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => return fail(&format!("cannot start the runtime: {err}")),
+    };
+    let code = runtime.block_on(stdio_session(path));
+    // the read of stdin runs on a thread that does not return on a terminal or a pipe that stays
+    // open, so waiting for the runtime would hang
+    runtime.shutdown_background();
+    code
+}
+
+async fn stdio_session(path: &std::path::Path) -> ExitCode {
+    use ssj_proto::bootstrap::SYNC_HEADER;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, copy};
+    use tokio::net::UnixStream;
+
+    let stream = match UnixStream::connect(path).await {
+        Ok(stream) => stream,
+        Err(err) => return fail(&err.to_string()),
+    };
+    let (read, mut write) = stream.into_split();
+    if write
+        .write_all(ssj_proto::control::format_request(&Request::Stream).as_bytes())
+        .await
+        .is_err()
+    {
+        return fail("the session does not answer");
+    }
+    // the answer is one line, and the stream follows it at once
+    let mut from_session = BufReader::new(read);
+    let mut line = Vec::new();
+    let answer = tokio::time::timeout(
+        crate::control_socket::IO_TIMEOUT,
+        (&mut from_session)
+            .take(ssj_proto::control::MAX_LINE as u64)
+            .read_until(b'\n', &mut line),
+    )
+    .await;
+    if !matches!(answer, Ok(Ok(n)) if n > 0)
+        || !matches!(ssj_proto::control::parse_reply(&line), Ok(Reply::Ok))
+    {
+        return fail("the session refused the stream");
+    }
+
+    let mut stdout = tokio::io::stdout();
+    if stdout.write_all(SYNC_HEADER).await.is_err() || stdout.flush().await.is_err() {
+        return ExitCode::from(1);
+    }
+    let mut stdin = tokio::io::stdin();
+    let mut down = Box::pin(async {
+        let _ = copy(&mut from_session, &mut stdout).await;
+        let _ = stdout.flush().await;
+    });
+    let mut up = Box::pin(async {
+        let _ = copy(&mut stdin, &mut write).await;
+        let _ = write.shutdown().await;
+    });
+    tokio::select! {
+        // the session closed the stream, which is the normal end
+        () = &mut down => {}
+        // the client closed its side; the session may still have bytes for it
+        () = &mut up => {
+            let _ = tokio::time::timeout(STDIO_DRAIN, down).await;
+        }
+    }
+    ExitCode::SUCCESS
 }

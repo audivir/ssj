@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use quinn::Endpoint;
 use ssj_client::netwatch::Cause;
-use ssj_client::run::{Finished, Io, Params, Resolver, run_session};
+use ssj_client::run::{Dial, Finished, Io, Params, Resolver, Stream, Tier, run_session};
 use ssj_client::status::Status;
 use ssj_net::{Identity, quic_server, server_tls};
 use ssj_proto::bootstrap::Connect;
@@ -24,6 +24,8 @@ use tokio::time::{sleep, timeout};
 
 struct Server {
     addr: SocketAddr,
+    /// The TCP listener of the server.
+    tcp_addr: SocketAddr,
     fingerprint: ssj_net::Fingerprint,
     endpoint: Endpoint,
     config: quinn::ServerConfig,
@@ -63,6 +65,15 @@ fn start_server_sized(
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();
     let (events_tx, events) = mpsc::unbounded_channel();
+    let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    tcp.set_nonblocking(true).unwrap();
+    let tcp_addr = tcp.local_addr().unwrap();
+    tokio::spawn(ssj_server::tcp::serve_tcp(
+        tokio::net::TcpListener::from_std(tcp).unwrap(),
+        ssj_net::tls_acceptor(&identity, client_pin),
+        conns.clone(),
+        Duration::from_secs(5),
+    ));
     tokio::spawn(serve_observed(
         endpoint.clone(),
         conns,
@@ -76,6 +87,7 @@ fn start_server_sized(
     );
     Server {
         addr,
+        tcp_addr,
         fingerprint: identity.fingerprint(),
         endpoint,
         config,
@@ -116,6 +128,73 @@ async fn start_proxy(server: SocketAddr) -> Proxy {
         }
     });
     Proxy { addr, drop_replies }
+}
+
+/// TCP forwarder that can end all connections, or keep them open and swallow everything.
+struct TcpProxy {
+    addr: SocketAddr,
+    kill: tokio::sync::watch::Sender<u64>,
+    swallow: Arc<AtomicBool>,
+}
+
+async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (kill, killed) = tokio::sync::watch::channel(0u64);
+    let swallow = Arc::new(AtomicBool::new(false));
+    let swallowing = swallow.clone();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let mut killed = killed.clone();
+            // only a kill from now on ends this connection
+            killed.borrow_and_update();
+            let swallowing = swallowing.clone();
+            tokio::spawn(async move {
+                let Ok(upstream) = tokio::net::TcpStream::connect(server).await else {
+                    return;
+                };
+                let (mut cr, mut cw) = client.into_split();
+                let (mut ur, mut uw) = upstream.into_split();
+                let swallowing_up = swallowing.clone();
+                let up = async move {
+                    let mut buf = vec![0u8; 16 * 1024];
+                    while let Ok(n) = cr.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        if !swallowing_up.load(Ordering::Relaxed)
+                            && uw.write_all(&buf[..n]).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                };
+                let down = async move {
+                    let mut buf = vec![0u8; 16 * 1024];
+                    while let Ok(n) = ur.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        if !swallowing.load(Ordering::Relaxed)
+                            && cw.write_all(&buf[..n]).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                };
+                tokio::select! {
+                    () = up => {}
+                    () = down => {}
+                    _ = killed.changed() => {}
+                }
+            });
+        }
+    });
+    TcpProxy {
+        addr,
+        kill,
+        swallow,
+    }
 }
 
 /// Records the messages of the client.
@@ -161,6 +240,41 @@ fn start_client_with(
     start_client_full(server, identity, addr, attach, None, Duration::from_secs(8))
 }
 
+/// A client that reaches the server over TLS on TCP at `via`.
+fn start_client_tcp(
+    server: &Server,
+    identity: Identity,
+    via: SocketAddr,
+    stream_dead_after: Duration,
+) -> Terminal {
+    let connector = ssj_net::tls_connector(&identity, server.fingerprint);
+    let dial: Dial = Box::new(move || {
+        let connector = connector.clone();
+        Box::pin(async move {
+            let tcp = tokio::net::TcpStream::connect(via)
+                .await
+                .map_err(|e| e.to_string())?;
+            let tls = connector
+                .connect(ssj_net::server_name(), tcp)
+                .await
+                .map_err(|e| e.to_string())?;
+            let (reader, writer) = tokio::io::split(tls);
+            Ok(Stream {
+                reader: Box::new(reader),
+                writer: Box::new(writer),
+                guard: None,
+            })
+        })
+    });
+    start_client_tiers(
+        server,
+        identity,
+        vec![Tier::Stream { name: "tcp", dial }],
+        Duration::from_secs(8),
+        stream_dead_after,
+    )
+}
+
 fn start_client_full(
     server: &Server,
     identity: Identity,
@@ -168,6 +282,41 @@ fn start_client_full(
     attach: bool,
     resolver: Option<Resolver>,
     attempt_timeout: Duration,
+) -> Terminal {
+    start_client_inner(
+        server,
+        identity,
+        vec![Tier::Udp { addr, resolver }],
+        attempt_timeout,
+        ssj_client::run::STREAM_DEAD_AFTER,
+        attach,
+    )
+}
+
+fn start_client_tiers(
+    server: &Server,
+    identity: Identity,
+    tiers: Vec<Tier>,
+    attempt_timeout: Duration,
+    stream_dead_after: Duration,
+) -> Terminal {
+    start_client_inner(
+        server,
+        identity,
+        tiers,
+        attempt_timeout,
+        stream_dead_after,
+        false,
+    )
+}
+
+fn start_client_inner(
+    server: &Server,
+    identity: Identity,
+    tiers: Vec<Tier>,
+    attempt_timeout: Duration,
+    stream_dead_after: Duration,
+    attach: bool,
 ) -> Terminal {
     let (typed_tx, typed_rx) = tokio::io::duplex(1 << 20);
     let (shown_tx, shown_rx) = tokio::io::duplex(1 << 20);
@@ -189,12 +338,15 @@ fn start_client_full(
     let params = Params {
         identity,
         connect: Connect {
-            port: addr.port(),
+            id: ssj_proto::SessionId::parse("abcdef012345").unwrap(),
+            udp: Some(server.addr.port()),
+            tcp: Some(server.tcp_addr.port()),
             fingerprint: server.fingerprint,
         },
-        addr,
-        resolver,
+        tiers,
         attempt_timeout,
+        first_attempt_timeout: attempt_timeout,
+        stream_dead_after,
         env: Env::default(),
         escape: Some(b'~'),
         attach,
@@ -845,7 +997,7 @@ async fn the_address_is_looked_up_again_after_every_third_failed_attempt() {
         .status()
         .iter()
         .filter_map(|s| s.split("attempt ").nth(1))
-        .filter_map(|n| n.trim_end_matches(')').parse::<usize>().ok())
+        .filter_map(|n| n.split([',', ')']).next()?.parse::<usize>().ok())
         .max();
     assert_eq!(last_attempt, Some(3), "{:?}", terminal.status());
 }
@@ -916,4 +1068,68 @@ async fn a_burst_of_resizes_reaches_the_shell_as_the_last_size() {
         "{reached} resizes reached the shell: {:?}",
         terminal.seen
     );
+}
+
+#[tokio::test]
+async fn tcp_loses_and_repeats_no_line_when_its_connection_is_killed() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    let mut terminal = start_client_tcp(
+        &server,
+        client_id,
+        proxy.addr,
+        ssj_client::run::STREAM_DEAD_AFTER,
+    );
+
+    for i in 0..60 {
+        terminal.type_line(&format!("l{i}")).await;
+        if i == 15 || i == 40 {
+            sleep(Duration::from_millis(100)).await;
+            proxy.kill.send_modify(|generation| *generation += 1);
+        }
+        sleep(Duration::from_millis(5)).await;
+    }
+    terminal.wait_for("got:l59").await;
+    terminal.settle().await;
+
+    let expected: Vec<String> = (0..60).map(|i| format!("got:l{i}")).collect();
+    assert_eq!(terminal.got_lines(), expected);
+    assert!(
+        terminal.status().iter().any(|s| s.contains("reconnecting")),
+        "{:?}",
+        terminal.status()
+    );
+}
+
+// A path that stops without a sign (a dead `ssh`, a firewall) leaves the TCP connection open, and
+// only the silence shows it.
+#[tokio::test]
+async fn a_silent_tcp_path_is_given_up_after_a_while_and_replaced() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    let mut terminal = start_client_tcp(&server, client_id, proxy.addr, Duration::from_secs(4));
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+
+    proxy.swallow.store(true, Ordering::Relaxed);
+    terminal.type_line("during").await;
+    let silent = wait_until(Duration::from_secs(4), || {
+        terminal.status().iter().any(|s| s.contains("no response"))
+    })
+    .await;
+    assert!(silent.is_some(), "{:?}", terminal.status());
+    // the client gives the connection up, and its new attempts are swallowed too
+    let gave_up = wait_until(Duration::from_secs(10), || {
+        terminal.status().iter().any(|s| s.contains("reconnecting"))
+    })
+    .await;
+    assert!(gave_up.is_some(), "{:?}", terminal.status());
+
+    proxy.swallow.store(false, Ordering::Relaxed);
+    proxy.kill.send_modify(|generation| *generation += 1);
+    terminal.wait_for("got:during").await;
+    terminal.settle().await;
+    assert_eq!(terminal.got_lines(), ["got:before", "got:during"]);
 }

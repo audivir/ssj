@@ -3,17 +3,34 @@
 //! The output of the remote side also contains banners and output of shell startup files, which
 //! are not trusted. Only an exact, complete line is accepted.
 
+use crate::types::SessionId;
+
 /// Start of the line that carries the connection data.
 pub const PREFIX: &str = "SSJ CONNECT ";
 /// Start of the line that the client writes to the stdin of `ssj-server`.
 pub const PIN_PREFIX: &str = "SSJ PIN ";
+/// First bytes of the stream when the `ssh` channel itself carries the session (`--stdio`). The
+/// client skips everything before it, since shell startup files may print text first.
+pub const SYNC_HEADER: &[u8] = b"\0SSJ_SYNC_STREAM\n";
+/// Position after the first sync header in `bytes`, if it is there.
+pub fn find_sync(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .windows(SYNC_HEADER.len())
+        .position(|w| w == SYNC_HEADER)
+        .map(|at| at + SYNC_HEADER.len())
+}
+
 /// The client stops reading the output of `ssh` after this many bytes.
 pub const MAX_OUTPUT: usize = 64 * 1024;
 
-/// Port and certificate fingerprint of a running server.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// How to reach a running server: its session, the ports of its two network transports (either may
+/// be off), and the fingerprint of its certificate. A server with neither port is reached only
+/// through the `ssh` channel (`ssj-server --stdio`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Connect {
-    pub port: u16,
+    pub id: SessionId,
+    pub udp: Option<u16>,
+    pub tcp: Option<u16>,
     pub fingerprint: [u8; 32],
 }
 
@@ -25,9 +42,19 @@ pub enum BootstrapError {
     Ambiguous,
 }
 
-/// Formats the line, including the final newline.
+/// Formats the line, including the final newline:
+/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint>`.
 pub fn format_connect(connect: &Connect) -> String {
-    let mut line = format!("{PREFIX}{} ", connect.port);
+    let port = |kind: &str, port: Option<u16>| match port {
+        Some(port) => format!("{kind}:{port}"),
+        None => "none".to_owned(),
+    };
+    let mut line = format!(
+        "{PREFIX}{} {} {} ",
+        connect.id.as_str(),
+        port("udp", connect.udp),
+        port("tcp", connect.tcp)
+    );
     for byte in connect.fingerprint {
         line.push_str(&format!("{byte:02x}"));
     }
@@ -60,13 +87,33 @@ pub fn parse_connect(output: &[u8]) -> Result<Option<Connect>, BootstrapError> {
 
 fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
     let mut parts = fields.split(|&b| b == b' ');
-    let (Some(port), Some(fingerprint), None) = (parts.next(), parts.next(), parts.next()) else {
+    let (Some(id), Some(udp), Some(tcp), Some(fingerprint), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return Err(BootstrapError::Malformed);
     };
+    let id = std::str::from_utf8(id)
+        .ok()
+        .and_then(SessionId::parse)
+        .ok_or(BootstrapError::Malformed)?;
     Ok(Connect {
-        port: parse_port(port)?,
+        id,
+        udp: parse_transport(udp, b"udp:")?,
+        tcp: parse_transport(tcp, b"tcp:")?,
         fingerprint: parse_fingerprint(fingerprint)?,
     })
+}
+
+fn parse_transport(text: &[u8], kind: &[u8]) -> Result<Option<u16>, BootstrapError> {
+    if text == b"none" {
+        return Ok(None);
+    }
+    let port = text.strip_prefix(kind).ok_or(BootstrapError::Malformed)?;
+    parse_port(port).map(Some)
 }
 
 fn parse_port(text: &[u8]) -> Result<u16, BootstrapError> {

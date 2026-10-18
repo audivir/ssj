@@ -13,7 +13,7 @@ socket2 = { version = "0.6.5", features = ["all"] }
 ssj-config.workspace = true
 ssj-net.workspace = true
 ssj-proto.workspace = true
-tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.3", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 
 [lints]
 workspace = true

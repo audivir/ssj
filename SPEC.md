@@ -37,11 +37,12 @@ the workspace root):
    handles authentication, host keys, and jump hosts) and sends the fingerprint of its certificate on stdin. Stdin is used because argv
    is visible to other users in `ps`.
 1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
-   range, prints port and server certificate fingerprint on stdout, and detaches from the `ssh`
-   channel. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
+   range and a TCP port on the loopback address, prints the session id, both ports, and the server
+   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint>`), and detaches from the `ssh` channel. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
    the client also accepts and passes on to `ssj-server`. `--port-range 0` takes any port that the
    kernel gives, for hosts where the range is full or filtered anyway.
-1. Client reads the line, closes the `ssh` connection, and switches to UDP.
+1. Client reads the line, closes the `ssh` connection, and connects over the best transport (see
+   Transports).
 
 No bearer secret exists. Both fingerprints are public values that need integrity, not
 confidentiality, and the authenticated `ssh` channel provides that. The server expires the
@@ -168,13 +169,47 @@ and OSC 2 in the output) is set by name, since not every terminal has the stack.
 session the message is removed even inside a sequence. Without a terminal, the messages go to
 stderr as lines.
 
+### Transports
+
+UDP can be blocked, and a host behind a jump host cannot be reached by datagrams at all. The
+session core works on any pair of byte streams, so three transports carry the same frames, in
+this order of preference:
+
+1. **UDP**: QUIC, as described above. Fastest, and the only one that survives a changing path
+   without a new connection.
+1. **TCP through `ssh -W`**: the server also listens on `127.0.0.1` (kernel assigned port, only
+   reachable from the host itself). The client runs `ssh -W 127.0.0.1:<port> user@host` and speaks
+   TLS 1.3 through it, with the same pinned mutual authentication, no resumption, and no 0-RTT.
+   `TCP_NODELAY` is set on the server side. The jump host chain of the `ssh` configuration works.
+1. **The `ssh` channel**: `ssj-server --stdio <id>` connects to the control socket, sends
+   `STREAM`, and after the answer `OK` the socket is the byte stream of a client. The process
+   copies it to stdout and from stdin. Shell startup files may print text first, so the stream
+   begins after the 17 bytes `\0SSJ_SYNC_STREAM\n`, and the client skips everything before them.
+   No TLS runs inside, since `ssh` already authenticates and encrypts, and the socket allows only
+   the same user.
+
+The choice is `--transport auto|udp|tcp|stdio` or `transport` in `client.toml`. `auto` tries UDP
+for 1.5 seconds in the first connection, then TCP, then the `ssh` channel, and each failure moves
+on at once. It leaves out UDP when `ssh -G` shows a `proxyjump` or `proxycommand` for the host.
+After a connection was made, its transport is kept for three failed attempts before the next one
+is tried, since the network is the likelier culprit. The server offers what it is told to
+(`--no-udp`, `--no-tcp`); the `ssh` channel is always there.
+
+A stream has no keepalive of QUIC: if the path dies without a sign (a firewall, a hung `ssh`),
+the connection stays open. The client pings every second, shows "no response" after 2 seconds,
+and gives a stream up after 10 seconds of silence. Then it makes a new one and resumes with the
+offsets, as after any loss. Every connection on these two transports starts a new `ssh`, which
+cannot ask for a passphrase (`BatchMode=yes`), so they need an agent or a shared connection
+(`ControlMaster auto`, `ControlPersist`) when the key has a passphrase. The same holds for the
+reconnects of a session that started over UDP and later fell back.
+
 ### Address of the UDP connection
 
 The client needs the address of the server for the UDP connection. Its default is the host part
 of the destination, resolved by DNS (again during reconnects, see above). This is wrong when the destination is an alias from the
-`ssh` configuration or when `ssh` goes through a jump host. `--udp-host` overrides it. A later
-version should read the `HostName` that `ssh -G` reports. A jump host does not help for UDP,
-because the datagrams do not travel through it.
+`ssh` configuration. `--udp-host` overrides it. A later version should read the `HostName` that
+`ssh -G` reports. A jump host does not help for UDP, because the datagrams do not travel through
+it, so `auto` goes to the TCP transport there.
 
 ### Installation of the server
 
@@ -280,7 +315,7 @@ Re-attach:
 1. The `--attach` process connects to the control socket and asks the running server to replace
    the pinned client fingerprint. Authorization comes from `ssh`: only a process of the same user
    can reach the socket.
-1. The server prints `SSJ CONNECT <port> <fingerprint>` again. The old connection, if any, is
+1. The server prints the `SSJ CONNECT` line again, with new ports and a new fingerprint. The old connection, if any, is
    closed with reason `replaced`.
 1. After the handshake, the client sends its window size, so that full-screen programs redraw.
    The server replays the unacknowledged tail of the output buffer.
@@ -564,7 +599,7 @@ Bootstrap (client):
 - The client starts `ssh` with an argument vector and never through a shell. A host argument that
   starts with `-` is rejected, to prevent option injection such as `-oProxyCommand`.
 - `ssh` runs without a terminal, so output is not altered and stdin is not echoed.
-- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <port> <fingerprint>`, of
+- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint>`, of
   bounded length, and ignores other output such as banners and `.bashrc` noise. Remote text is
   never printed to the terminal unfiltered, because it could contain escape sequences.
 - The server reads the client fingerprint from stdin with a length limit and a timeout.

@@ -12,6 +12,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 sha2 = "0.11.1"
 ssj-proto.workspace = true
 tokio = { version = "1.53.3", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 
 [lints]
 workspace = true
