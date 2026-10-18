@@ -111,7 +111,14 @@ pub fn run_bootstrap_with(
                 format!("{}:{}", port_range.0, port_range.1)
             },
         ])
-        .args(["--detached-timeout", "20", "--shell", "/bin/sh"])
+        .args([
+            "--detached-timeout",
+            "20",
+            "--max-detached",
+            "30",
+            "--shell",
+            "/bin/sh",
+        ])
         .args(["--shell-arg", "-c", "--shell-arg", script])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

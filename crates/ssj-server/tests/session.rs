@@ -33,6 +33,7 @@ fn config(script: &str) -> SessionConfig {
         detached_timeout: None,
         max_detached: None,
         hello_timeout: Duration::from_secs(2),
+        lost_after: Duration::from_secs(60),
     }
 }
 
@@ -907,4 +908,45 @@ async fn a_burst_of_resizes_leaves_the_last_size_on_the_terminal() {
         "{:?}",
         String::from_utf8_lossy(&seen.output)
     );
+}
+
+#[tokio::test]
+async fn a_client_that_goes_silent_is_given_up_and_the_detached_timeout_starts() {
+    let mut cfg = config("cat");
+    cfg.lost_after = Duration::from_millis(400);
+    cfg.detached_timeout = Some(Duration::from_millis(600));
+    let harness = start(cfg);
+    let mut client = harness.connect().await;
+    // measured from before the hello: the silence starts with it, and a busy machine can delay
+    // the answer
+    let started = tokio::time::Instant::now();
+    client.start().await;
+
+    // the client stays connected but sends nothing; the session ends by its detached timeout,
+    // which counts from the moment the connection was given up
+    assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_millis(900),
+        "the connection was not waited for: {waited:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_client_that_pings_is_not_given_up() {
+    let mut cfg = config("cat");
+    cfg.lost_after = Duration::from_millis(400);
+    cfg.detached_timeout = Some(Duration::from_millis(600));
+    let harness = start(cfg);
+    let mut client = harness.connect().await;
+    client.start().await;
+
+    // silence of 1.5 s in total, but never 400 ms at a time
+    for _ in 0..15 {
+        client.send(ClientFrame::Ping).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let seen = client.read_until(|s| s.pongs >= 15).await;
+    assert!(seen.pongs >= 15 && !seen.closed, "{seen:?}");
+    assert!(!harness.session.is_finished());
 }

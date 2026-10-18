@@ -421,6 +421,10 @@ One task owns the state of a session: the shell, the output buffer, and the curr
 Connections arrive as byte streams, so the logic does not depend on QUIC and is tested with
 in-memory streams and real shells.
 
+- A connection that sends nothing for 60 seconds, not even a ping, is given up like a lost one:
+  the detached timeout starts, and the client resumes when it returns. QUIC alone would keep the
+  connection of a vanished client for ever (no idle timeout), and the session would never count
+  as detached.
 - Reading the shell, writing to it, and talking to the client never wait for each other. The
   shell is split into reader, writer, and exit parts for this reason.
 - The reader of a connection keeps parsing frames while the shell is busy. Acknowledgements of

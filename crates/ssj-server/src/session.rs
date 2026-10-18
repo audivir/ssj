@@ -22,7 +22,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, sleep_until, timeout_at};
+use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
 use crate::backend::{Backend, Shell, ShellWriter, SpawnSpec};
 
@@ -69,6 +69,10 @@ pub struct SessionConfig {
     pub max_detached: Option<Duration>,
     /// Time a new connection has to send its first frame.
     pub hello_timeout: Duration,
+    /// A connection that sends nothing for this long, not even a ping, is given up. The client
+    /// pings every second, so silence means that it is gone (a closed laptop, a lost phone), and
+    /// QUIC alone would keep the connection for ever.
+    pub lost_after: Duration,
 }
 
 /// Why the session ended.
@@ -346,6 +350,7 @@ impl<B: Backend> Session<B> {
                         generation,
                         control_tx.clone(),
                         config.hello_timeout,
+                        config.lost_after,
                     ));
                     detached_since = None;
                     detached_on_purpose = false;
@@ -602,6 +607,7 @@ fn start_connection(
     generation: u64,
     control: mpsc::Sender<Tagged>,
     hello_timeout: Duration,
+    lost_after: Duration,
 ) -> Active {
     let (out_tx, out_rx) = mpsc::channel(OUT_QUEUE);
     let (input_tx, input_rx) = mpsc::unbounded_channel();
@@ -613,6 +619,7 @@ fn start_connection(
         input_tx,
         budget.clone(),
         Instant::now() + hello_timeout,
+        lost_after,
     ));
     let writer = tokio::spawn(write_connection(generation, conn.writer, out_rx, control));
     Active {
@@ -636,6 +643,7 @@ async fn read_connection(
     input: mpsc::UnboundedSender<Vec<u8>>,
     budget: Arc<Semaphore>,
     hello_deadline: Instant,
+    lost_after: Duration,
 ) {
     let send = |control_event| async {
         let _ = control
@@ -650,7 +658,10 @@ async fn read_connection(
     let mut got_hello = false;
     loop {
         let read = if got_hello {
-            reader.read(&mut chunk).await
+            match timeout(lost_after, reader.read(&mut chunk)).await {
+                Ok(result) => result,
+                Err(_) => return send(Control::Lost).await,
+            }
         } else {
             match timeout_at(hello_deadline, reader.read(&mut chunk)).await {
                 Ok(result) => result,

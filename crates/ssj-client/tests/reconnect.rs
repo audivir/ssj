@@ -61,6 +61,7 @@ fn start_server_sized(
         detached_timeout: None,
         max_detached: None,
         hello_timeout: Duration::from_secs(5),
+        lost_after: Duration::from_secs(60),
     };
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();
