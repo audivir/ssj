@@ -165,7 +165,12 @@ dragging a window edge does not send a signal to the shell for every step.
 
 Status messages go to the window title. The client follows the output of the server just far
 enough to know whether it stopped inside an escape sequence or inside a multi-byte character, and
-holds the message back until it did not (it never changes or drops output). When the message goes,
+holds the message back until it did not. A sequence that is still open two seconds after the
+message became due (the link stalled in the middle of it) is cancelled: the client writes CAN to
+the terminal, which ends the sequence in every terminal, shows the message, and drops the rest of
+that sequence from the output when it arrives (up to its final byte, or the last byte of the
+character). Nothing else is changed or dropped, and a half title is never taken for the title.
+When the message goes,
 the title stack of xterm is popped and the last title that the remote side set (read from OSC 0
 and OSC 2 in the output) is set by name, since not every terminal has the stack. At the end of the
 session the message is removed even inside a sequence. Without a terminal, the messages go to
@@ -446,7 +451,10 @@ Ending (the session is over):
 
 - The shell exits: `exit`, Ctrl-D on an empty line, or the shell dying from a signal. The server
   sends the exit status, the client prints nothing of its own and exits with the same code, and
-  the server process ends. This is what a user expects from `ssh`.
+  the server process ends. This is what a user expects from `ssh`. The server ends when the client
+  confirms the status with `Close`. If the connection breaks without it, the status may not have
+  arrived, so the session stays, sends the status again to the next connection, and ends when that
+  client closes, or after `exit_grace` (60 seconds) without a client.
 - `ssj kill [ID] user@host` ends a session from another terminal. The server sends `SIGHUP` to the
   process group of the shell, as a closing terminal would, and ends after the shell has exited.
 - `SIGTERM` or `SIGINT` to the server process does the same as `ssj kill`.
@@ -578,7 +586,10 @@ Rules:
   colors and styles (`ESC [ 0 m`), and the line `[ssj: N bytes of output were dropped]`, with N
   exact. The notice comes from the client and not from the server, because bytes that the server
   inserted into the stream would shift the offsets of both sides.
-- `Attach` is not affected: it replays at most the newest 64 KiB and starts at that offset.
+- `Attach` is not affected: it replays everything the server still holds (the buffer is
+  `replay_capacity` large, and output that a client acknowledged is gone), starting at a character
+  boundary. The client begins the replay with CAN and the reset of colors, since it starts in the
+  middle of the stream.
 - The output of a job that nobody read is lost for good, as in `tmux` with a limited history. Setting
   `replay_capacity` higher keeps more of it, at the price of memory on the host.
 - A `Resume` offset beyond the end of the output is still refused with `ReplayGap`.

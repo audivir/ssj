@@ -45,6 +45,7 @@ fn start(script: &str, client_pin: ssj_net::Fingerprint) -> Server {
         max_detached: None,
         hello_timeout: Duration::from_secs(2),
         lost_after: Duration::from_secs(60),
+        exit_grace: Duration::from_secs(60),
     };
     let (conns, rx) = mpsc::channel(4);
     tokio::spawn(serve(endpoint.clone(), conns, Duration::from_secs(2)));

@@ -65,6 +65,8 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A resize is sent when no newer one has come for this long.
 const RESIZE_QUIET: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(1);
+/// How long a status waits for a sequence of the remote side to end before it cancels it.
+const SEQUENCE_PATIENCE: Duration = Duration::from_secs(2);
 /// The client says that the server is silent after four round trips, but not sooner than this
 /// and not later than the maximum, so that a good link reports a stall quickly and a slow link
 /// does not report one all the time.
@@ -815,6 +817,8 @@ struct Client {
     /// The message that should be on the screen, and the one that is.
     status_wanted: Option<String>,
     status_shown: Option<String>,
+    /// Since when the status waits for the end of a sequence of the remote side.
+    status_blocked_since: Option<Instant>,
 }
 
 pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
@@ -838,6 +842,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         tracker: Tracker::new(),
         status_wanted: None,
         status_shown: None,
+        status_blocked_since: None,
         input: ReplayBuffer::new(INPUT_BUFFER),
         output_offset: 0,
         escape,
@@ -937,9 +942,15 @@ impl Client {
     /// Writes the status change that is waiting, unless that would split a sequence of the remote
     /// side or a character. It is retried after every piece of output.
     async fn sync_status(&mut self, force: bool) {
-        if self.status_wanted == self.status_shown || (!force && self.tracker.in_sequence()) {
+        if self.status_wanted == self.status_shown {
+            self.status_blocked_since = None;
             return;
         }
+        if !force && self.tracker.in_sequence() {
+            self.status_blocked_since.get_or_insert_with(Instant::now);
+            return;
+        }
+        self.status_blocked_since = None;
         let bytes = match &self.status_wanted {
             Some(text) => self.io.status.show(text),
             None => self.io.status.clear(self.tracker.title()),
@@ -947,6 +958,21 @@ impl Client {
         let _ = self.io.output.write_all(&bytes).await;
         let _ = self.io.output.flush().await;
         self.status_shown = self.status_wanted.clone();
+    }
+
+    /// Lets a waiting status through when the remote side stopped in the middle of a sequence for
+    /// good. The terminal is given a CAN, which ends the sequence in every terminal, and the rest
+    /// of it is dropped when it arrives. A sequence that is merely slow is not touched.
+    async fn unstick_status(&mut self) {
+        let waited = self
+            .status_blocked_since
+            .is_some_and(|since| since.elapsed() >= SEQUENCE_PATIENCE);
+        if waited && self.tracker.in_sequence() {
+            let _ = self.io.output.write_all(b"\x18").await;
+            let _ = self.io.output.flush().await;
+            self.tracker.cancel_sequence();
+            self.sync_status(false).await;
+        }
     }
 
     /// Writes the notice for `dropped` forgotten bytes into the output.
@@ -1146,6 +1172,12 @@ impl Client {
             // a client without history takes over the offsets of the server
             self.output_offset = welcome.output_offset;
             self.input = ReplayBuffer::starting_at(INPUT_BUFFER, welcome.input_offset);
+            if welcome.output_offset > 0 {
+                // the replay starts in the middle of the stream: cancel a sequence it may cut
+                // and reset the colors, so that the first line does not inherit a state
+                let _ = self.io.output.write_all(b"\x18\x1b[0m").await;
+                let _ = self.io.output.flush().await;
+            }
         }
         if check_welcome(hello, welcome, self.input.start(), self.input.end()).is_err() {
             return Attempt::Fatal("the server answered with unexpected offsets".to_owned());
@@ -1179,10 +1211,12 @@ impl Client {
     async fn wait_offline(&mut self, pause: Duration) -> Result<Option<Finished>, String> {
         let pause = sleep(pause);
         tokio::pin!(pause);
+        let mut tick = interval(PING_EVERY);
         loop {
             let room = self.input.free().saturating_sub(1).min(self.chunk.len());
             tokio::select! {
                 _ = &mut pause => return Ok(None),
+                _ = tick.tick() => self.unstick_status().await,
                 read = self.io.input.read(&mut self.chunk[..room]), if self.stdin_open && room > 0 => {
                     match read {
                         Ok(n) if n > 0 => {
@@ -1282,17 +1316,20 @@ impl Client {
                     }
                     match frame {
                         ServerFrame::Output(data) => {
-                            let (before, after) = self.echo.output(&data, Instant::now());
+                            // the rest of a sequence that was cancelled on the terminal is dropped
+                            let skipped = self.tracker.skip_prefix(&data);
+                            let shown = &data[skipped..];
+                            let (before, after) = self.echo.output(shown, Instant::now());
                             let written = async {
                                 self.io.output.write_all(&before).await?;
-                                self.io.output.write_all(&data).await?;
+                                self.io.output.write_all(shown).await?;
                                 self.io.output.write_all(&after).await?;
                                 self.io.output.flush().await
                             };
                             if written.await.is_err() {
                                 return Err("cannot write to the terminal".to_owned());
                             }
-                            self.tracker.feed(&data);
+                            self.tracker.feed(shown);
                             // a status that was held back because of a sequence can go out now
                             self.sync_status(false).await;
                             self.output_offset += data.len() as u64;
@@ -1350,6 +1387,7 @@ impl Client {
                 }
                 _ = ping.tick() => {
                     link.send(ClientFrame::Ping);
+                    self.unstick_status().await;
                     let silent = link.last_heard.elapsed();
                     let stall_after = link
                         .quic

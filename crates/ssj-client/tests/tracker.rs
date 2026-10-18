@@ -109,3 +109,37 @@ fn the_last_title_is_remembered_and_only_when_it_is_complete() {
     assert_eq!(tracker.title(), Some("ab"));
     assert!(!tracker.in_sequence());
 }
+
+#[test]
+fn the_rest_of_a_cancelled_sequence_is_skipped_and_nothing_else() {
+    let mut tracker = Tracker::new();
+    tracker.feed(b"text \x1b]52;c;AAAA");
+    assert!(tracker.in_sequence());
+    tracker.cancel_sequence();
+    // the rest of the clipboard sequence is dropped, up to and including its end
+    assert_eq!(tracker.skip_prefix(b"BBBB\x07after"), 5);
+    assert!(!tracker.in_sequence());
+    // later output is not touched
+    assert_eq!(tracker.skip_prefix(b"BBBB\x07"), 0);
+    // a sequence that goes on for several chunks
+    tracker.feed(b"\x1b[3");
+    tracker.cancel_sequence();
+    assert_eq!(tracker.skip_prefix(b"1;"), 2);
+    assert_eq!(tracker.skip_prefix(b"4mX"), 2);
+    assert!(!tracker.in_sequence());
+    // a half title does not become the title
+    let mut tracker = Tracker::new();
+    tracker.feed(b"\x1b]2;half");
+    tracker.cancel_sequence();
+    tracker.skip_prefix(b" title\x07");
+    assert_eq!(tracker.title(), None);
+    // a character cut in two is dropped as well
+    let mut tracker = Tracker::new();
+    tracker.feed(&"é".as_bytes()[..1]);
+    tracker.cancel_sequence();
+    assert_eq!(tracker.skip_prefix(&"é".as_bytes()[1..]), 1);
+    // without a sequence, cancelling does nothing
+    let mut tracker = Tracker::new();
+    tracker.cancel_sequence();
+    assert_eq!(tracker.skip_prefix(b"abc"), 0);
+}

@@ -38,6 +38,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(15);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Silence after which a connection is given up, see `SessionConfig::lost_after`.
 const LOST_AFTER: Duration = Duration::from_secs(60);
+/// How long a finished session waits for the confirmation of its exit status.
+const EXIT_GRACE: Duration = Duration::from_secs(60);
 
 /// Reads one line of at most [`MAX_LINE`] bytes in a thread, so that the wait has a limit.
 pub(crate) fn read_line_with_timeout(
@@ -257,6 +259,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         max_detached: args.max_detached,
         hello_timeout: HELLO_TIMEOUT,
         lost_after: LOST_AFTER,
+        exit_grace: EXIT_GRACE,
     };
 
     let (events, mut events_rx) = tokio_mpsc::unbounded_channel();

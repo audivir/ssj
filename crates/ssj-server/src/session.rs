@@ -73,6 +73,10 @@ pub struct SessionConfig {
     /// pings every second, so silence means that it is gone (a closed laptop, a lost phone), and
     /// QUIC alone would keep the connection for ever.
     pub lost_after: Duration,
+    /// How long a finished session waits for a client that lost the connection while the exit
+    /// status was on its way. The client confirms the status with a close, and without it the
+    /// session cannot know that the status arrived.
+    pub exit_grace: Duration,
 }
 
 /// Why the session ended.
@@ -227,6 +231,8 @@ impl<B: Backend> Session<B> {
         let mut pending_resize: Option<WindowSize> = None;
         // a deliberate detach disables the timeout until the next connection
         let mut detached_on_purpose = false;
+        // since when the connection is gone although the exit status was sent
+        let mut exit_lost: Option<Instant> = None;
         // since when a connected client has left the output buffer full
         let mut full_since: Option<Instant> = None;
         let mut buf = vec![0u8; READ_CHUNK];
@@ -241,6 +247,7 @@ impl<B: Backend> Session<B> {
                 Exited(io::Result<ExitStatus>),
                 CanSend(Result<mpsc::OwnedPermit<ServerFrame>, mpsc::error::SendError<()>>),
                 DetachedTimeout,
+                ExitGrace,
                 AwayTimer,
                 Command(Option<SessionCommand>),
             }
@@ -283,6 +290,9 @@ impl<B: Backend> Session<B> {
                 (true, Some(limit), Some(since)) => Some(since + limit),
                 _ => None,
             };
+            let grace_deadline = exit_lost
+                .filter(|_| active.is_none())
+                .map(|since| since + config.exit_grace);
             if control_rx.is_empty()
                 && let Some(size) = pending_resize.take()
                 && let Some(s) = shell.as_ref()
@@ -316,6 +326,7 @@ impl<B: Backend> Session<B> {
                     status = async { match exit { Some(e) => e.await, None => pending().await } } => Event::Exited(status),
                     permit = async { match out { Some(tx) => tx.reserve_owned().await, None => pending().await } } => Event::CanSend(permit),
                     _ = async { match deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::DetachedTimeout,
+                    _ = async { match grace_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::ExitGrace,
                     _ = async { match away_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::AwayTimer,
                 }
             };
@@ -418,15 +429,21 @@ impl<B: Backend> Session<B> {
                                 detached_since = Some(Instant::now());
                             }
                         }
-                        Control::Close | Control::Lost => {
+                        control @ (Control::Close | Control::Lost) => {
                             let finished = shell.as_ref().is_some_and(|s| s.exit_queued);
                             lose(&mut active, &events);
                             detached_since = Some(Instant::now());
-                            if finished {
+                            if finished && matches!(control, Control::Close) {
                                 let status = shell
                                     .and_then(|s| s.status)
                                     .expect("exit is queued after the status is known");
                                 return SessionEnd::ShellExited(status);
+                            }
+                            if let Some(s) = shell.as_mut().filter(|_| finished) {
+                                // the status may not have arrived: it goes out again to the next
+                                // connection, and a close confirms it
+                                s.exit_queued = false;
+                                exit_lost = Some(Instant::now());
                             }
                         }
                         Control::Ping => {
@@ -494,6 +511,13 @@ impl<B: Backend> Session<B> {
                         Ok(status) => s.status = Some(status),
                         Err(err) => return SessionEnd::Failed(err),
                     }
+                }
+                Event::ExitGrace => {
+                    // nobody came back for the status: the client has it or never will
+                    let status = shell
+                        .and_then(|s| s.status)
+                        .expect("the grace period starts after the status is known");
+                    return SessionEnd::ShellExited(status);
                 }
                 Event::CanSend(Err(_)) => {
                     lose(&mut active, &events);

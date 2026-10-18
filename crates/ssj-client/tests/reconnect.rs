@@ -62,6 +62,7 @@ fn start_server_sized(
         max_detached: None,
         hello_timeout: Duration::from_secs(5),
         lost_after: Duration::from_secs(60),
+        exit_grace: Duration::from_secs(60),
     };
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();
@@ -850,9 +851,11 @@ async fn a_silent_server_is_reported_after_a_short_time_and_not_at_once() {
 
 const OPEN_SEQUENCE: &str = "printf '\\033]52;c;AAAA'; read x; printf 'BBBB\\007done\\n'";
 
-// Writing a title into the middle of a clipboard sequence would show the rest as garbage.
+// Writing a title into the middle of a clipboard sequence would show the rest as garbage. So the
+// status first waits. A sequence that stays open for good is cancelled with CAN, the status goes
+// out, and the rest of the sequence is dropped when it arrives.
 #[tokio::test]
-async fn the_status_waits_while_the_output_stops_inside_an_escape_sequence() {
+async fn a_status_waits_in_a_stuck_sequence_and_then_cancels_it() {
     let client_id = Identity::generate();
     let server = start_server(OPEN_SEQUENCE, client_id.fingerprint());
     let proxy = start_proxy(server.addr).await;
@@ -860,21 +863,31 @@ async fn the_status_waits_while_the_output_stops_inside_an_escape_sequence() {
     terminal.wait_for("AAAA").await;
 
     proxy.drop_replies.store(true, Ordering::Relaxed);
-    sleep(Duration::from_secs(5)).await;
+    // the stall shows after a few seconds, and the sequence is given two more
+    sleep(Duration::from_millis(1500)).await;
     assert!(
         terminal.status().is_empty(),
-        "the status was written inside a sequence: {:?}",
+        "the status was written inside a sequence at once: {:?}",
         terminal.status()
+    );
+    sleep(Duration::from_secs(8)).await;
+    let calls = terminal.status();
+    assert!(
+        calls.iter().any(|s| s.contains("no response")),
+        "the status never got through: {calls:?}"
     );
 
     proxy.drop_replies.store(false, Ordering::Relaxed);
     terminal.type_line("go").await;
     terminal.wait_for("done").await;
-    // the sequence ended, and the wish for a status was gone by then, so nothing was ever shown
-    let calls = terminal.status();
+    let after_cancel = terminal
+        .seen
+        .split('\u{18}')
+        .nth(1)
+        .expect("a CAN was written");
     assert!(
-        !calls.iter().any(|s| s.contains("no response")),
-        "{calls:?}"
+        !after_cancel.contains("BBBB") && !after_cancel.contains('\u{7}'),
+        "the rest of the sequence appeared as text: {after_cancel:?}"
     );
 }
 

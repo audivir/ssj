@@ -34,6 +34,7 @@ fn config(script: &str) -> SessionConfig {
         max_detached: None,
         hello_timeout: Duration::from_secs(2),
         lost_after: Duration::from_secs(60),
+        exit_grace: Duration::from_secs(60),
     }
 }
 
@@ -866,9 +867,9 @@ async fn a_connected_client_that_stays_silent_is_treated_as_away() {
     let _ = std::fs::remove_file(&marker);
 }
 
-// A client that joins later gets the newest part of the output, however much was forgotten.
+// A client that joins later gets everything the server still holds, however much was forgotten.
 #[tokio::test]
-async fn attach_after_forgotten_output_gets_exactly_the_newest_tail() {
+async fn attach_after_forgotten_output_gets_everything_that_is_left() {
     let marker = marker();
     let harness = start(job_config(&marker, 256 * 1024));
     let mut first = harness.connect().await;
@@ -883,9 +884,9 @@ async fn attach_after_forgotten_output_gets_exactly_the_newest_tail() {
     let (welcome_offset, output, exit) = drain(&mut joiner).await;
 
     let expected = job_output();
-    let tail = ssj_proto::resume::ATTACH_TAIL;
-    assert_eq!(welcome_offset as usize, expected.len() - tail);
-    assert!(output == expected[expected.len() - tail..]);
+    let held = 256 * 1024;
+    assert_eq!(welcome_offset as usize, expected.len() - held);
+    assert!(output == expected[expected.len() - held..]);
     assert_eq!(exit, Some(ExitStatus::Code(0)));
     let _ = std::fs::remove_file(&marker);
 }
@@ -949,4 +950,46 @@ async fn a_client_that_pings_is_not_given_up() {
     let seen = client.read_until(|s| s.pongs >= 15).await;
     assert!(seen.pongs >= 15 && !seen.closed, "{seen:?}");
     assert!(!harness.session.is_finished());
+}
+
+// The exit status was sent, but the connection broke before the client confirmed it. The client
+// may not have seen it, so the session stays and sends it again to the next connection.
+#[tokio::test]
+async fn an_exit_status_that_may_not_have_arrived_is_sent_again() {
+    let harness = start(config("printf done; exit 6"));
+    let mut first = harness.connect().await;
+    first.start().await;
+    let seen = first.read_until(|s| s.exit.is_some()).await;
+    assert_eq!(seen.exit, Some(ExitStatus::Code(6)));
+    // no close: the connection just goes
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut second = harness.connect().await;
+    second
+        .send(ClientFrame::Hello(Hello::Resume {
+            size: size(),
+            output_offset: seen.output.len() as u64,
+        }))
+        .await;
+    let again = second.read_until(|s| s.exit.is_some()).await;
+    assert_eq!(again.exit, Some(ExitStatus::Code(6)));
+    second.send(ClientFrame::Close).await;
+    assert!(
+        matches!(harness.end().await, SessionEnd::ShellExited(status) if status.code() == Some(6))
+    );
+}
+
+#[tokio::test]
+async fn nobody_returns_for_the_exit_status_so_the_session_ends_after_the_grace_period() {
+    let mut cfg = config("exit 9");
+    cfg.exit_grace = Duration::from_millis(400);
+    let harness = start(cfg);
+    let mut first = harness.connect().await;
+    first.start().await;
+    first.read_until(|s| s.exit.is_some()).await;
+    drop(first);
+    assert!(
+        matches!(harness.end().await, SessionEnd::ShellExited(status) if status.code() == Some(9))
+    );
 }

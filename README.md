@@ -103,8 +103,9 @@ Any other character after `~` is sent as typed. Set another escape character wit
   state of macOS or netlink on Linux, and a clock check everywhere) and moves to the new path at
   once instead of waiting for a timeout.
 - The message is written to the window title, so it never draws over the program that runs in the
-  terminal. If the output stops in the middle of an escape sequence, the message waits until the
-  sequence is complete.
+  terminal. If the output stops in the middle of an escape sequence, the message waits. When the
+  sequence is still open after two seconds, `ssj` cancels it on the terminal and drops the rest of
+  it when it arrives, so a stalled link shows its message and no half sequence appears as text.
 
 ### Timeouts and detached sessions
 

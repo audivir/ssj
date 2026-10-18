@@ -33,6 +33,8 @@ pub struct Tracker {
     payload: Vec<u8>,
     payload_overflow: bool,
     title: Option<String>,
+    /// A sequence was cancelled with CAN on the terminal; its rest is dropped when it arrives.
+    skipping: bool,
 }
 
 impl Default for Tracker {
@@ -49,11 +51,17 @@ impl Tracker {
             payload: Vec::new(),
             payload_overflow: false,
             title: None,
+            skipping: false,
         }
     }
 
     /// Whether writing now would split a sequence or a character.
     pub fn in_sequence(&self) -> bool {
+        !self.skipping && self.open()
+    }
+
+    /// Whether the state machine is inside a sequence or a character.
+    fn open(&self) -> bool {
         self.state != State::Ground || self.utf8_pending > 0
     }
 
@@ -64,6 +72,33 @@ impl Tracker {
         self.utf8_pending = 0;
         self.payload.clear();
         self.payload_overflow = false;
+        self.skipping = false;
+    }
+
+    /// The terminal was given a CAN in the middle of a sequence: its rest is dropped from the
+    /// output with [`Self::skip_prefix`], so that it does not appear as text.
+    pub fn cancel_sequence(&mut self) {
+        if self.open() {
+            self.skipping = true;
+            // a half title must not be taken for the title
+            self.payload.clear();
+            self.payload_overflow = true;
+        }
+    }
+
+    /// How many bytes at the start of `bytes` are the rest of a cancelled sequence.
+    pub fn skip_prefix(&mut self, bytes: &[u8]) -> usize {
+        if !self.skipping {
+            return 0;
+        }
+        for (index, &byte) in bytes.iter().enumerate() {
+            self.step(byte);
+            if !self.open() {
+                self.skipping = false;
+                return index + 1;
+            }
+        }
+        bytes.len()
     }
 
     /// The last title set with OSC 0 or OSC 2.

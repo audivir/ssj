@@ -5,9 +5,6 @@ use crate::frame::{ErrorCode, Hello, Welcome};
 use crate::replay::ReplayBuffer;
 use crate::types::WindowSize;
 
-/// Output bytes replayed to a client that attaches without history.
-pub const ATTACH_TAIL: usize = 64 * 1024;
-
 /// What the server has to do besides answering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -60,13 +57,23 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
             if !view.shell_started {
                 return Err(ErrorCode::NotStarted);
             }
+            // a client without history gets everything the server still holds
             let welcome = Welcome {
                 input_offset: view.input_received,
-                output_offset: view.output.tail_offset(ATTACH_TAIL),
+                output_offset: character_boundary(view.output),
             };
             Ok((welcome, Action::Resize(size)))
         }
     }
+}
+
+/// The oldest retained offset, moved forward past the rest of a UTF-8 character that the start of
+/// the buffer cuts in two.
+fn character_boundary(output: &ReplayBuffer) -> u64 {
+    let start = output.start();
+    let head = output.read_from(start, 3).unwrap_or_default();
+    let cut = head.iter().take_while(|byte| *byte & 0xc0 == 0x80).count();
+    start + cut as u64
 }
 
 /// Reason a `Welcome` does not fit what the client sent and knows.

@@ -1,4 +1,4 @@
-use ssj_proto::resume::{ATTACH_TAIL, Action, ServerView, check_welcome, negotiate};
+use ssj_proto::resume::{Action, ServerView, check_welcome, negotiate};
 use ssj_proto::{Env, ErrorCode, Hello, ReplayBuffer, Welcome, WindowSize};
 
 fn size() -> WindowSize {
@@ -112,23 +112,40 @@ fn resume_skips_forgotten_output_and_refuses_bytes_that_never_existed() {
 }
 
 #[test]
-fn attach_replays_at_most_the_tail_of_the_output() {
+fn attach_replays_everything_the_server_still_holds() {
     let hello = Hello::Attach { size: size() };
 
-    let long = output(0, ATTACH_TAIL as u64 * 3);
+    let long = output(0, 3 << 20);
     let (welcome, _) = negotiate(hello.clone(), &view(true, &long, 5)).unwrap();
     assert_eq!(
         welcome,
         Welcome {
             input_offset: 5,
-            output_offset: ATTACH_TAIL as u64 * 2
+            output_offset: 0
         }
     );
 
-    // acknowledged output is gone, so the tail cannot start before the retained bytes
+    // acknowledged output is gone, so the replay cannot start before the retained bytes
     let short = output(900, 1000);
     let (welcome, _) = negotiate(hello, &view(true, &short, 0)).unwrap();
     assert_eq!(welcome.output_offset, 900);
+}
+
+// The replay must not begin inside a character: the start of the buffer may cut one in two.
+#[test]
+fn attach_starts_at_a_character_and_not_inside_one() {
+    let hello = Hello::Attach { size: size() };
+    let mut buf = ReplayBuffer::new(1 << 10);
+    // "€" is e2 82 ac; the first byte is acknowledged, so the buffer starts at 82 ac
+    buf.push("a€b".as_bytes());
+    buf.ack(2).unwrap();
+    let (welcome, _) = negotiate(hello.clone(), &view(true, &buf, 0)).unwrap();
+    assert_eq!(welcome.output_offset, 4, "after 82 ac");
+    // text that is not UTF-8 is not touched beyond three bytes
+    let mut binary = ReplayBuffer::new(1 << 10);
+    binary.push(&[0x80; 10]);
+    let (welcome, _) = negotiate(hello, &view(true, &binary, 0)).unwrap();
+    assert_eq!(welcome.output_offset, 3);
 }
 
 #[test]

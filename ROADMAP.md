@@ -33,11 +33,6 @@ Order: performance (2), then the release (3).
 
 ## Known limits that stay until someone fixes them
 
-- If the connection is lost right after the exit status was queued but before it arrived, the
-  client finds no server and reports the end of the session without the exit code.
-- `attach` replays only the last 64 KiB of output.
-- A status message waits while the output stops inside an escape sequence, so a link that stalls in
-  the middle of one shows no message until it recovers.
 - The Linux network watch (netlink) has been compiled but not run.
 
 ## Considered and not planned
