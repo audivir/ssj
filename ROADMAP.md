@@ -3,31 +3,9 @@
 Everything that is decided but not built yet. Finished work is documented in `SPEC.md` and
 `README.md` and is not listed here. An entry is removed when it is implemented and tested.
 
-Order: packaging first (2), then performance (3), and the release (4).
+Order: performance (2), then the release (3).
 
-## Decisions to record in `SPEC.md`
-
-These were decided and still need to be written into the spec when their phase lands.
-
-- One protocol version per binary, no backward compatibility. A handshake error names the release
-  to use, and old server files stay side by side (`ssj-server-p<N>`). Revisit at the first protocol
-  bump.
-- The client CLI uses `clap`.
-
-## 2. CLI and packaging
-
-- Move the client CLI to `clap` (derive), keeping every flag and test. Generate completions for
-  Bash, Zsh, and Fish and the man page in `build.rs`.
-- `ssj list --json`, and a cache of the session list per host for instant tab completion, refreshed
-  in the background with a single-flight lock and `-o BatchMode=yes -o ConnectTimeout=2` so that
-  it never prompts for a passphrase or a security key.
-- Release archives: one `.tar.gz` per client platform with the client, the server builds for all
-  host systems (the installer looks for them next to the client), the man page, completions,
-  `README.md`, `LICENSE`, and `SHA256SUMS`. Keep the build attestation.
-- Optional: `ssj install --download`, fetching the server file from the release of the same version
-  and checking it against `SHA256SUMS`.
-
-## 3. Performance
+## 2. Performance
 
 - Benchmark harness (an ignored test and a CI job) that compares `ssh`, `ssj` over UDP, and `ssj`
   over TCP: bulk output, keystroke latency, and the 8 MiB paste under `tc netem` (Linux only).
@@ -36,7 +14,7 @@ These were decided and still need to be written into the spec when their phase l
 - First run without gates to see real numbers. Then gate on them (the proposal suggested 5 percent
   for throughput and 1 ms for latency, which nobody has measured).
 
-## 4. Release
+## 3. Release
 
 - Push the repository to a remote so that `ci.yml`, `fuzz.yml`, and `supply-chain.yml` run. They
   have never run, and the Linux tests have never been executed anywhere. Expect to fix things.
@@ -53,6 +31,9 @@ These were decided and still need to be written into the spec when their phase l
   with password prompts. The server reports `ECHO` and canonical mode from `tcgetattr` as an extra
   signal. Prediction stops at the first escape sequence in the output, which covers full-screen
   programs. Needs a new server frame, so it lands before the first release or waits for protocol 2.
+- **`ssj install --download`**, fetching the server file from the release of the same version and
+  checking it against `SHA256SUMS`. It needs an HTTPS client in the binary or a call to `curl`, and
+  the archive already carries the server files, so it waits for a request.
 - **SSH agent forwarding** over a dedicated stream. Large and security sensitive.
 
 ## Known limits that stay until someone fixes them

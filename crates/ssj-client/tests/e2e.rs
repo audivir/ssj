@@ -329,6 +329,7 @@ fn short_dir() -> PathBuf {
 fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_RUNTIME_DIR", runtime)
+        .env("XDG_CACHE_HOME", runtime)
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--udp-host", "127.0.0.1"])
@@ -365,6 +366,7 @@ fn ssj_typing(runtime: &Path, ssh: &Path, words: &[&str], steps: &[(&str, &str)]
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_RUNTIME_DIR", runtime)
+        .env("XDG_CACHE_HOME", runtime)
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--udp-host", "127.0.0.1"])
@@ -468,6 +470,16 @@ fn list_attach_detach_attach_kill_through_the_client() {
         "{listing}"
     );
     let id = listing.split_whitespace().next().unwrap().to_owned();
+
+    // the same list as JSON, and the cache that completion reads
+    let json = ssj(&runtime, &ssh, &["list", "--json", "user@localhost"], "");
+    let json = text(&json.stdout);
+    assert!(
+        json.starts_with("[{\"id\":\"") && json.contains("\"state\":\"disconnected\""),
+        "{json}"
+    );
+    let cached = ssj(&runtime, &ssh, &["--complete", "user@localhost"], "");
+    assert!(text(&cached.stdout).lines().any(|l| l == id), "{cached:?}");
 
     // the first attach types a line and leaves with the escape
     let first = ssj_typing(
@@ -604,6 +616,7 @@ impl Host {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
+            .env("XDG_CACHE_HOME", &self.runtime)
             .args([
                 "--ssh-command",
                 ssh.to_str().unwrap(),
@@ -950,6 +963,7 @@ fn on_terminal(host: &Host, ssh: &Path, words: &[String]) -> OnTerminal {
         .env("XDG_DATA_HOME", &host.data)
         .env("XDG_CONFIG_HOME", &host.config)
         .env("XDG_RUNTIME_DIR", &host.runtime)
+        .env("XDG_CACHE_HOME", &host.runtime)
         .args([
             "--ssh-command",
             ssh.to_str().unwrap(),

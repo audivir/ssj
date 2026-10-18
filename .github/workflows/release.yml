@@ -76,6 +76,20 @@ jobs:
           name: binary-${{ matrix.target }}
           path: ssj-*
           retention-days: 1
+      # the man page and the completions are the same on every target, so one build supplies them
+      - name: Collect the man page and the completions
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          out="$(dirname "$(find "target/${{ matrix.target }}/release/build" -path '*ssj-client*/out/ssj.1' | head -1)")"
+          mkdir -p assets/completions
+          cp "$out/ssj.1" assets/
+          cp "$out/ssj.bash" "$out/_ssj" "$out/ssj.fish" assets/completions/
+      - uses: actions/upload-artifact@v7
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        with:
+          name: assets
+          path: assets
+          retention-days: 1
   release:
     name: Create GitHub Release
     needs: build
@@ -91,13 +105,36 @@ jobs:
           pattern: binary-*
           path: dist
           merge-multiple: true
+      - name: Download the man page and the completions
+        uses: actions/download-artifact@v8
+        with:
+          name: assets
+          path: assets
+      # one archive for each platform of the client. The server builds of all systems sit next to
+      # the client, where `ssj` looks for the file to upload to a host.
+      - name: Assemble the archives
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p out
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin; do
+            name="ssj-${version}-${target}"
+            mkdir -p "pack/$name"
+            cp "dist/ssj-${target}" "pack/$name/ssj"
+            cp dist/ssj-server-* "pack/$name/"
+            cp assets/ssj.1 "pack/$name/"
+            cp -r assets/completions "pack/$name/"
+            cp README.md LICENSE "pack/$name/"
+            (cd "pack/$name" && sha256sum ssj ssj-server-* > SHA256SUMS)
+            tar -C pack -czf "out/${name}.tar.gz" "$name"
+          done
+          cp dist/ssj-server-* out/
       - name: Write the checksums
-        run: cd dist && sha256sum ssj-* > SHA256SUMS
+        run: cd out && sha256sum * > SHA256SUMS
       - name: Attest the provenance of the files
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "dist/ssj-*"
+          subject-path: "out/*"
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/*
+          files: out/*

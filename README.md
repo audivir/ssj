@@ -30,6 +30,13 @@ The upload is checked with SHA-256 on the host, tested by running it, and only t
 place, so a broken transfer never replaces a working server.
 Check the downloaded files against `SHA256SUMS` of the release before you use them.
 
+A release archive `ssj-<version>-<target>.tar.gz` holds `ssj`, the server files of all builds, the
+man page `ssj.1`, and `completions/` for Bash, Zsh, and Fish. Put `ssj.1` into a `man1` directory
+and load the completion of your shell (`source completions/ssj.bash`, a copy of `_ssj` in `fpath`,
+or `completions/ssj.fish` in `~/.config/fish/completions`). Session ids and names are completed
+from a list that `ssj list` keeps in `$XDG_CACHE_HOME/ssj/sessions/`; it is refreshed in the
+background without prompts, and a session that was never listed on a host is not offered.
+
 When the server is missing, `ssj user@host` offers to install it, as set by `auto_install` in
 `$XDG_CONFIG_HOME/ssj/client.toml`:
 
@@ -60,6 +67,7 @@ ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
 ssj --transport tcp user@host        # auto (default), udp, tcp (ssh -W), or stdio (the ssh channel)
 ssj install user@host               # upload the server file to the host
+ssj list --json user@host           # the same list as JSON
 ```
 
 ### Ending and leaving a session

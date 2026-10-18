@@ -295,3 +295,55 @@ fn a_name_and_auto_attach_are_settings_with_flags_and_a_file_key() {
     assert!(on.auto_attach);
     assert!(Config::from_text("auto_attach = \"yes\"\n").is_err());
 }
+
+#[test]
+fn the_flags_of_the_listing_and_the_completion() {
+    use ssj_client::cli::Command;
+
+    let json = args(&["list", "--json", "host"]).unwrap();
+    assert!(json.json && json.command == Command::List);
+    assert!(!args(&["list", "host"]).unwrap().json);
+    // the completion needs no destination, and takes a host or none
+    assert_eq!(
+        args(&["--complete"]).unwrap().command,
+        Command::Complete(None)
+    );
+    assert_eq!(
+        args(&["--complete", "me@host"]).unwrap().command,
+        Command::Complete(Some("me@host".to_owned()))
+    );
+    assert!(args(&["--batch", "list", "host"]).unwrap().batch);
+    // an option given twice: the last one counts, and the lists collect
+    assert_eq!(
+        args(&["--udp-host", "a", "--udp-host", "b", "h"])
+            .unwrap()
+            .udp_host
+            .as_deref(),
+        Some("b")
+    );
+    assert_eq!(
+        args(&["--server-arg", "--x", "--server-arg", "y", "h"])
+            .unwrap()
+            .server_args,
+        ["--x", "y"]
+    );
+}
+
+#[test]
+fn the_man_page_and_the_completions_are_built() {
+    let found = |name: &str| std::path::Path::new(env!("SSJ_ASSETS")).join(name);
+    let page = std::fs::read_to_string(found("ssj.1")).unwrap();
+    for word in [
+        "transport",
+        "client.toml",
+        "server.toml",
+        "port_range",
+        "auto_attach",
+    ] {
+        assert!(page.contains(word), "{word}");
+    }
+    for file in ["ssj.bash", "_ssj", "ssj.fish"] {
+        let text = std::fs::read_to_string(found(file)).unwrap();
+        assert!(text.contains("transport"), "{file}");
+    }
+}

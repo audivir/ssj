@@ -29,6 +29,7 @@ use crate::debounce::Debounce;
 use crate::escape::{Action, EscapeFilter, HELP};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
+use crate::sessions_cache;
 use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
 use crate::terminal::{RawMode, window_size};
 use crate::tracker::Tracker;
@@ -209,7 +210,13 @@ async fn session(mut args: Args) -> u8 {
         }
     };
     args.apply_config(&config);
+    if args.batch {
+        // nobody can answer a prompt of a background refresh, and nobody waits for it
+        args.ssh_command
+            .extend(["-o", "BatchMode=yes", "-o", "ConnectTimeout=2"].map(str::to_owned));
+    }
     match args.command.clone() {
+        Command::Complete(host) => complete(host.as_deref()),
         Command::Connect => {
             // a name or `auto_attach` may mean a session that runs already; the server decides,
             // and the client starts with an attach, which a new session answers with `NotStarted`
@@ -295,13 +302,104 @@ fn state_word(state: SessionState) -> &'static str {
     }
 }
 
+/// The sessions as a JSON array, one object each.
+pub fn sessions_json(infos: &[SessionInfo]) -> String {
+    // the id and the name are restricted to characters that need no escaping
+    let items: Vec<String> = infos
+        .iter()
+        .map(|info| {
+            let name = info
+                .name
+                .as_ref()
+                .map_or("null".to_owned(), |name| format!("\"{}\"", name.as_str()));
+            format!(
+                "{{\"id\":\"{}\",\"name\":{name},\"state\":\"{}\",\"age_secs\":{},\"protocol\":{}}}",
+                info.id.as_str(),
+                state_word(info.state),
+                info.age_secs,
+                info.protocol
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// Prints the cached names for tab completion and refreshes old lists in the background.
+fn complete(host: Option<&str>) -> u8 {
+    let Some(dir) = sessions_cache::dir() else {
+        return 0;
+    };
+    for name in sessions_cache::names(&dir, host) {
+        println!("{name}");
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return 0;
+    };
+    for origin in sessions_cache::stale_origins(&dir, sessions_cache::REFRESH_AFTER) {
+        let target = match origin.port {
+            Some(port) if origin.destination.contains(':') => {
+                // an IPv6 address needs brackets in front of a port
+                let (user, host) = origin
+                    .destination
+                    .rsplit_once('@')
+                    .map_or(("", origin.destination.as_str()), |(u, h)| (u, h));
+                let user = if user.is_empty() {
+                    String::new()
+                } else {
+                    format!("{user}@")
+                };
+                format!("ssh://{user}[{host}]:{port}")
+            }
+            Some(port) => format!("ssh://{}:{port}", origin.destination),
+            None => origin.destination.clone(),
+        };
+        // the list writes the cache; the process is not waited for
+        let _ = std::process::Command::new(&exe)
+            .args(["--batch", "list", &target])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+    0
+}
+
+fn remember(origin: &sessions_cache::Origin, names: &[String]) {
+    if let Some(dir) = sessions_cache::dir() {
+        // a cache that cannot be written only costs the completion
+        let _ = sessions_cache::store(&dir, origin, names);
+    }
+}
+
 async fn list_sessions(args: &Args) -> u8 {
+    // one refresh per host at a time; a second one has nothing to add
+    let _refresh = if args.batch {
+        match sessions_cache::dir()
+            .and_then(|dir| sessions_cache::Refresh::acquire(&dir, &args.destination))
+        {
+            Some(lock) => Some(lock),
+            None => return 0,
+        }
+    } else {
+        None
+    };
+    let origin = sessions_cache::Origin {
+        destination: args.destination.clone(),
+        port: args.ssh_port,
+    };
     let remote = match run_remote(args, &["--list".to_owned()], "").await {
         Ok(remote) if remote.server_missing() => {
-            println!(
-                "no sessions (ssj-server is not installed on {})",
-                args.destination
-            );
+            remember(&origin, &[]);
+            if !args.batch {
+                if args.json {
+                    println!("[]");
+                } else {
+                    println!(
+                        "no sessions (ssj-server is not installed on {})",
+                        args.destination
+                    );
+                }
+            }
             return 0;
         }
         Ok(remote) if remote.status.success() => remote,
@@ -327,6 +425,19 @@ async fn list_sessions(args: &Args) -> u8 {
             _ => None,
         })
         .collect();
+    let mut names = Vec::new();
+    for info in &infos {
+        names.extend(info.name.as_ref().map(|name| name.as_str().to_owned()));
+        names.push(info.id.as_str().to_owned());
+    }
+    remember(&origin, &names);
+    if args.batch {
+        return 0;
+    }
+    if args.json {
+        println!("{}", sessions_json(&infos));
+        return 0;
+    }
     if infos.is_empty() {
         println!("no sessions");
     }

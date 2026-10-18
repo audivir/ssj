@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use ssj_proto::{EnvFilter, PROTOCOL, SessionName, is_selector};
 
+use clap::Parser;
+
 use crate::config::AutoInstall;
+use crate::options::Options;
 
 /// Where the server file is, as seen on the remote host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +52,8 @@ pub enum Command {
     Install,
     /// End a session on the host.
     Kill(Option<String>),
+    /// Print the cached session names of a host, or of all hosts, for tab completion.
+    Complete(Option<String>),
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +84,10 @@ pub struct Args {
     pub transport: Transport,
     /// Join the only session without a client instead of starting another one.
     pub auto_attach: bool,
+    /// `list` prints JSON.
+    pub json: bool,
+    /// Never prompt and give up early: for refreshes that nobody waits for.
+    pub batch: bool,
     /// Which of `ssh_command`, `escape`, and `send_env` the command line set, since the config
     /// file only fills in the others.
     pub explicit: Explicit,
@@ -94,6 +103,30 @@ pub struct Explicit {
 }
 
 impl Args {
+    /// Empty arguments for commands that need no destination.
+    fn blank() -> Self {
+        Self {
+            command: Command::Connect,
+            destination: String::new(),
+            ssh_port: None,
+            name: None,
+            ssh_command: vec!["ssh".to_owned()],
+            server_path: ServerPath::Default,
+            server_args: Vec::new(),
+            udp_host: None,
+            send_env: EnvFilter::default_patterns(),
+            auto_install: None,
+            server_dir: None,
+            server_binary: None,
+            escape: Some(b'~'),
+            transport: Transport::Auto,
+            auto_attach: false,
+            json: false,
+            batch: false,
+            explicit: Explicit::default(),
+        }
+    }
+
     /// Fills in what the command line left open from the config file.
     pub fn apply_config(&mut self, config: &crate::config::Config) {
         if !self.explicit.ssh_command {
@@ -140,77 +173,68 @@ pub fn parse_escape(text: &str) -> Result<Option<u8>, String> {
 }
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let mut positionals: Vec<String> = Vec::new();
-    let mut ssh_command = vec!["ssh".to_owned()];
-    let mut server_path = ServerPath::Default;
-    let mut server_args = Vec::new();
-    let mut udp_host = None;
-    let mut send_env: Option<Vec<String>> = None;
-    let mut auto_install = None;
-    let mut server_dir = None;
-    let mut server_binary = None;
-    let mut escape = Some(b'~');
-    let (mut ssh_command_set, mut escape_set) = (false, false);
-    let mut transport = None;
-    let mut name = None;
-    let mut auto_attach = None;
-
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
-        match arg.as_str() {
-            "--ssh-command" => {
-                ssh_command = value("--ssh-command")?
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect();
-                if ssh_command.is_empty() {
-                    return Err("--ssh-command is empty".to_owned());
-                }
-                ssh_command_set = true;
-            }
-            "--server-path" => server_path = ServerPath::Custom(value("--server-path")?),
-            "--server-arg" => server_args.push(value("--server-arg")?),
-            "--port-range" => {
-                server_args.extend(["--port-range".to_owned(), value("--port-range")?]);
-            }
-            "--detached-timeout" => {
-                server_args.extend([
-                    "--detached-timeout".to_owned(),
-                    value("--detached-timeout")?,
-                ]);
-            }
-            "--install" => auto_install = Some(AutoInstall::Always),
-            "--no-install" => auto_install = Some(AutoInstall::Never),
-            "--server-dir" => server_dir = Some(PathBuf::from(value("--server-dir")?)),
-            "--server-binary" => server_binary = Some(PathBuf::from(value("--server-binary")?)),
-            "--name" => {
-                name = Some(
-                    SessionName::parse(&value("--name")?)
-                        .ok_or("--name: 1 to 32 characters of letters, digits, '.', '_', '-'")?,
-                );
-            }
-            "--auto-attach" => auto_attach = Some(true),
-            "--no-auto-attach" => auto_attach = Some(false),
-            "--transport" => {
-                transport = Some(
-                    parse_transport(&value("--transport")?)
-                        .map_err(|e| format!("--transport: {e}"))?,
-                );
-            }
-            "--udp-host" => udp_host = Some(value("--udp-host")?),
-            "--escape-char" => {
-                escape = parse_escape(&value("--escape-char")?)
-                    .map_err(|e| format!("--escape-char: {e}"))?;
-                escape_set = true;
-            }
-            "--send-env" => send_env
-                .get_or_insert_with(Vec::new)
-                .push(value("--send-env")?),
-            other if other.starts_with('-') => return Err(format!("unknown option {other:?}")),
-            other => positionals.push(other.to_owned()),
+    let options = match Options::try_parse_from(std::iter::once("ssj".to_owned()).chain(args)) {
+        Ok(options) => options,
+        Err(error) if error.use_stderr() => {
+            return Err(error.render().to_string().trim_end().to_owned());
         }
+        // help and version go to the output and end the program
+        Err(error) => error.exit(),
+    };
+    from_options(options)
+}
+
+fn from_options(options: Options) -> Result<Args, String> {
+    let Options {
+        words: positionals, ..
+    } = &options;
+    if let Some(host) = &options.complete {
+        return Ok(Args {
+            command: Command::Complete((!host.is_empty()).then(|| host.clone())),
+            ..Args::blank()
+        });
     }
+    let ssh_command = match &options.ssh_command {
+        Some(text) => {
+            let words: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
+            if words.is_empty() {
+                return Err("--ssh-command is empty".to_owned());
+            }
+            words
+        }
+        None => vec!["ssh".to_owned()],
+    };
+    let mut server_args = options.server_arg.clone();
+    if let Some(range) = &options.port_range {
+        server_args.extend(["--port-range".to_owned(), range.clone()]);
+    }
+    if let Some(timeout) = &options.detached_timeout {
+        server_args.extend(["--detached-timeout".to_owned(), timeout.clone()]);
+    }
+    let auto_install = match (options.install, options.no_install) {
+        (true, _) => Some(AutoInstall::Always),
+        (_, true) => Some(AutoInstall::Never),
+        _ => None,
+    };
+    let escape = match &options.escape_char {
+        Some(text) => parse_escape(text).map_err(|e| format!("--escape-char: {e}"))?,
+        None => Some(b'~'),
+    };
+    let transport = options
+        .transport
+        .as_deref()
+        .map(|text| parse_transport(text).map_err(|e| format!("--transport: {e}")))
+        .transpose()?;
+    let name = options
+        .name
+        .as_deref()
+        .map(|text| {
+            SessionName::parse(text)
+                .ok_or("--name: 1 to 32 characters of letters, digits, '.', '_', '-'")
+        })
+        .transpose()?;
+    let auto_attach =
+        (options.auto_attach || options.no_auto_attach).then_some(options.auto_attach);
     // `list`, `attach`, and `kill` are commands only when a destination follows them
     let command_word = positionals
         .first()
@@ -256,34 +280,39 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     };
     let parsed = ssj_proto::destination::parse(&destination)
         .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
-    let send_env_set = send_env.is_some();
-    let send_env = match send_env {
-        Some(patterns) => EnvFilter::new(patterns).map_err(|e| format!("--send-env: {e:?}"))?,
-        None => EnvFilter::default_patterns(),
+    let send_env_set = !options.send_env.is_empty();
+    let send_env = if send_env_set {
+        EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?
+    } else {
+        EnvFilter::default_patterns()
     };
     Ok(Args {
         command,
         destination: parsed.target(),
         ssh_port: parsed.port,
         name,
-        ssh_command,
-        server_path,
-        server_args,
-        udp_host,
-        send_env,
-        auto_install,
-        server_dir,
-        server_binary,
-        escape,
-        transport: transport.unwrap_or_default(),
-        auto_attach: auto_attach.unwrap_or(false),
         explicit: Explicit {
-            ssh_command: ssh_command_set,
-            escape: escape_set,
+            ssh_command: options.ssh_command.is_some(),
+            escape: options.escape_char.is_some(),
             send_env: send_env_set,
             transport: transport.is_some(),
             auto_attach: auto_attach.is_some(),
         },
+        ssh_command,
+        server_path: options
+            .server_path
+            .map_or(ServerPath::Default, ServerPath::Custom),
+        server_args,
+        udp_host: options.udp_host,
+        send_env,
+        auto_install,
+        server_dir: options.server_dir.map(PathBuf::from),
+        server_binary: options.server_binary.map(PathBuf::from),
+        escape,
+        transport: transport.unwrap_or_default(),
+        auto_attach: auto_attach.unwrap_or(false),
+        json: options.json,
+        batch: options.batch,
     })
 }
 

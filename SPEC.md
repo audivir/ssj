@@ -226,6 +226,37 @@ only session that has no client connected, and start a new one when there is non
 (a session with a client is never taken away). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
 protocol between client and server.
 
+### Command line, completions, and release files
+
+- The client parses its command line with `clap` (derive). The definition lives in
+  `crates/ssj-client/src/options.rs`, free of other dependencies of the crate, and every value is
+  text there; `cli::parse` checks the values. A word is a command (`list`, `attach`, `kill`,
+  `install`) only when a destination follows it, so a host named `list` still works. An option
+  given twice takes the last value, except `--server-arg` and `--send-env`, which collect.
+- `build.rs` writes the man page (`ssj.1`, with a FILES section for `client.toml` and
+  `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
+  the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left
+  out.
+- `ssj list --json` prints a JSON array of `{"id", "name", "state", "age_secs", "protocol"}`.
+  The name is `null` for an unnamed session.
+- Completion of session ids and names reads a cache, never the network. Every `ssj list` writes
+  `$XDG_CACHE_HOME/ssj/sessions/<destination>.list` (default `~/.cache`): a first line
+  `@<destination>`, an optional `@port=<n>`, then one id or name per line. The directory is mode
+  0700, the file is replaced by rename. `ssj --complete [DESTINATION]` prints the names of one host
+  or of all, and starts `ssj --batch list <destination>` in the background for each list older
+  than 10 seconds. `--batch` adds `-o BatchMode=yes -o ConnectTimeout=2` to the `ssh` command, so
+  that a refresh never asks for a passphrase or a key, and takes a lock file next to the list so
+  that one refresh per host runs at a time (a lock older than 30 seconds is stale). Lines read
+  back from the cache are checked again: a name must be a valid selector, and the destination must
+  parse as one without a port, since it reaches `ssh` later.
+- The id or name comes before the destination (`ssj attach ID host`), so the completion cannot know
+  the host and offers the names of all hosts with a list.
+- A release publishes one archive per client platform, `ssj-<version>-<target>.tar.gz`, that holds
+  a directory with `ssj`, the server files `ssj-server-<target>` of all five builds (next to the
+  client, where the installer looks), `ssj.1`, `completions/`, `README.md`, `LICENSE`, and a
+  `SHA256SUMS` of the binaries. The release also lists the server files alone, a `SHA256SUMS` of
+  everything, and the build provenance attestation for all of them.
+
 ### Installation of the server
 
 The server needs no root: it is one file in the home directory of the user.
@@ -691,3 +722,8 @@ UDP phase:
   `detached_timeout`.
 - `ssj-server` runs as root with a warning on stderr (root is never needed, but refusing helps
   nobody who has a reason).
+- The client CLI uses `clap`. The options live in one file that the build script includes, so the
+  man page and the completions cannot drift from the parser.
+- One protocol version per binary, with no backward compatibility. A handshake error names the
+  release to use, and old server files stay side by side (`ssj-server-p<N>`). Revisit at the first
+  protocol bump.
