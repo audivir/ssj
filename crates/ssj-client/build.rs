@@ -36,6 +36,9 @@ How to reach the server.
 .TP
 \fBauto_attach\fR = true | false
 Join the only session without a client.
+.TP
+\\fBlocal_echo\\fR = "off" | "auto"
+Show typed characters at once, before the server has echoed them.
 .RE
 .TP
 \fI$XDG_CONFIG_HOME/ssj/server.toml\fR

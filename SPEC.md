@@ -290,6 +290,35 @@ the transport. Bulk output and the paste are about 15 percent slower than `ssh` 
 the source of the difference has not been looked for. These are one machine and one run each, not
 a baseline.
 
+### Local echo
+
+Optional, off by default (`local_echo = "off" | "auto"`, `--local-echo`). It lives in the client
+(`echo.rs`) and needs nothing from the server, so the protocol does not change. A byte-for-byte
+terminal copy would be needed to predict in general; the client has none, so it predicts only where
+it can be sure, and draws in a way that the output of the server can overwrite:
+
+- A typed printable ASCII character is drawn as `ESC[2m c ESC[22m` and queued. Before the client
+  writes any output of the server it writes one backspace for each drawn character and `ESC[K`,
+  then the output, then the characters that are still waiting. So the echo of the server is
+  drawn on clean cells, and nothing is ever left over except in the case below.
+- The epoch rule of mosh: Enter (and any key that is not printable ASCII) clears the queue. After
+  Enter nothing is drawn until the output of the server has started with a queued character. The
+  server does not report `ECHO` or the canonical mode of the terminal: the epoch rule covers
+  password prompts, and a frame for it can come with protocol 2.
+- The output must be the echo. The matching skips colors and attributes (`ESC[...m`), erase to the
+  end of the line (`ESC[K`), titles (OSC), `ESC =` and `ESC >`, and the modes 1 and 2004. Any
+  other printable character, any other sequence, a backspace, a tab, or a character outside ASCII
+  drops the trust and the queue. A cursor movement or a full-screen program also stops the
+  prediction until the next Enter.
+- The column is counted from the output (set to 0 by a carriage return, unknown after any cursor
+  movement or tab). Nothing is drawn while it is unknown or within three columns of the right
+  edge. A prompt with wide or combining characters can make the count wrong, and a prediction near
+  the edge may then wrap and scroll the screen, which leaves a dimmed character in a wrong cell
+  until the program redraws.
+- At most 64 characters wait for an echo, and a read of more than 16 bytes (a paste) is not
+  predicted. An unanswered prediction is taken back after 2 seconds, and when the connection ends.
+- Nothing is drawn while there is no connection.
+
 ### Installation of the server
 
 The server needs no root: it is one file in the home directory of the user.

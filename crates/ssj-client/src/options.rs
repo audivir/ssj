@@ -35,6 +35,10 @@ pub struct Options {
     #[arg(long, value_name = "WAY", overrides_with = "transport")]
     pub transport: Option<String>,
 
+    /// Show typed characters before the server echoes them: off or auto
+    #[arg(long, value_name = "WHEN", overrides_with = "local_echo")]
+    pub local_echo: Option<String>,
+
     /// Command that replaces ssh, split at whitespace
     #[arg(
         long,

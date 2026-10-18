@@ -350,6 +350,7 @@ fn start_client_inner(
         stream_dead_after,
         env: Env::default(),
         escape: Some(b'~'),
+        local_echo: false,
         attach,
     };
     let client = tokio::spawn(run_session(params, io));

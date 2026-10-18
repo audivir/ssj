@@ -4,6 +4,7 @@ pub mod bootstrap;
 pub mod cli;
 pub mod config;
 pub mod debounce;
+pub mod echo;
 pub mod escape;
 pub mod install;
 pub mod netwatch;

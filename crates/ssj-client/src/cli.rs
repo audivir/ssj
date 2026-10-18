@@ -29,6 +29,22 @@ pub enum Transport {
     Stdio,
 }
 
+/// Whether typed characters are shown before the server has echoed them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalEcho {
+    #[default]
+    Off,
+    Auto,
+}
+
+pub fn parse_local_echo(text: &str) -> Result<LocalEcho, String> {
+    match text {
+        "off" => Ok(LocalEcho::Off),
+        "auto" => Ok(LocalEcho::Auto),
+        _ => Err("expected off or auto".to_owned()),
+    }
+}
+
 pub fn parse_transport(text: &str) -> Result<Transport, String> {
     match text {
         "auto" => Ok(Transport::Auto),
@@ -84,6 +100,7 @@ pub struct Args {
     pub transport: Transport,
     /// Join the only session without a client instead of starting another one.
     pub auto_attach: bool,
+    pub local_echo: LocalEcho,
     /// `list` prints JSON.
     pub json: bool,
     /// Never prompt and give up early: for refreshes that nobody waits for.
@@ -100,6 +117,7 @@ pub struct Explicit {
     pub send_env: bool,
     pub transport: bool,
     pub auto_attach: bool,
+    pub local_echo: bool,
 }
 
 impl Args {
@@ -121,6 +139,7 @@ impl Args {
             escape: Some(b'~'),
             transport: Transport::Auto,
             auto_attach: false,
+            local_echo: LocalEcho::Off,
             json: false,
             batch: false,
             explicit: Explicit::default(),
@@ -137,6 +156,9 @@ impl Args {
         }
         if !self.explicit.auto_attach {
             self.auto_attach = config.auto_attach;
+        }
+        if !self.explicit.local_echo {
+            self.local_echo = config.local_echo;
         }
         if !self.explicit.transport {
             self.transport = config.transport;
@@ -225,6 +247,11 @@ fn from_options(options: Options) -> Result<Args, String> {
         .as_deref()
         .map(|text| parse_transport(text).map_err(|e| format!("--transport: {e}")))
         .transpose()?;
+    let local_echo = options
+        .local_echo
+        .as_deref()
+        .map(|text| parse_local_echo(text).map_err(|e| format!("--local-echo: {e}")))
+        .transpose()?;
     let name = options
         .name
         .as_deref()
@@ -297,6 +324,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             send_env: send_env_set,
             transport: transport.is_some(),
             auto_attach: auto_attach.is_some(),
+            local_echo: local_echo.is_some(),
         },
         ssh_command,
         server_path: options
@@ -311,6 +339,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         escape,
         transport: transport.unwrap_or_default(),
         auto_attach: auto_attach.unwrap_or(false),
+        local_echo: local_echo.unwrap_or_default(),
         json: options.json,
         batch: options.batch,
     })

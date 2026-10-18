@@ -152,6 +152,7 @@ ssh_command = "ssh -J jump"           # replaces ssh
 send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
 transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
 auto_attach = false                   # `ssj host` joins the only session without a client
+local_echo = "off"                    # "off" or "auto": show typed characters at once
 ```
 
 `$XDG_CONFIG_HOME/ssj/server.toml` on the host:
@@ -165,6 +166,24 @@ away_after = 10                       # seconds a silent client may block the ou
 shell = "/bin/zsh"                    # default: $SHELL
 accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
 ```
+
+### Local echo
+
+On a slow link a typed character shows only after the server has echoed it. With
+`--local-echo auto` (or `local_echo = "auto"` in `client.toml`) `ssj` shows it at once, dimmed, and
+the real echo replaces it. It is off by default, because it is a guess.
+
+- It predicts only printable ASCII at the end of a plain shell line. Arrow keys, control keys,
+  backspace, and non-ASCII characters stop it until the next Enter.
+- After Enter it shows nothing until the server has echoed one typed character, so a password
+  prompt, which does not echo, is never shown. A full-screen program or a cursor movement in the
+  output also stops it.
+- It takes its drawing back before it shows any output, and after two seconds without an echo.
+- A shell that redraws the whole line for every key (some zsh setups) gets no prediction.
+- The client has no copy of the screen, so it keeps three columns free at the right edge, where a
+  wrap would scroll the screen. A prompt with wide characters can make its estimate of the column
+  wrong, and then a prediction near the edge can leave a stray dimmed character until the shell
+  redraws the line.
 
 ### Jobs while you are away
 

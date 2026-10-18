@@ -1385,3 +1385,83 @@ fn auto_attach_joins_the_only_session_without_a_client() {
     let killed = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
     assert!(killed.status.success(), "{}", text(&killed.stderr));
 }
+
+/// Types a command one key at a time on a terminal and returns everything the terminal received.
+fn typed_on_a_terminal(local_echo: &str) -> String {
+    use std::io::{Read, Write};
+    use std::sync::mpsc;
+
+    let ssh = fake_ssh(FAKE_SSH);
+    let port = free_port();
+    let (pty, pts) = pty_process::blocking::open().unwrap();
+    pty.resize(pty_process::Size::new(24, 80)).unwrap();
+    let mut child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .args(["--ssh-command", ssh.to_str().unwrap()])
+        .args(["--server-path", server_binary().to_str().unwrap()])
+        .args(["--udp-host", "127.0.0.1", "--local-echo", local_echo])
+        .args(["--port-range", &format!("{port}:{port}")])
+        .args(["--detached-timeout", "5", "--server-arg", "--max-detached"])
+        .args(["--server-arg", "30", "--server-arg", "--shell"])
+        .args(["--server-arg", "/bin/sh", "--server-arg", "--shell-arg"])
+        .args(["--server-arg", "-i", "me@localhost"])
+        .spawn(pts)
+        .unwrap();
+    let fd: std::os::fd::OwnedFd = pty.into();
+    let mut reader = std::fs::File::from(fd.try_clone().unwrap());
+    let mut pty = std::fs::File::from(fd);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = reader.read(&mut buf) {
+            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut seen = String::new();
+    let wait_for = |seen: &mut String, needle: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !seen.contains(needle) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Err(_) => panic!("never saw {needle:?} in {seen:?}"),
+            }
+        }
+    };
+    wait_for(&mut seen, "$");
+    // a first line with no prediction, so that the prompt is known, then a typed one
+    for line in ["true\n", "echo do$((40+2))ne\n"] {
+        for byte in line.bytes() {
+            pty.write_all(&[byte]).unwrap();
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    }
+    wait_for(&mut seen, "do42ne");
+    pty.write_all(b"exit 0\n").unwrap();
+    let start = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "the client hangs"
+        );
+        while let Ok(bytes) = rx.try_recv() {
+            seen.push_str(&String::from_utf8_lossy(&bytes));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    while let Ok(bytes) = rx.try_recv() {
+        seen.push_str(&String::from_utf8_lossy(&bytes));
+    }
+    seen
+}
+
+#[test]
+fn local_echo_shows_typed_characters_ahead_and_leaves_the_session_intact() {
+    let on = typed_on_a_terminal("auto");
+    // characters were drawn faint ahead of the server, and each was taken back
+    assert!(on.contains("\x1b[2m"), "{on:?}");
+    assert!(on.contains("\x08\x1b[K"), "{on:?}");
+    let off = typed_on_a_terminal("off");
+    assert!(!off.contains("\x1b[2m"), "{off:?}");
+}

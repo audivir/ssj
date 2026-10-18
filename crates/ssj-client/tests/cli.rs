@@ -347,3 +347,26 @@ fn the_man_page_and_the_completions_are_built() {
         assert!(text.contains("transport"), "{file}");
     }
 }
+
+#[test]
+fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
+    use ssj_client::cli::{LocalEcho, parse_local_echo};
+    use ssj_client::config::Config;
+
+    assert_eq!(args(&["host"]).unwrap().local_echo, LocalEcho::Off);
+    assert_eq!(
+        args(&["--local-echo", "auto", "host"]).unwrap().local_echo,
+        LocalEcho::Auto
+    );
+    assert!(args(&["--local-echo", "on", "host"]).is_err());
+    assert!(parse_local_echo("").is_err());
+
+    let config = Config::from_text("local_echo = \"auto\"\n").unwrap();
+    let mut open = args(&["host"]).unwrap();
+    open.apply_config(&config);
+    assert_eq!(open.local_echo, LocalEcho::Auto);
+    let mut off = args(&["--local-echo", "off", "host"]).unwrap();
+    off.apply_config(&config);
+    assert_eq!(off.local_echo, LocalEcho::Off);
+    assert!(Config::from_text("local_echo = \"yes\"\n").is_err());
+}

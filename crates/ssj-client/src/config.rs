@@ -7,13 +7,14 @@
 //! send_env = ["TERM", "LANG", "LC_*"]
 //! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
+//! local_echo = "off"              # "off" (default) or "auto": show typed characters at once
 //! ```
 //!
 //! Flags on the command line override the file.
 
 use ssj_proto::EnvFilter;
 
-use crate::cli::{Transport, parse_escape, parse_transport};
+use crate::cli::{LocalEcho, Transport, parse_escape, parse_local_echo, parse_transport};
 
 /// What to do when the server is not installed on the host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub struct Config {
     pub send_env: EnvFilter,
     pub transport: Transport,
     pub auto_attach: bool,
+    pub local_echo: LocalEcho,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             send_env: EnvFilter::default_patterns(),
             transport: Transport::default(),
             auto_attach: false,
+            local_echo: LocalEcho::Off,
         }
     }
 }
@@ -77,6 +80,9 @@ impl Config {
         }
         if let Some(patterns) = table.take_list("send_env")? {
             config.send_env = EnvFilter::new(patterns).map_err(|e| format!("send_env: {e:?}"))?;
+        }
+        if let Some(text) = table.take_text("local_echo")? {
+            config.local_echo = parse_local_echo(&text).map_err(|e| format!("local_echo: {e}"))?;
         }
         if let Some(on) = table.take_bool("auto_attach")? {
             config.auto_attach = on;

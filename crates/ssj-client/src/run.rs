@@ -23,9 +23,10 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
 use crate::bootstrap::{StartError, run_remote, start_server};
-use crate::cli::{Args, Command, Transport};
+use crate::cli::{Args, Command, LocalEcho, Transport};
 use crate::config::Config;
 use crate::debounce::Debounce;
+use crate::echo::Echo;
 use crate::escape::{Action, EscapeFilter, HELP};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
@@ -142,6 +143,8 @@ pub struct Params {
     pub escape: Option<u8>,
     /// Join a running session instead of starting one.
     pub attach: bool,
+    /// Show typed characters before the server echoes them (see [`crate::echo`]).
+    pub local_echo: bool,
 }
 
 /// The terminal side of a session, so that tests can stand in for it.
@@ -609,6 +612,7 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
             env,
             escape: args.escape,
             attach,
+            local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
         },
         io,
     )
@@ -800,6 +804,7 @@ struct Client {
     input: ReplayBuffer,
     output_offset: u64,
     escape: EscapeFilter,
+    echo: Echo,
     stdin_open: bool,
     chunk: Vec<u8>,
     size: WindowSize,
@@ -818,6 +823,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
     }
     let size = io.size;
     let escape = EscapeFilter::new(params.escape);
+    let echo = Echo::new(params.local_echo, size.cols());
     let mut io = io;
     let net = Some(std::mem::replace(&mut io.net, mpsc::unbounded_channel().1));
     Client {
@@ -835,6 +841,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         input: ReplayBuffer::new(INPUT_BUFFER),
         output_offset: 0,
         escape,
+        echo,
         stdin_open: true,
         chunk: vec![0u8; 16 * 1024],
         size,
@@ -875,7 +882,12 @@ impl Client {
                     self.linked_once = true;
                     self.started = true;
                     self.clear_status().await;
-                    match self.pump(&mut link).await? {
+                    let pumped = self.pump(&mut link).await;
+                    // what was shown ahead of the server goes, whatever happens next
+                    let taken_back = self.echo.cancel();
+                    let _ = self.io.output.write_all(&taken_back).await;
+                    let _ = self.io.output.flush().await;
+                    match pumped? {
                         Pumped::Done(finished) => {
                             link.finish().await;
                             self.clear_status_at_end().await;
@@ -1210,7 +1222,13 @@ impl Client {
                         return Err("the input buffer overflowed".to_owned());
                     }
                     if let Some(link) = link {
-                        let _ = link.send(ClientFrame::Input(bytes));
+                        let _ = link.send(ClientFrame::Input(bytes.clone()));
+                        // only with a connection: without one the echo cannot come
+                        let drawn = self.echo.typed(&bytes, Instant::now());
+                        if !drawn.is_empty() {
+                            let _ = self.io.output.write_all(&drawn).await;
+                            let _ = self.io.output.flush().await;
+                        }
                     }
                 }
                 Action::Detach => {
@@ -1241,6 +1259,7 @@ impl Client {
             // two bytes of reserve: the escape can turn one typed byte into two
             let room = self.input.free().saturating_sub(2).min(self.chunk.len());
             let change_at = change.map(|(_, at)| at);
+            let echo_due = self.echo.due();
             tokio::select! {
                 read = self.io.input.read(&mut self.chunk[..room]), if self.stdin_open && room > 0 => {
                     match read {
@@ -1263,7 +1282,14 @@ impl Client {
                     }
                     match frame {
                         ServerFrame::Output(data) => {
-                            if self.io.output.write_all(&data).await.and(self.io.output.flush().await).is_err() {
+                            let (before, after) = self.echo.output(&data, Instant::now());
+                            let written = async {
+                                self.io.output.write_all(&before).await?;
+                                self.io.output.write_all(&data).await?;
+                                self.io.output.write_all(&after).await?;
+                                self.io.output.flush().await
+                            };
+                            if written.await.is_err() {
                                 return Err("cannot write to the terminal".to_owned());
                             }
                             self.tracker.feed(&data);
@@ -1290,7 +1316,14 @@ impl Client {
                 }
                 Some(size) = self.io.resizes.recv() => {
                     self.size = size;
+                    self.echo.resize(size.cols());
                     resizes.push(size, tokio::time::Instant::now());
+                }
+                _ = async { tokio::time::sleep_until(tokio::time::Instant::from_std(echo_due.expect("guarded"))).await }, if echo_due.is_some() => {
+                    // nobody echoed what was shown, as with a password prompt
+                    let taken_back = self.echo.expire(Instant::now());
+                    let _ = self.io.output.write_all(&taken_back).await;
+                    let _ = self.io.output.flush().await;
                 }
                 _ = async { tokio::time::sleep_until(resizes.due().expect("guarded")).await }, if resizes.due().is_some() => {
                     if let Some(size) = resizes.take(tokio::time::Instant::now()) {

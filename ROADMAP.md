@@ -26,12 +26,6 @@ Order: performance (2), then the release (3).
 
 ## Later, optional
 
-- **Speculative local echo**, off by default (`local_echo = "off" | "auto"`). Predict only printable
-  characters on a plain shell line, drawn dim, and confirm against the server output. Epoch rule of
-  mosh: after Enter, show nothing until the server has echoed one character, which closes the race
-  with password prompts. The server reports `ECHO` and canonical mode from `tcgetattr` as an extra
-  signal. Prediction stops at the first escape sequence in the output, which covers full-screen
-  programs. Needs a new server frame, so it lands before the first release or waits for protocol 2.
 - **`ssj install --download`**, fetching the server file from the release of the same version and
   checking it against `SHA256SUMS`. It needs an HTTPS client in the binary or a call to `curl`, and
   the archive already carries the server files, so it waits for a request.
