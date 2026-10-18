@@ -423,6 +423,38 @@ pub fn decode_client(buf: &[u8]) -> Result<Option<(ClientFrame, usize)>, DecodeE
     }
 }
 
+/// What the first server frame in a buffer is, found without decoding it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Peek {
+    /// The frame is not complete yet.
+    Incomplete,
+    /// A complete output frame: where its data lies in the buffer, and how many bytes the frame
+    /// uses. Reading the data from the buffer saves the copy that decoding makes.
+    Output {
+        data: std::ops::Range<usize>,
+        used: usize,
+    },
+    /// A complete frame of another kind, to be decoded with [`decode_server`].
+    Other,
+}
+
+/// Looks at the first server frame of `buf` and reports what it is, without allocating.
+pub fn peek_server(buf: &[u8]) -> Result<Peek, DecodeError> {
+    match split_frame(buf)? {
+        None => Ok(Peek::Incomplete),
+        Some((OUTPUT, body, used)) => {
+            if body.0.is_empty() || body.0.len() > MAX_DATA_LEN {
+                return Err(DecodeError::InvalidValue);
+            }
+            Ok(Peek::Output {
+                data: used - body.0.len()..used,
+                used,
+            })
+        }
+        Some(_) => Ok(Peek::Other),
+    }
+}
+
 /// Decodes the first frame of `buf`, returning it with the number of bytes it used.
 pub fn decode_server(buf: &[u8]) -> Result<Option<(ServerFrame, usize)>, DecodeError> {
     match split_frame(buf)? {

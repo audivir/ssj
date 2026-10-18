@@ -16,8 +16,8 @@ pub mod types;
 pub use env::{Env, EnvError};
 pub use env_filter::{EnvFilter, PatternError};
 pub use frame::{
-    ClientFrame, DecodeError, EncodeError, ErrorCode, ExitStatus, Hello, ServerFrame, Welcome,
-    decode_client, decode_server,
+    ClientFrame, DecodeError, EncodeError, ErrorCode, ExitStatus, Hello, Peek, ServerFrame,
+    Welcome, decode_client, decode_server, peek_server,
 };
 pub use replay::{ReplayBuffer, ReplayError};
 pub use types::{SessionId, SessionName, WindowSize, is_selector};

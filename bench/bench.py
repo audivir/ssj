@@ -111,10 +111,13 @@ def session(argv):
     return terminal
 
 
-def bulk(argv, megabytes):
+def bulk(argv, megabytes, raw=False):
     terminal = session(argv)
+    # `tr` makes text of the zeros, and it is slower than the transports on some systems, so the
+    # numbers would show `tr`. With `raw` the zeros go to the terminal as they are.
+    producer = "" if raw else " | tr '\\0' a"
     terminal.send(
-        f"dd if=/dev/zero bs=1048576 count={megabytes} 2>/dev/null | tr '\\0' a; echo {MARK[:3]}$((6*7))\n"
+        f"dd if=/dev/zero bs=1048576 count={megabytes} 2>/dev/null{producer}; echo {MARK[:3]}$((6*7))\n"
     )
     start = time.monotonic()
     terminal.wait_for(MARK)
@@ -181,6 +184,7 @@ def main():
     parser.add_argument("--ssh-command", default="ssh")
     parser.add_argument("--only", help="comma separated: ssh,udp,tcp,stdio")
     parser.add_argument("--bulk-mb", type=int, default=256)
+    parser.add_argument("--raw-bulk", action="store_true", help="bulk output without tr")
     parser.add_argument("--paste-mb", type=int, default=8)
     parser.add_argument("--samples", type=int, default=300)
     parser.add_argument("--rounds", type=int, default=3, help="the best bulk and paste round counts")
@@ -197,7 +201,7 @@ def main():
     try:
         for name, argv in chosen.items():
             print(f"{name} ...", file=sys.stderr)
-            rounds = [bulk(argv, args.bulk_mb) for _ in range(args.rounds)]
+            rounds = [bulk(argv, args.bulk_mb, args.raw_bulk) for _ in range(args.rounds)]
             pastes = [paste(argv, args.paste_mb) for _ in range(args.rounds)]
             results[name] = {
                 "bulk": max(rounds, key=lambda r: r["megabytes_per_second"]),

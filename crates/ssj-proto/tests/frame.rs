@@ -306,3 +306,38 @@ fn ping_and_pong_carry_no_body() {
         Ok(Some((ServerFrame::Pong, 5)))
     );
 }
+
+// Looking at a frame must agree with decoding it, for every frame and every cut of the stream.
+#[test]
+fn peeking_agrees_with_decoding() {
+    use ssj_proto::{Peek, peek_server};
+
+    for frame in server_frames() {
+        let mut bytes = Vec::new();
+        frame.encode(&mut bytes).unwrap();
+        for cut in 0..bytes.len() {
+            assert_eq!(
+                peek_server(&bytes[..cut]),
+                Ok(Peek::Incomplete),
+                "{frame:?} cut {cut}"
+            );
+        }
+        let (decoded, used) = decode_server(&bytes).unwrap().unwrap();
+        match (peek_server(&bytes).unwrap(), &decoded) {
+            (Peek::Output { data, used: peeked }, ServerFrame::Output(expected)) => {
+                assert_eq!(&bytes[data], expected.as_slice());
+                assert_eq!(peeked, used);
+            }
+            (Peek::Other, other) => assert!(!matches!(other, ServerFrame::Output(_))),
+            (peeked, decoded) => panic!("{peeked:?} for {decoded:?}"),
+        }
+    }
+    // a frame of one kind followed by another: only the first counts
+    let mut two = Vec::new();
+    ServerFrame::Pong.encode(&mut two).unwrap();
+    ServerFrame::Output(b"x".to_vec()).encode(&mut two).unwrap();
+    assert_eq!(peek_server(&two), Ok(Peek::Other));
+    // an output frame without data, and a header that is too large, are errors
+    assert!(peek_server(&[0, 0, 0, 1, 0x82]).is_err());
+    assert!(peek_server(&[0xff, 0xff, 0xff, 0xff]).is_err());
+}

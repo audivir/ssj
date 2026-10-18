@@ -107,8 +107,22 @@ impl Tracker {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
+        let mut rest = bytes;
+        while let Some((&byte, tail)) = rest.split_first() {
+            if self.state == State::Ground && self.utf8_pending == 0 {
+                // Plain text changes nothing: jump to the next byte that does (CAN, SUB, ESC, or
+                // the start of a multi-byte character).
+                let skip = rest
+                    .iter()
+                    .position(|b| matches!(b, 0x18 | 0x1a | 0x1b | 0xc2..=0xff))
+                    .unwrap_or(rest.len());
+                if skip > 0 {
+                    rest = &rest[skip..];
+                    continue;
+                }
+            }
             self.step(byte);
+            rest = tail;
         }
     }
 

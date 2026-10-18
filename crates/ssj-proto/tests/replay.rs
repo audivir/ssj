@@ -143,3 +143,34 @@ fn evicting_and_waiting_pushes_agree_with_a_plain_vector() {
         assert_eq!(buf.read_from(start as u64, 1000).unwrap(), &model[start..]);
     }
 }
+
+// A read that starts or ends on either side of the point where the ring wraps is copied from two
+// slices. Every start and length is compared with a plain model.
+#[test]
+fn reads_across_the_wrap_of_the_ring_match_a_plain_model() {
+    let mut buf = ReplayBuffer::new(16);
+    let mut model: Vec<u8> = Vec::new();
+    let mut base = 0u64;
+    let mut next = 0u8;
+    for round in 0..40 {
+        let fresh: Vec<u8> = (0..(round % 7 + 3))
+            .map(|_| {
+                next = next.wrapping_add(1);
+                next
+            })
+            .collect();
+        let stored = buf.push(&fresh);
+        model.extend_from_slice(&fresh[..stored]);
+        let drop = (round * 3 % 11).min(model.len());
+        buf.ack(base + drop as u64).unwrap();
+        model.drain(..drop);
+        base += drop as u64;
+        for from in 0..=model.len() {
+            for max in [0, 1, 3, 7, 16, 100] {
+                let got = buf.read_from(base + from as u64, max).unwrap();
+                let want = &model[from..(from + max).min(model.len())];
+                assert_eq!(got, want, "round {round} from {from} max {max}");
+            }
+        }
+    }
+}

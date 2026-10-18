@@ -24,7 +24,9 @@ pub enum ReplayError {
 impl ReplayBuffer {
     pub fn new(capacity: usize) -> Self {
         Self {
-            data: VecDeque::new(),
+            // The memory is reserved once, so that growing never copies the buffer. The pages
+            // are only touched when bytes arrive, so an idle session costs no resident memory.
+            data: VecDeque::with_capacity(capacity),
             start: 0,
             capacity,
         }
@@ -33,7 +35,7 @@ impl ReplayBuffer {
     /// Empty buffer whose stream already has `offset` bytes behind it.
     pub fn starting_at(capacity: usize, offset: u64) -> Self {
         Self {
-            data: VecDeque::new(),
+            data: VecDeque::with_capacity(capacity),
             start: offset,
             capacity,
         }
@@ -98,7 +100,19 @@ impl ReplayBuffer {
             return Err(ReplayError::Ahead);
         }
         let skip = (offset - self.start) as usize;
-        Ok(self.data.range(skip..).take(max).copied().collect())
+        let len = max.min(self.data.len() - skip);
+        let mut out = Vec::with_capacity(len);
+        // the ring is at most two slices, which are copied as blocks and not byte by byte
+        let (front, back) = self.data.as_slices();
+        if skip < front.len() {
+            let take = len.min(front.len() - skip);
+            out.extend_from_slice(&front[skip..skip + take]);
+            out.extend_from_slice(&back[..len - take]);
+        } else {
+            let from = skip - front.len();
+            out.extend_from_slice(&back[from..from + len]);
+        }
+        Ok(out)
     }
 
     /// Offset from which at most `tail` of the newest bytes are still available.

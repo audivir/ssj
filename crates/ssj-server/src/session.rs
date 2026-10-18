@@ -27,7 +27,7 @@ use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 use crate::backend::{Backend, Shell, ShellWriter, SpawnSpec};
 
 /// Bytes of the shell output read at once.
-const READ_CHUNK: usize = 16 * 1024;
+const READ_CHUNK: usize = 64 * 1024;
 /// Frames waiting for the writer of the connection.
 const OUT_QUEUE: usize = 2;
 /// Input bytes a connection may have queued for the shell.
@@ -486,7 +486,21 @@ impl<B: Backend> Session<B> {
                     let s = shell.as_mut().expect("read only while a shell exists");
                     match result {
                         Ok(0) | Err(_) => s.reader_eof = true,
-                        Ok(n) => {
+                        Ok(first) => {
+                            // A terminal hands out its data in small pieces (1 KiB on macOS), and
+                            // a pass through this loop for each would cap the throughput. So take
+                            // what is ready now, without waiting, up to the room that is left.
+                            let mut n = first;
+                            while n < read_len {
+                                match read_ready(&mut s.reader, &mut buf[n..read_len]) {
+                                    Some(Ok(more)) if more > 0 => n += more,
+                                    Some(_) => {
+                                        s.reader_eof = true;
+                                        break;
+                                    }
+                                    None => break,
+                                }
+                            }
                             let forgotten = output.push_evicting(&buf[..n]);
                             debug_assert!(
                                 forgotten == 0 || away,
@@ -548,6 +562,19 @@ impl<B: Backend> Session<B> {
                 }
             }
         }
+    }
+}
+
+/// Reads what is ready now, or returns `None` when nothing is, without waiting.
+fn read_ready<R: AsyncRead + Unpin>(reader: &mut R, buf: &mut [u8]) -> Option<io::Result<usize>> {
+    use std::task::{Context, Poll, Waker};
+    let mut read_buf = tokio::io::ReadBuf::new(buf);
+    // the waker is not needed: the select loop polls the reader again with its own
+    let mut cx = Context::from_waker(Waker::noop());
+    match std::pin::Pin::new(reader).poll_read(&mut cx, &mut read_buf) {
+        Poll::Ready(Ok(())) => Some(Ok(read_buf.filled().len())),
+        Poll::Ready(Err(err)) => Some(Err(err)),
+        Poll::Pending => None,
     }
 }
 

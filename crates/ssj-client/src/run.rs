@@ -13,8 +13,8 @@ use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
 use ssj_proto::resume::check_welcome;
 use ssj_proto::{
-    ClientFrame, Env, ErrorCode, ExitStatus, Hello, ReplayBuffer, ServerFrame, WindowSize,
-    decode_server,
+    ClientFrame, Env, ErrorCode, ExitStatus, Hello, Peek, ReplayBuffer, ServerFrame, WindowSize,
+    decode_server, peek_server,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
@@ -65,6 +65,8 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A resize is sent when no newer one has come for this long.
 const RESIZE_QUIET: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(1);
+/// Most output that is written to the terminal in one go.
+const OUTPUT_BATCH: usize = 256 * 1024;
 /// How long a status waits for a sequence of the remote side to end before it cancels it.
 const SEQUENCE_PATIENCE: Duration = Duration::from_secs(2);
 /// The client says that the server is silent after four round trips, but not sooner than this
@@ -162,7 +164,7 @@ pub struct Io {
 }
 
 pub fn run(args: Args) -> ExitCode {
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
@@ -634,35 +636,83 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
     }
 }
 
+/// Bytes asked from the stream at a time.
+const READ_SIZE: usize = 64 * 1024;
+
 /// Reads server frames from a stream, keeping bytes of incomplete frames between calls.
 struct FrameReader {
     recv: Reader,
+    /// Received bytes. The ones before `start` are used already; they are dropped when more is
+    /// read, once per read and not once per frame.
     buf: Vec<u8>,
+    start: usize,
 }
 
 impl FrameReader {
+    fn new(recv: Reader) -> Self {
+        Self {
+            recv,
+            buf: Vec::with_capacity(2 * READ_SIZE),
+            start: 0,
+        }
+    }
+
+    fn pending(&self) -> &[u8] {
+        &self.buf[self.start..]
+    }
+
+    fn consume(&mut self, used: usize) {
+        self.start += used;
+        if self.start == self.buf.len() {
+            self.buf.clear();
+            self.start = 0;
+        }
+    }
+
     /// Next frame, or `None` when the stream ended.
     async fn next(&mut self) -> Result<Option<ServerFrame>, String> {
         loop {
-            match decode_server(&self.buf) {
+            match decode_server(self.pending()) {
                 Ok(Some((frame, used))) => {
-                    self.buf.drain(..used);
+                    self.consume(used);
                     return Ok(Some(frame));
                 }
                 Ok(None) => {}
                 Err(err) => return Err(format!("the server sent an invalid frame: {err:?}")),
             }
-            let mut chunk = [0u8; 16 * 1024];
-            match self.recv.read(&mut chunk).await {
-                Ok(0) | Err(_) => return Ok(None),
-                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
+            if self.start > 0 {
+                self.buf.drain(..self.start);
+                self.start = 0;
             }
+            // Read straight into the spare room of the buffer. This future is dropped when
+            // another branch of the `select!` wins, so the length of the buffer must only grow
+            // when a read has completed: `read_buf` does that, and padding the buffer with zeros
+            // before the read would leave the zeros in it.
+            self.buf.reserve(READ_SIZE);
+            match self.recv.read_buf(&mut self.buf).await {
+                Ok(0) | Err(_) => return Ok(None),
+                Ok(_) => {}
+            }
+        }
+    }
+
+    /// Appends the data of the next frame to `out` if it is a complete output frame that is
+    /// waiting already. Any other frame stays where it is, for [`Self::next`].
+    fn take_ready_output(&mut self, out: &mut Vec<u8>) -> bool {
+        match peek_server(self.pending()) {
+            Ok(Peek::Output { data, used }) => {
+                let start = self.start;
+                out.extend_from_slice(&self.buf[start + data.start..start + data.end]);
+                self.consume(used);
+                true
+            }
+            _ => false,
         }
     }
 
     /// Whether a complete frame is waiting, so that acknowledgements can be sent per batch.
     fn frame_ready(&self) -> bool {
-        matches!(decode_server(&self.buf), Ok(Some(_)))
+        !matches!(peek_server(self.pending()), Ok(Peek::Incomplete))
     }
 }
 
@@ -755,10 +805,7 @@ impl Link {
             quic,
             out: tx,
             writer: tokio::spawn(write_frames(out, rx)),
-            reader: FrameReader {
-                recv: reader,
-                buf: Vec::new(),
-            },
+            reader: FrameReader::new(reader),
             last_heard: Instant::now(),
             _guard: guard,
         }
@@ -1315,7 +1362,11 @@ impl Client {
                         self.clear_status().await;
                     }
                     match frame {
-                        ServerFrame::Output(data) => {
+                        ServerFrame::Output(mut data) => {
+                            // Frames that are here already go to the terminal in one write. A
+                            // terminal hands out its output in small pieces, and one write (a
+                            // trip through the blocking pool) for each would cap the throughput.
+                            while data.len() < OUTPUT_BATCH && link.reader.take_ready_output(&mut data) {}
                             // the rest of a sequence that was cancelled on the terminal is dropped
                             let skipped = self.tracker.skip_prefix(&data);
                             let shown = &data[skipped..];

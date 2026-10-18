@@ -194,7 +194,7 @@ pub fn run_child(mut args: Args) -> ExitCode {
     let Ok(pin) = parse_pin(&line) else {
         return fail("stdin does not hold a valid SSJ PIN line", 2);
     };
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {

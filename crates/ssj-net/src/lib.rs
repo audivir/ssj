@@ -243,11 +243,20 @@ fn base_transport() -> quinn::TransportConfig {
     let mut cubic = quinn::congestion::CubicConfig::default();
     cubic.initial_window(INITIAL_CONGESTION_WINDOW);
     transport.congestion_controller_factory(Arc::new(cubic));
+    // Bulk output is acknowledged every few packets and not every second one, which halves the
+    // packets and system calls of the receiver. Data still goes out at once, so the delay of an
+    // acknowledgement never delays an echo.
+    let mut ack_frequency = quinn::AckFrequencyConfig::default();
+    ack_frequency.ack_eliciting_threshold(ACK_ELICITING_THRESHOLD.into());
+    transport.ack_frequency_config(Some(ack_frequency));
     transport.datagram_receive_buffer_size(None);
     transport.max_concurrent_uni_streams(0u8.into());
     transport.max_concurrent_bidi_streams(8u8.into());
     transport
 }
+
+/// Packets that may arrive without being acknowledged (the peer is asked for this).
+pub const ACK_ELICITING_THRESHOLD: u8 = 7;
 
 /// Bytes the sender may have in flight before the first acknowledgement.
 pub const INITIAL_CONGESTION_WINDOW: u64 = 256 * 1024;

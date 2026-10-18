@@ -277,52 +277,51 @@ protocol between client and server.
 `--netem "delay 40ms loss 1%"` wraps the run in `tc qdisc add dev lo root netem ...` (Linux, root),
 which hits `ssh` and `ssj` alike when the host is `localhost`. `--server` picks the server file,
 which is how the glibc and the musl build are compared. The workflow `bench.yml` runs both builds
-with and without `netem` on a GitHub runner against its own `sshd`, by hand. Nothing is gated yet.
+with and without `netem` on a GitHub runner against its own `sshd`, by hand. `bench/linux-bench.sh`
+runs the same inside a container (`docker run ... sh bench/linux-bench.sh`).
 
-First numbers (macOS 26 on Apple silicon, `localhost`, release build, OpenSSH with a zsh login
-shell, 64 MiB bulk, 8 MiB paste, 200 samples):
+Bulk output with `--raw-bulk` (no `tr`, which limits every client on some systems), 256 MiB, the
+best of three rounds; the paste is 8 MiB; the latency is the median of 150 to 200 samples:
 
-| client | bulk MB/s | median ms | p95 ms | paste s |
-| ------ | --------- | --------- | ------ | ------- |
-| ssh | 24.1 | 9.31 | 14.27 | 1.25 |
-| udp | 20.5 | 0.47 | 0.62 | 1.46 |
-| tcp | 20.0 | 0.57 | 0.76 | 1.61 |
-| stdio | 19.3 | 0.58 | 0.69 | 1.58 |
+| system | client | bulk MB/s | median ms | paste s |
+| ------ | ------ | --------- | --------- | ------- |
+| Linux aarch64, glibc, `sshd` in a container | ssh | 180 | 9.6 | 0.11 |
+| | udp | 193 | 0.89 | 0.08 |
+| | tcp | 174 | 1.11 | 0.08 |
+| | stdio | 189 | 1.46 | 0.09 |
+| macOS 26, Apple silicon, `localhost` | ssh | 84 | 9.3 | 1.25 |
+| | udp | 74 | 0.58 | 1.31 |
+| | tcp | 62 | 0.64 | 1.74 |
 
-Reading them: the latency of `ssh` is dominated by its keystroke timing obfuscation (OpenSSH 9.5
-and later sends keystrokes in 20 ms ticks while typing), so the comparison there says little about
-the transport. Bulk output and the paste are about 15 percent slower than `ssh` on this loopback;
-the source of the difference has not been looked for. These are one machine and one run each, not
-a baseline.
+Reading them:
 
-### Local echo
+- The latency of `ssh` is dominated by its keystroke timing obfuscation (OpenSSH 9.5 and later
+  sends keystrokes in 20 ms ticks while typing), so the comparison there says little about the
+  transport. `ssj` answers a key in under a millisecond.
+- On Linux `ssj` over UDP is as fast as `ssh` for bulk output and faster for a paste.
+- On macOS the pseudo terminal hands out its data in pieces of exactly 1024 bytes (Linux: up to
+  4 KiB), so every kilobyte of output is one pass through the event loop of the server. The shell
+  alone reaches 115 MB/s there, `ssh` 84, and `ssj` 74. The TCP tier is slower because its bytes
+  also pass through an `ssh -W` process. The gap to `ssh` on macOS is about 12 percent.
 
-Optional, off by default (`local_echo = "off" | "auto"`, `--local-echo`). It lives in the client
-(`echo.rs`) and needs nothing from the server, so the protocol does not change. A byte-for-byte
-terminal copy would be needed to predict in general; the client has none, so it predicts only where
-it can be sure, and draws in a way that the output of the server can overwrite:
+What the measurements changed (each found with `sample`, CPU times from `ps`, and counters):
 
-- A typed printable ASCII character is drawn as `ESC[2m c ESC[22m` and queued. Before the client
-  writes any output of the server it writes one backspace for each drawn character and `ESC[K`,
-  then the output, then the characters that are still waiting. So the echo of the server is
-  drawn on clean cells, and nothing is ever left over except in the case below.
-- The epoch rule of mosh: Enter (and any key that is not printable ASCII) clears the queue. After
-  Enter nothing is drawn until the output of the server has started with a queued character. The
-  server does not report `ECHO` or the canonical mode of the terminal: the epoch rule covers
-  password prompts, and a frame for it can come with protocol 2.
-- The output must be the echo. The matching skips colors and attributes (`ESC[...m`), erase to the
-  end of the line (`ESC[K`), titles (OSC), `ESC =` and `ESC >`, and the modes 1 and 2004. Any
-  other printable character, any other sequence, a backspace, a tab, or a character outside ASCII
-  drops the trust and the queue. A cursor movement or a full-screen program also stops the
-  prediction until the next Enter.
-- The column is counted from the output (set to 0 by a carriage return, unknown after any cursor
-  movement or tab). Nothing is drawn while it is unknown or within three columns of the right
-  edge. A prompt with wide or combining characters can make the count wrong, and a prediction near
-  the edge may then wrap and scroll the screen, which leaves a dimmed character in a wrong cell
-  until the program redraws.
-- At most 64 characters wait for an echo, and a read of more than 16 bytes (a paste) is not
-  predicted. An unanswered prediction is taken back after 2 seconds, and when the connection ends.
-- Nothing is drawn while there is no connection.
+- Both programs use a single-threaded runtime. With several threads every wake-up for a small
+  chunk of output crossed threads, and the server used two cores for 47 MB/s; it now uses less
+  than one core for 74.
+- The client writes all output frames that are already waiting to the terminal in one write
+  (up to 256 KiB). Each write goes through the blocking pool of tokio, and with frames of 2 KiB
+  that cost 4.8 s of a 5.9 s transfer. Before this, the throughput also depended on the size of
+  the replay buffer, because acknowledgements were sent only when the reader was empty.
+- The frame reader looks at a frame without decoding it (`peek_server`), reads straight into its
+  buffer (with `read_buf`, since the future is dropped by `select!`: a read into a buffer padded
+  with zeros would leave the zeros behind), and drops used bytes once per read.
+- The replay buffer reserves its memory once and copies blocks and not bytes. The tracker skips
+  plain text without stepping through it.
+- The QUIC endpoints ask the peer to acknowledge every eighth packet (ACK frequency extension)
+  and not every second one, which saved about 10 percent on macOS and nothing for latency.
+
+Nothing is gated yet.
 
 ### Installation of the server
 
