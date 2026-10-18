@@ -43,6 +43,22 @@ fn start_server_sized(
     client_pin: ssj_net::Fingerprint,
     replay_capacity: usize,
 ) -> Server {
+    start_server_with(
+        script,
+        client_pin,
+        replay_capacity,
+        ssj_server::session::SlowClient::Wait,
+        1 << 20,
+    )
+}
+
+fn start_server_with(
+    script: &str,
+    client_pin: ssj_net::Fingerprint,
+    replay_capacity: usize,
+    slow_client: ssj_server::session::SlowClient,
+    live_backlog: usize,
+) -> Server {
     let identity = Identity::generate();
     let config = quic_server(server_tls(&identity, client_pin));
     let endpoint = Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
@@ -63,6 +79,8 @@ fn start_server_sized(
         hello_timeout: Duration::from_secs(5),
         lost_after: Duration::from_secs(60),
         exit_grace: Duration::from_secs(60),
+        slow_client,
+        live_backlog,
     };
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();
@@ -1147,4 +1165,42 @@ async fn a_silent_tcp_path_is_given_up_after_a_while_and_replaced() {
     terminal.wait_for("got:during").await;
     terminal.settle().await;
     assert_eq!(terminal.got_lines(), ["got:before", "got:during"]);
+}
+
+// A terminal that reads nothing for a while is a client that is too slow. The job must not wait
+// for it. When the terminal reads again, the client shows how much it missed, and the end of the
+// output is intact.
+#[tokio::test]
+async fn a_client_that_is_too_slow_does_not_hold_the_job_up_and_shows_what_it_missed() {
+    let marker = std::path::PathBuf::from(format!("/tmp/ssjt-slow-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let script = format!(
+        "stty -opost -echo; awk 'BEGIN {{ for (i = 1; i <= 3000000; i++) print i }}'; echo FINISHED; touch {}; read x",
+        marker.display()
+    );
+    let client_id = Identity::generate();
+    let server = start_server_with(
+        &script,
+        client_id.fingerprint(),
+        4 * 1024 * 1024,
+        ssj_server::session::SlowClient::Drop,
+        64 * 1024,
+    );
+    let mut terminal = start_client(&server, client_id);
+
+    // the terminal reads nothing, and the job ends all the same
+    timeout(Duration::from_secs(60), async {
+        while !marker.exists() {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the job waited for the slow client");
+
+    terminal.wait_for("FINISHED").await;
+    assert!(
+        terminal.seen.contains("bytes of output were dropped"),
+        "no notice of the skipped output"
+    );
+    let _ = std::fs::remove_file(&marker);
 }

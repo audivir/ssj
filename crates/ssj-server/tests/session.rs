@@ -35,6 +35,8 @@ fn config(script: &str) -> SessionConfig {
         hello_timeout: Duration::from_secs(2),
         lost_after: Duration::from_secs(60),
         exit_grace: Duration::from_secs(60),
+        slow_client: ssj_server::session::SlowClient::Wait,
+        live_backlog: 1 << 20,
     }
 }
 
@@ -64,6 +66,7 @@ struct Seen {
     welcome: Option<ssj_proto::Welcome>,
     closed: bool,
     pongs: usize,
+    gaps: Vec<u64>,
 }
 
 impl Harness {
@@ -138,6 +141,7 @@ impl Client {
                 Some(ServerFrame::Error(code)) => seen.error = Some(code),
                 Some(ServerFrame::Welcome(welcome)) => seen.welcome = Some(welcome),
                 Some(ServerFrame::Pong) => seen.pongs += 1,
+                Some(ServerFrame::Gap(skipped)) => seen.gaps.push(skipped),
             }
         }
         seen
@@ -992,4 +996,152 @@ async fn nobody_returns_for_the_exit_status_so_the_session_ends_after_the_grace_
     assert!(
         matches!(harness.end().await, SessionEnd::ShellExited(status) if status.code() == Some(9))
     );
+}
+
+fn drop_config(marker: &std::path::Path, replay_capacity: usize, live: usize) -> SessionConfig {
+    let mut cfg = job_config(marker, replay_capacity);
+    cfg.slow_client = ssj_server::session::SlowClient::Drop;
+    cfg.live_backlog = live;
+    cfg
+}
+
+/// Reads frames the way a client does and checks that every byte it gets lies where the stream
+/// has it: the gaps and the output together walk through `expected` without a repeat.
+async fn read_and_place(
+    client: &mut Client,
+    mut offset: u64,
+    expected: &[u8],
+) -> (u64, Vec<u64>, Option<ExitStatus>) {
+    let (mut received, mut gaps, mut exit) = (0u64, Vec::new(), None);
+    while let Some(frame) = client.next().await {
+        match frame {
+            ServerFrame::Output(data) => {
+                let at = offset as usize;
+                assert!(
+                    data == expected[at..at + data.len()],
+                    "output at offset {offset} is not what the stream holds there"
+                );
+                offset += data.len() as u64;
+                received += data.len() as u64;
+                client.send(ClientFrame::OutputAck(offset)).await;
+            }
+            ServerFrame::Gap(skipped) => {
+                gaps.push(skipped);
+                offset += skipped;
+                client.send(ClientFrame::OutputAck(offset)).await;
+            }
+            ServerFrame::Exit(status) => {
+                exit = Some(status);
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        offset as usize,
+        expected.len(),
+        "the walk must end at the end of the stream"
+    );
+    (received, gaps, exit)
+}
+
+// A client that is connected and takes nothing, like a link that is far too slow, must not stop
+// the job. The job ends, and the client then gets the newest output and is told what it missed.
+#[tokio::test]
+async fn a_connected_client_that_takes_nothing_does_not_hold_the_job_up() {
+    let marker = marker();
+    let live = 256 * 1024;
+    let harness = start(drop_config(&marker, 4 * 1024 * 1024, live));
+    let mut client = harness.connect().await;
+    client.start().await;
+
+    // the client reads nothing, and the job still finishes
+    wait_for_file(&marker).await;
+
+    let expected = job_output();
+    let (received, gaps, exit) = read_and_place(&mut client, 0, &expected).await;
+    assert_eq!(exit, Some(ExitStatus::Code(0)));
+    assert!(
+        !gaps.is_empty(),
+        "a job of 10 MB cannot fit in a backlog of 256 KiB"
+    );
+    // what arrives plus what was skipped is the whole stream, and the end of it is intact
+    assert_eq!(received + gaps.iter().sum::<u64>(), expected.len() as u64);
+    assert!(received >= live as u64 / 2, "{received}");
+    let _ = std::fs::remove_file(&marker);
+}
+
+// What the shell wrote before a client joined is replay. It is delivered whole, even though it is
+// more than the backlog that a connected client may have.
+#[tokio::test]
+async fn the_replay_for_a_client_that_joins_is_not_skipped() {
+    let marker = marker();
+    let harness = start(drop_config(&marker, 16 * 1024 * 1024, 64 * 1024));
+    let mut first = harness.connect().await;
+    first.start().await;
+    drop(first);
+    wait_for_file(&marker).await;
+
+    let mut joiner = harness.connect().await;
+    joiner
+        .send(ClientFrame::Hello(Hello::Resume {
+            size: size(),
+            output_offset: 0,
+        }))
+        .await;
+    let welcome = joiner
+        .read_until(|s| s.welcome.is_some())
+        .await
+        .welcome
+        .unwrap();
+    let expected = job_output();
+    assert_eq!(welcome.output_offset, 0, "the whole output is still held");
+    let (received, gaps, exit) = read_and_place(&mut joiner, 0, &expected).await;
+    assert!(gaps.is_empty(), "the replay was cut: {gaps:?}");
+    assert_eq!(received as usize, expected.len());
+    assert_eq!(exit, Some(ExitStatus::Code(0)));
+    let _ = std::fs::remove_file(&marker);
+}
+
+// The skip never starts inside a character of several bytes.
+#[tokio::test]
+async fn a_skip_does_not_cut_a_character_in_two() {
+    let marker = marker();
+    let mut cfg = config(&format!(
+        "stty -opost; i=0; while [ $i -lt 200000 ]; do printf '\\303\\251\\303\\251\\303\\251\\n'; i=$((i+1)); done; touch {}",
+        marker.display()
+    ));
+    cfg.replay_capacity = 4 * 1024 * 1024;
+    cfg.slow_client = ssj_server::session::SlowClient::Drop;
+    cfg.live_backlog = 100_001;
+    let harness = start(cfg);
+    let mut client = harness.connect().await;
+    client.start().await;
+    wait_for_file(&marker).await;
+    let mut offset = 0u64;
+    let mut starts_ok = true;
+    let mut after_gap = false;
+    let mut gaps_seen = 0;
+    while let Ok(Some(frame)) = timeout(Duration::from_secs(2), client.next()).await {
+        match frame {
+            ServerFrame::Gap(skipped) => {
+                offset += skipped;
+                after_gap = true;
+                gaps_seen += 1;
+            }
+            ServerFrame::Output(data) => {
+                if after_gap {
+                    // the first byte after a gap is not a continuation byte
+                    starts_ok &= data[0] & 0xc0 != 0x80;
+                    after_gap = false;
+                }
+                offset += data.len() as u64;
+                client.send(ClientFrame::OutputAck(offset)).await;
+            }
+            _ => {}
+        }
+    }
+    assert!(gaps_seen > 0, "nothing was skipped, so nothing was tested");
+    assert!(starts_ok, "a skip started inside a character");
+    let _ = std::fs::remove_file(&marker);
 }

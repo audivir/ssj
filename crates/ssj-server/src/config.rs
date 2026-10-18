@@ -5,7 +5,9 @@
 //! detached_timeout = "none"           # seconds without a client, or "none"
 //! max_detached = "none"               # upper limit even after a deliberate detach
 //! replay_capacity = 4194304           # bytes of output kept for an absent client
-//! away_after = 10                     # seconds a silent client may block the output
+//! away_after = 10                     # seconds a silent client may block the output (wait only)
+//! slow_client = "drop"                # "drop" (default): the job never waits for the link
+//! live_backlog = 1048576              # bytes that may wait for a connected client (drop only)
 //! shell = "/bin/zsh"                  # default: $SHELL
 //! accept_env = ["TERM", "LANG", "LC_*"]
 //! ```
@@ -19,7 +21,11 @@ use std::time::Duration;
 
 use ssj_proto::EnvFilter;
 
-use crate::cli::{Args, check_replay_capacity, parse_away_after, parse_port_range};
+use crate::cli::{
+    Args, check_live_backlog, check_replay_capacity, parse_away_after, parse_port_range,
+    parse_slow_client,
+};
+use crate::session::SlowClient;
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
@@ -28,6 +34,8 @@ pub struct Config {
     pub max_detached: Option<Option<Duration>>,
     pub replay_capacity: Option<usize>,
     pub away_after: Option<Duration>,
+    pub slow_client: Option<SlowClient>,
+    pub live_backlog: Option<usize>,
     pub shell: Option<PathBuf>,
     pub accept_env: Option<EnvFilter>,
 }
@@ -55,6 +63,15 @@ impl Config {
         if let Some(secs) = table.take_unsigned("away_after")? {
             config.away_after =
                 Some(parse_away_after(&secs.to_string()).map_err(|e| format!("away_after: {e}"))?);
+        }
+        if let Some(text) = table.take_text("slow_client")? {
+            config.slow_client =
+                Some(parse_slow_client(&text).map_err(|e| format!("slow_client: {e}"))?);
+        }
+        if let Some(size) = table.take_unsigned("live_backlog")? {
+            let size = usize::try_from(size).map_err(|_| "live_backlog is too large".to_owned())?;
+            config.live_backlog =
+                Some(check_live_backlog(size).map_err(|e| format!("live_backlog: {e}"))?);
         }
         if let Some(shell) = table.take_text("shell")? {
             if !shell.starts_with('/') {
@@ -115,6 +132,16 @@ impl Args {
             && let Some(away) = config.away_after
         {
             self.away_after = away;
+        }
+        if !self.explicit.slow_client
+            && let Some(policy) = config.slow_client
+        {
+            self.slow_client = policy;
+        }
+        if !self.explicit.live_backlog
+            && let Some(size) = config.live_backlog
+        {
+            self.live_backlog = size;
         }
         if !self.explicit.shell && self.shell.is_none() {
             self.shell = config.shell.clone();

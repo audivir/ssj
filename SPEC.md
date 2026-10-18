@@ -567,11 +567,45 @@ Backpressure would defeat that: after one buffer full of output the shell would 
 whenever nobody is there to acknowledge it, which is the case when
 
 - no client is connected (lost connection or deliberate detach), or
-- a client is connected but has acknowledged nothing for `away_after` (10 seconds by default, set in `server.toml` or with `--away-after`) while the buffer
+- (`slow_client = "wait"` only) a client is connected but has acknowledged nothing for `away_after` (10 seconds by default, set in `server.toml` or with `--away-after`) while the buffer
   stayed full. A connection can die without the server hearing of it (a laptop that sleeps), so
   silence with a full buffer counts as away.
 
-Rules:
+### A slow connected client (`slow_client`)
+
+The same reasoning holds for a client that is connected but slow: a job must not run at the speed
+of the link, and the output that is queued for a slow link is what makes Ctrl-C feel late. So by
+default (`slow_client = "drop"`) the server does not wait for a connected client either:
+
+- The PTY is always read, and the output always goes into the replay buffer, which forgets its
+  oldest bytes when it is full.
+- For each connection the server keeps the offset up to which output was queued. When more than
+  `live_backlog` bytes (1 MiB by default, 16 KiB to 64 MiB) were written since that offset, or when
+  the buffer forgot bytes that were not sent yet, the offset moves forward and the skipped bytes
+  are announced with `Gap(N)`, a server frame that tells the client to add N to its output
+  offset. The connection stays open: nothing is resumed or reconnected.
+- The offset moves to a character boundary: continuation bytes of UTF-8 at the new position are
+  skipped as well.
+- What lies before the offset at which the client joined (the replay for `Resume` and `Attach`) is
+  not counted, so a client that comes back gets the replay at the speed of its link. Only output
+  that the shell wrote afterwards is limited. If the client falls so far behind that more than
+  `live_backlog` of the new output waits, the skip may also jump over the rest of the replay.
+- The client handles `Gap(N)` like a gap after a reconnect: it takes back what it showed ahead
+  of the server (local echo), adds N to its offset, writes the notice (CAN, color reset, the line
+  `[ssj: N bytes of output were dropped]`), and acknowledges the new offset.
+- The unreleased protocol 1 gained the `Gap` frame (tag `0x87`) and its golden file was
+  regenerated, since no release spoke the old format.
+- `slow_client = "wait"` is the earlier behavior and the one of `ssh`: while a client is connected
+  the server stops reading the PTY when the buffer is full, so nothing is lost and a slow link
+  slows the job down. A client that acknowledges nothing for `away_after` (10 seconds) counts as
+  away, because a connection can die unnoticed. In this mode a connection that is owed bytes that
+  were forgotten is closed.
+
+With `drop` the scrollback is complete only if the link keeps up with the job. Interactive use
+and normal output are unaffected; a flood (`cat` of a large file) over a slow link is cut, with
+the notice, instead of being delivered late.
+
+Rules (nobody listens, and `wait` mode):
 
 - The reading of the PTY never stops while nobody listens. The newest `replay_capacity` bytes are
   kept, and the start of the buffer moves forward by exactly the number of bytes that were lost.

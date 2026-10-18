@@ -163,7 +163,9 @@ port_range = "60000:61000"            # UDP ports the server may use, "0" for an
 detached_timeout = "none"             # seconds without a client (default: none)
 max_detached = "none"                 # limit even after a deliberate detach
 replay_capacity = 4194304             # bytes of output kept for a client that is away
-away_after = 10                       # seconds a silent client may block the output
+slow_client = "drop"                  # "drop": the job never waits for the link; "wait": like ssh
+live_backlog = 1048576                # bytes that may wait for a connected client (drop)
+away_after = 10                       # seconds a silent client may block the output (wait)
 shell = "/bin/zsh"                    # default: $SHELL
 accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
 ```
@@ -191,9 +193,23 @@ the real echo replaces it. It is off by default, because it is a guess.
 A job keeps running while no client is connected. The server keeps the newest `replay_capacity`
 bytes of its output (4 MiB by default). If the job writes more than that while you are away, the
 oldest output is forgotten, and when you come back, the terminal shows
-`[ssj: N bytes of output were dropped]` with the exact number. While you are connected, nothing is
-dropped: a slow connection slows the job down, as with `ssh`. Set a higher `replay_capacity` to
+`[ssj: N bytes of output were dropped]` with the exact number. Set a higher `replay_capacity` to
 keep more.
+
+### A slow connection
+
+With `ssh`, a slow link slows the job down: the shell waits in `write` until the link has taken
+its output, and after Ctrl-C the output that is already queued still has to arrive. `ssj` does not
+do that by default (`slow_client = "drop"`). The job always runs at full speed. The server keeps
+at most `live_backlog` bytes (1 MiB) of output that the connected client has not taken yet. When
+the link is slower than the job, the oldest of the rest is skipped, the terminal shows
+`[ssj: N bytes of output were dropped]`, and Ctrl-C stops the output within that backlog.
+What the shell wrote before you connected (the replay after `attach` or a reconnect) is not
+skipped.
+
+If you need every byte even on a slow link, set `slow_client = "wait"` in `server.toml`, or
+`--slow-client wait`: the job then waits for the client, as with `ssh`, and nothing is lost while
+you are connected. `away_after` only applies to this setting.
 
 `accept_env` can only be set in the file, never on the command line, because the command line of
 the server is built by the client.

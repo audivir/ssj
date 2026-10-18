@@ -57,8 +57,14 @@ An upper limit that also applies after a deliberate detach.
 \fBreplay_capacity\fR = bytes
 The output kept for a client that is away.
 .TP
+\fBslow_client\fR = "drop" | "wait"
+What the server does with output that a connected client is too slow to take: "drop" (default) never lets the job wait for the link and skips the oldest output, with a notice; "wait" slows the job down, as ssh does.
+.TP
+\fBlive_backlog\fR = bytes
+With "drop": how much output may wait for a connected client (default 1 MiB).
+.TP
 \fBaway_after\fR = seconds
-How long a silent client may block the output.
+With "wait": how long a silent client may block the output.
 .TP
 \fBshell\fR = "/bin/zsh"
 The shell to start (default: $SHELL).

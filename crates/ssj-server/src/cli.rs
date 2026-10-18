@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use ssj_proto::{SessionName, is_selector};
 
+use crate::session::SlowClient;
+
 /// Bounds for the output buffer: a size below the lower one cannot hold a screenful of output, and
 /// the upper one keeps a runaway setting from using all the memory of a shared host.
 pub const MIN_REPLAY_CAPACITY: usize = 64 * 1024;
@@ -50,6 +52,8 @@ pub struct Args {
     pub replay_capacity: usize,
     /// Time a connected client may leave a full output buffer alone before it counts as away.
     pub away_after: Duration,
+    pub slow_client: SlowClient,
+    pub live_backlog: usize,
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
@@ -69,6 +73,8 @@ pub struct Explicit {
     pub max_detached: bool,
     pub replay_capacity: bool,
     pub away_after: bool,
+    pub slow_client: bool,
+    pub live_backlog: bool,
     pub shell: bool,
 }
 
@@ -83,6 +89,8 @@ impl Default for Args {
             max_detached: None,
             replay_capacity: 4 << 20,
             away_after: Duration::from_secs(10),
+            slow_client: SlowClient::default(),
+            live_backlog: DEFAULT_LIVE_BACKLOG,
             shell: None,
             shell_args: Vec::new(),
             udp: true,
@@ -117,6 +125,16 @@ impl Args {
         out.extend([
             "--away-after".into(),
             self.away_after.as_secs().to_string().into(),
+        ]);
+        out.extend([
+            "--slow-client".into(),
+            match self.slow_client {
+                SlowClient::Drop => "drop",
+                SlowClient::Wait => "wait",
+            }
+            .into(),
+            "--live-backlog".into(),
+            self.live_backlog.to_string().into(),
         ]);
         out.extend([
             "--max-detached".into(),
@@ -176,6 +194,29 @@ pub fn check_replay_capacity(size: usize) -> Result<usize, String> {
     } else {
         Err(format!(
             "must be between {MIN_REPLAY_CAPACITY} and {MAX_REPLAY_CAPACITY} bytes"
+        ))
+    }
+}
+
+/// Default of `live_backlog`: what may wait for a connected client before output is skipped.
+pub const DEFAULT_LIVE_BACKLOG: usize = 1 << 20;
+const MIN_LIVE_BACKLOG: usize = 16 * 1024;
+const MAX_LIVE_BACKLOG: usize = 64 << 20;
+
+pub fn parse_slow_client(text: &str) -> Result<SlowClient, String> {
+    match text {
+        "drop" => Ok(SlowClient::Drop),
+        "wait" => Ok(SlowClient::Wait),
+        _ => Err("expected drop or wait".to_owned()),
+    }
+}
+
+pub fn check_live_backlog(size: usize) -> Result<usize, String> {
+    if (MIN_LIVE_BACKLOG..=MAX_LIVE_BACKLOG).contains(&size) {
+        Ok(size)
+    } else {
+        Err(format!(
+            "must be between {MIN_LIVE_BACKLOG} and {MAX_LIVE_BACKLOG} bytes"
         ))
     }
 }
@@ -263,6 +304,23 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 out.away_after = parse_away_after(&value.to_string_lossy())
                     .map_err(|e| format!("--away-after: {e}"))?;
                 out.explicit.away_after = true;
+            }
+            "--slow-client" => {
+                let value = args.next().ok_or("--slow-client needs a value")?;
+                out.slow_client = parse_slow_client(&value.to_string_lossy())
+                    .map_err(|e| format!("--slow-client: {e}"))?;
+                out.explicit.slow_client = true;
+            }
+            "--live-backlog" => {
+                let value = args.next().ok_or("--live-backlog needs a value")?;
+                out.live_backlog = value
+                    .to_string_lossy()
+                    .parse()
+                    .map_err(|_| "--live-backlog: expected a number of bytes".to_owned())
+                    .and_then(|n| {
+                        check_live_backlog(n).map_err(|e| format!("--live-backlog: {e}"))
+                    })?;
+                out.explicit.live_backlog = true;
             }
             "--max-detached" => {
                 let value = args.next().ok_or("--max-detached needs a value")?;

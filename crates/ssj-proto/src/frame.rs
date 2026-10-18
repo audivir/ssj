@@ -117,6 +117,10 @@ pub enum ServerFrame {
     Error(ErrorCode),
     /// Answer to `Ping`.
     Pong,
+    /// The server skipped this many bytes of output, because the client was too slow to take
+    /// them (see `slow_client`). The stream goes on after them, and the client adds the number
+    /// to its output offset.
+    Gap(u64),
 }
 
 const HELLO: u8 = 0x01;
@@ -133,6 +137,7 @@ const INPUT_ACK: u8 = 0x83;
 const EXIT: u8 = 0x84;
 const ERROR: u8 = 0x85;
 const PONG: u8 = 0x86;
+const GAP: u8 = 0x87;
 
 const HELLO_START: u8 = 0;
 const HELLO_RESUME: u8 = 1;
@@ -362,6 +367,11 @@ impl ServerFrame {
                 out.push(PONG);
                 Ok(())
             }
+            Self::Gap(skipped) => {
+                out.push(GAP);
+                out.extend_from_slice(&skipped.to_be_bytes());
+                Ok(())
+            }
         };
         match result {
             Ok(()) => {
@@ -383,6 +393,14 @@ impl ServerFrame {
             }),
             OUTPUT => Self::Output(body.data()?),
             INPUT_ACK => Self::InputAck(body.u64()?),
+            GAP => {
+                let skipped = body.u64()?;
+                // a gap of nothing would be a frame that does nothing
+                if skipped == 0 {
+                    return Err(DecodeError::InvalidValue);
+                }
+                Self::Gap(skipped)
+            }
             EXIT => {
                 let (kind, value) = (body.u8()?, body.u8()?);
                 Self::Exit(match kind {

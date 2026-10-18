@@ -67,6 +67,10 @@ fn child_arguments_carry_every_setting() {
         "none",
         "--away-after",
         "7",
+        "--slow-client",
+        "wait",
+        "--live-backlog",
+        "200000",
         "--shell",
         "/bin/zsh",
         "--shell-arg",
@@ -114,4 +118,26 @@ fn names_and_selectors_are_checked_and_carried_to_the_daemon() {
         args(&["--stdio", "work"]).unwrap().mode,
         ssj_server::cli::Mode::Stdio(Some("work".to_owned()))
     );
+}
+
+#[test]
+fn the_job_does_not_wait_for_a_slow_client_unless_asked() {
+    use ssj_server::session::SlowClient;
+
+    let plain = args(&[]).unwrap();
+    assert_eq!(plain.slow_client, SlowClient::Drop);
+    assert_eq!(plain.live_backlog, 1 << 20);
+    assert_eq!(
+        args(&["--slow-client", "wait"]).unwrap().slow_client,
+        SlowClient::Wait
+    );
+    for bad in [
+        vec!["--slow-client", "block"],
+        vec!["--slow-client"],
+        vec!["--live-backlog", "1000"],
+        vec!["--live-backlog", "x"],
+        vec!["--live-backlog", "99999999999"],
+    ] {
+        assert!(args(&bad).is_err(), "{bad:?}");
+    }
 }

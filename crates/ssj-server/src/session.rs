@@ -52,6 +52,18 @@ pub struct SpawnTemplate {
     pub cwd: Option<PathBuf>,
 }
 
+/// What the server does with output that a connected client has not taken yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SlowClient {
+    /// The job never waits for the link. The server keeps at most `live_backlog` bytes of unsent
+    /// output and skips the oldest of the rest, and the client is told how much it missed.
+    #[default]
+    Drop,
+    /// The job waits until the client has taken the output (as with `ssh`), so nothing is lost
+    /// while the client is connected, and a slow link slows the job down.
+    Wait,
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
     pub id: SessionId,
@@ -60,6 +72,10 @@ pub struct SessionConfig {
     pub accept_env: EnvFilter,
     /// Output bytes kept until the client acknowledges them.
     pub replay_capacity: usize,
+    pub slow_client: SlowClient,
+    /// With [`SlowClient::Drop`]: the most output that may wait to be sent to a connected client.
+    /// What the shell wrote before the client connected (the replay) does not count.
+    pub live_backlog: usize,
     /// How long a connected client may leave the output buffer full without acknowledging
     /// anything before the server treats it as away (a connection that died without telling).
     pub away_after: Duration,
@@ -158,6 +174,11 @@ struct Active {
     output_sent: u64,
     /// Input offset that was last acknowledged to this client.
     input_acked: u64,
+    /// Output offset when the client joined: what lies before it is replay and is not skipped
+    /// for being slow.
+    replay_end: u64,
+    /// Bytes of output skipped and not announced to the client yet.
+    gap: u64,
     _reader: AbortOnDrop,
     writer: Option<JoinHandle<()>>,
 }
@@ -255,13 +276,27 @@ impl<B: Backend> Session<B> {
             // Backpressure holds only while somebody is there to acknowledge the output. With
             // nobody there (no connection, or one that stays silent while the buffer is full) the
             // job must go on, so the oldest output is forgotten, as a `tmux` session does.
+            if config.slow_client == SlowClient::Drop
+                && let Some(a) = active.as_mut().filter(|a| a.hello_done)
+            {
+                a.gap += skip_ahead(
+                    &mut a.output_sent,
+                    a.replay_end,
+                    &output,
+                    config.live_backlog,
+                );
+            }
             let connected = active.as_ref().is_some_and(|a| a.hello_done);
             if connected && output.free() == 0 {
                 full_since.get_or_insert_with(Instant::now);
             } else {
                 full_since = None;
             }
-            let away = !connected || full_since.is_some_and(|t| t.elapsed() >= config.away_after);
+            // With `Drop` the job never waits, so it always counts as away: the oldest output is
+            // forgotten instead.
+            let away = config.slow_client == SlowClient::Drop
+                || !connected
+                || full_since.is_some_and(|t| t.elapsed() >= config.away_after);
             let read_len = if away {
                 buf.len()
             } else {
@@ -275,6 +310,7 @@ impl<B: Backend> Session<B> {
             let send_due = active.as_ref().is_some_and(|a| {
                 a.hello_done
                     && (a.pong_due
+                        || a.gap > 0
                         || a.input_acked < input_received
                         || a.output_sent < output.end()
                         || exit_due)
@@ -417,6 +453,7 @@ impl<B: Backend> Session<B> {
                                         let _ = events.send(SessionEvent::Connected);
                                     }
                                     a.output_sent = welcome.output_offset;
+                                    a.replay_end = output.end();
                                     a.input_acked = welcome.input_offset;
                                     let _ = a.out.try_send(ServerFrame::Welcome(welcome));
                                 }
@@ -511,7 +548,8 @@ impl<B: Backend> Session<B> {
                             let owed = active
                                 .as_ref()
                                 .is_some_and(|a| a.hello_done && a.output_sent < output.start());
-                            if forgotten > 0 && owed {
+                            // with `Drop` the connection goes on and is told about the gap
+                            if forgotten > 0 && owed && config.slow_client == SlowClient::Wait {
                                 lose(&mut active, &events);
                                 detached_since = Some(Instant::now());
                             }
@@ -545,6 +583,8 @@ impl<B: Backend> Session<B> {
                     } else if a.input_acked < input_received {
                         a.input_acked = input_received;
                         ServerFrame::InputAck(input_received)
+                    } else if a.gap > 0 {
+                        ServerFrame::Gap(std::mem::take(&mut a.gap))
                     } else if a.output_sent < output.end() {
                         let chunk = output
                             .read_from(a.output_sent, MAX_DATA_LEN)
@@ -563,6 +603,29 @@ impl<B: Backend> Session<B> {
             }
         }
     }
+}
+
+/// Moves the send position of a connection forward when too much output waits for it, or when
+/// the buffer has forgotten what it was to send. Returns the number of bytes skipped.
+///
+/// Output from before `replay_end` is not counted as waiting: a client that joins gets the replay
+/// at the speed of its link, and only what the shell writes afterwards is limited to `live` bytes.
+fn skip_ahead(sent: &mut u64, replay_end: u64, output: &ReplayBuffer, live: usize) -> u64 {
+    let end = output.end();
+    let mut target = (*sent).max(output.start());
+    let waiting = end - target.max(replay_end).min(end);
+    if waiting > live as u64 {
+        target = end - live as u64;
+    }
+    if target > *sent {
+        // do not start inside a character of several bytes
+        let head = output.read_from(target, 3).unwrap_or_default();
+        target += head.iter().take_while(|b| **b & 0xc0 == 0x80).count() as u64;
+        let skipped = target - *sent;
+        *sent = target;
+        return skipped;
+    }
+    0
 }
 
 /// Reads what is ready now, or returns `None` when nothing is, without waiting.
@@ -682,6 +745,8 @@ fn start_connection(
         pong_due: false,
         output_sent: 0,
         input_acked: 0,
+        replay_end: 0,
+        gap: 0,
         _reader: AbortOnDrop(reader),
         writer: Some(writer),
     }

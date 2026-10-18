@@ -1394,6 +1394,15 @@ impl Client {
                                 .map_err(|_| "the server acknowledged input that was never sent".to_owned())?;
                         }
                         ServerFrame::Pong => {}
+                        ServerFrame::Gap(skipped) => {
+                            // The server skipped output that this client was too slow to take.
+                            // What was shown ahead of the server goes first, then the notice.
+                            let taken_back = self.echo.cancel();
+                            let _ = self.io.output.write_all(&taken_back).await;
+                            self.output_offset += skipped;
+                            self.note_gap(skipped).await;
+                            link.send(ClientFrame::OutputAck(self.output_offset));
+                        }
                         ServerFrame::Exit(status) => {
                             link.send(ClientFrame::Close);
                             return Ok(Pumped::Done(Finished::Exited(exit_code(status))));

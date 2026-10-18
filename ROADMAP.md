@@ -7,9 +7,6 @@ Order: performance (2), then the release (3).
 
 ## 2. Performance
 
-- Do not let a slow connection slow the job (see the design below). The server keeps a bounded
-  backlog of unsent output and drops the oldest of it, with a new `Gap` frame so that the client
-  shows the notice. This replaces the backpressure while connected and `away_after`.
 - Compression of the output direction (`flate2` with the Rust backend), only when there is unsent
   backlog, negotiated in the hello. Add an `ssh -C` row to the benchmark with a text producer.
 - BBR instead of Cubic, to be measured under `netem` with loss.

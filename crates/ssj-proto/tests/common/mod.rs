@@ -48,5 +48,6 @@ pub fn server_frames() -> Vec<ServerFrame> {
         ServerFrame::Exit(ExitStatus::Signal(9)),
         ServerFrame::Error(ErrorCode::ReplayGap),
         ServerFrame::Pong,
+        ServerFrame::Gap(1 << 40),
     ]
 }

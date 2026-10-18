@@ -255,6 +255,8 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         accept_env,
         replay_capacity: args.replay_capacity,
         away_after: args.away_after,
+        slow_client: args.slow_client,
+        live_backlog: args.live_backlog,
         detached_timeout: args.detached_timeout,
         max_detached: args.max_detached,
         hello_timeout: HELLO_TIMEOUT,
