@@ -21,8 +21,8 @@ Order: performance (2), then the release (3).
   have never run, and the Linux tests have never been executed anywhere. Expect to fix things.
 - Manual checks that no CI machine can do: the macOS and Linux network watch (switch Wi-Fi, sleep
   the laptop), listed in `cargo run -p ssj-client --example netwatch`.
-- `PROTOCOLS.md` row, golden file, a tagged release, and a first run of the release workflow.
-- Bring `SPEC.md` and `README.md` in line with the code, and remove statements that became false.
+- A tagged release (`v0.1.0`) and a first run of the release workflow. The `PROTOCOLS.md` row and
+  the golden file for protocol 1 exist.
 
 ## Later, optional
 

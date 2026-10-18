@@ -4,12 +4,13 @@ Session survives jumps: a remote shell for flaky networks. The session survives 
 changes, sleep, and packet loss, and the native scrollback of the local terminal keeps working.
 The server runs without root and the transport is QUIC over UDP.
 
-_Status:_ under development. You can already use it: `ssj` bootstraps the server through `ssh`,
-connects over QUIC, passes the terminal through (window size, exit code, and `~.` to detach),
-reconnects after a lost connection without losing or repeating input, and manages sessions with
-`ssj list`, `ssj attach`, and `ssj kill`, and installs the server on the host. Not implemented yet:
-downloading the server from a release. See
-`SPEC.md` for the design and the threat model.
+_Status:_ under development, and not released yet. You can already use it: `ssj` bootstraps the
+server through `ssh`, connects over QUIC (falling back to TLS over TCP and to the `ssh` channel
+when UDP is blocked), passes the terminal through, reconnects after a lost connection or a change
+of network without losing or repeating input, names and manages sessions (`list`, `attach`,
+`kill`), and installs the server on the host. The code has been run on macOS only; the Linux
+builds are compiled and tested by CI, which has not run yet. See `SPEC.md` for the design and the
+threat model.
 
 ## Prerequisites
 
@@ -91,7 +92,7 @@ The `~` is the escape character, as in `ssh`. It counts only at the start of a l
 
 Any other character after `~` is sent as typed. Set another escape character with
 `--escape-char C`, or turn the feature off with `--escape-char none`. The `escape_char` setting in
-`client.toml` is planned.
+`client.toml` does the same for every run.
 
 ### Connection problems
 
