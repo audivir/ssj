@@ -26,7 +26,6 @@ These were decided and still need to be written into the spec when their phase l
 - Close all inherited file descriptors above 2 in the daemon, as `SPEC.md` already promises. Today
   they leak into the daemon and its shell (found in a test: a pipe of the caller stayed open). This
   needs more than `rustix` offers without `unsafe`, so it needs a decision first.
-- The 10 second `away_after` for a silent client is a constant. Make it a setting.
 - Zero the private keys after the handshake. Say in the docs what this does not cover.
 
 ## 4. Transport tiers

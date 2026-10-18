@@ -413,7 +413,7 @@ Backpressure would defeat that: after one buffer full of output the shell would 
 whenever nobody is there to acknowledge it, which is the case when
 
 - no client is connected (lost connection or deliberate detach), or
-- a client is connected but has acknowledged nothing for `away_after` (10 seconds) while the buffer
+- a client is connected but has acknowledged nothing for `away_after` (10 seconds by default, set in `server.toml` or with `--away-after`) while the buffer
   stayed full. A connection can die without the server hearing of it (a laptop that sleeps), so
   silence with a full buffer counts as away.
 

@@ -23,6 +23,7 @@ fn every_key_is_read() {
         "port_range = \"50000:50010\"\n\
          detached_timeout = 3600\n\
          max_detached = 86400\n\
+         away_after = 30\n\
          shell = \"/bin/zsh\"\n\
          accept_env = [\"TERM\", \"EDITOR\"]\n",
     )
@@ -32,6 +33,7 @@ fn every_key_is_read() {
     assert_eq!(a.port_range, 50000..=50010);
     assert_eq!(a.detached_timeout, Some(Duration::from_secs(3600)));
     assert_eq!(a.max_detached, Some(Duration::from_secs(86400)));
+    assert_eq!(a.away_after, Duration::from_secs(30));
     assert_eq!(a.shell.as_deref(), Some(std::path::Path::new("/bin/zsh")));
     assert!(config.accept_env().matches("EDITOR") && !config.accept_env().matches("LANG"));
 }
@@ -48,7 +50,7 @@ fn none_and_zero_turn_a_timeout_off() {
 #[test]
 fn flags_win_over_the_file() {
     let config = Config::from_text(
-        "port_range = \"50000:50010\"\ndetached_timeout = 3600\nmax_detached = 100\nshell = \"/bin/zsh\"\n",
+        "port_range = \"50000:50010\"\ndetached_timeout = 3600\nmax_detached = 100\naway_after = 30\nshell = \"/bin/zsh\"\n",
     )
     .unwrap();
     let mut a = args(&[
@@ -58,12 +60,15 @@ fn flags_win_over_the_file() {
         "none",
         "--max-detached",
         "none",
+        "--away-after",
+        "5",
         "--shell",
         "/bin/sh",
     ]);
     a.apply_config(&config);
     assert_eq!(a.port_range, 55000..=55001);
     assert_eq!((a.detached_timeout, a.max_detached), (None, None));
+    assert_eq!(a.away_after, Duration::from_secs(5));
     assert_eq!(a.shell.as_deref(), Some(std::path::Path::new("/bin/sh")));
 }
 
@@ -77,6 +82,10 @@ fn mistakes_are_errors_that_name_the_problem() {
     for (text, expected) in [
         ("port_rang = \"1:2\"", "unknown key"),
         ("port_range = \"1000:2000\"", "port_range: ports below 1024"),
+        (
+            "away_after = 0",
+            "away_after: expected a number of seconds above 0",
+        ),
         ("port_range = 5", "line 1: port_range must be a string"),
         ("detached_timeout = -5", "must not be negative"),
         ("detached_timeout = \"soon\"", "number of seconds"),

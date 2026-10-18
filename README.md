@@ -137,6 +137,7 @@ port_range = "60000:61000"            # UDP ports the server may use, "0" for an
 detached_timeout = "none"             # seconds without a client (default: none)
 max_detached = "none"                 # limit even after a deliberate detach
 replay_capacity = 4194304             # bytes of output kept for a client that is away
+away_after = 10                       # seconds a silent client may block the output
 shell = "/bin/zsh"                    # default: $SHELL
 accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
 ```

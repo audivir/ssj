@@ -5,6 +5,7 @@
 //! detached_timeout = "none"           # seconds without a client, or "none"
 //! max_detached = "none"               # upper limit even after a deliberate detach
 //! replay_capacity = 4194304           # bytes of output kept for an absent client
+//! away_after = 10                     # seconds a silent client may block the output
 //! shell = "/bin/zsh"                  # default: $SHELL
 //! accept_env = ["TERM", "LANG", "LC_*"]
 //! ```
@@ -18,7 +19,7 @@ use std::time::Duration;
 
 use ssj_proto::EnvFilter;
 
-use crate::cli::{Args, check_replay_capacity, parse_port_range};
+use crate::cli::{Args, check_replay_capacity, parse_away_after, parse_port_range};
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
@@ -26,6 +27,7 @@ pub struct Config {
     pub detached_timeout: Option<Option<Duration>>,
     pub max_detached: Option<Option<Duration>>,
     pub replay_capacity: Option<usize>,
+    pub away_after: Option<Duration>,
     pub shell: Option<PathBuf>,
     pub accept_env: Option<EnvFilter>,
 }
@@ -49,6 +51,10 @@ impl Config {
                 usize::try_from(size).map_err(|_| "replay_capacity is too large".to_owned())?;
             config.replay_capacity =
                 Some(check_replay_capacity(size).map_err(|e| format!("replay_capacity: {e}"))?);
+        }
+        if let Some(secs) = table.take_unsigned("away_after")? {
+            config.away_after =
+                Some(parse_away_after(&secs.to_string()).map_err(|e| format!("away_after: {e}"))?);
         }
         if let Some(shell) = table.take_text("shell")? {
             if !shell.starts_with('/') {
@@ -104,6 +110,11 @@ impl Args {
             && let Some(size) = config.replay_capacity
         {
             self.replay_capacity = size;
+        }
+        if !self.explicit.away_after
+            && let Some(away) = config.away_after
+        {
+            self.away_after = away;
         }
         if !self.explicit.shell && self.shell.is_none() {
             self.shell = config.shell.clone();

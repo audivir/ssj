@@ -34,8 +34,6 @@ pub(crate) const MAX_LINE: usize = 512;
 const PIN_TIMEOUT: Duration = Duration::from_secs(10);
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
-/// Time a connected client may leave a full output buffer alone before it counts as away.
-const AWAY_AFTER: Duration = Duration::from_secs(10);
 
 /// Reads one line of at most [`MAX_LINE`] bytes in a thread, so that the wait has a limit.
 pub(crate) fn read_line_with_timeout(
@@ -210,7 +208,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         },
         accept_env,
         replay_capacity: args.replay_capacity,
-        away_after: AWAY_AFTER,
+        away_after: args.away_after,
         detached_timeout: args.detached_timeout,
         max_detached: args.max_detached,
         hello_timeout: HELLO_TIMEOUT,

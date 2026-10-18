@@ -41,6 +41,8 @@ pub struct Args {
     pub max_detached: Option<Duration>,
     /// Bytes of output kept for a client that is away, before the oldest are forgotten.
     pub replay_capacity: usize,
+    /// Time a connected client may leave a full output buffer alone before it counts as away.
+    pub away_after: Duration,
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
@@ -56,6 +58,7 @@ pub struct Explicit {
     pub detached_timeout: bool,
     pub max_detached: bool,
     pub replay_capacity: bool,
+    pub away_after: bool,
     pub shell: bool,
 }
 
@@ -67,6 +70,7 @@ impl Default for Args {
             detached_timeout: None,
             max_detached: None,
             replay_capacity: 4 << 20,
+            away_after: Duration::from_secs(10),
             shell: None,
             shell_args: Vec::new(),
             daemon_child: false,
@@ -95,6 +99,10 @@ impl Args {
         out.extend([
             "--replay-capacity".into(),
             self.replay_capacity.to_string().into(),
+        ]);
+        out.extend([
+            "--away-after".into(),
+            self.away_after.as_secs().to_string().into(),
         ]);
         out.extend([
             "--max-detached".into(),
@@ -146,6 +154,14 @@ pub fn check_replay_capacity(size: usize) -> Result<usize, String> {
         Err(format!(
             "must be between {MIN_REPLAY_CAPACITY} and {MAX_REPLAY_CAPACITY} bytes"
         ))
+    }
+}
+
+/// Whole seconds, at least one.
+pub fn parse_away_after(text: &str) -> Result<Duration, String> {
+    match text.parse::<u64>() {
+        Ok(secs) if secs > 0 => Ok(Duration::from_secs(secs)),
+        _ => Err("expected a number of seconds above 0".to_owned()),
     }
 }
 
@@ -203,6 +219,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 out.replay_capacity = parse_replay_capacity(&value.to_string_lossy())
                     .map_err(|e| format!("--replay-capacity: {e}"))?;
                 out.explicit.replay_capacity = true;
+            }
+            "--away-after" => {
+                let value = args.next().ok_or("--away-after needs a value")?;
+                out.away_after = parse_away_after(&value.to_string_lossy())
+                    .map_err(|e| format!("--away-after: {e}"))?;
+                out.explicit.away_after = true;
             }
             "--max-detached" => {
                 let value = args.next().ok_or("--max-detached needs a value")?;

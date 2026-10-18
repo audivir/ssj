@@ -65,6 +65,8 @@ fn child_arguments_carry_every_setting() {
         "50000:50010",
         "--detached-timeout",
         "none",
+        "--away-after",
+        "7",
         "--shell",
         "/bin/zsh",
         "--shell-arg",
