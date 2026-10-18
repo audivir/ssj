@@ -44,7 +44,6 @@ pub struct Args {
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
-    pub allow_root: bool,
     /// Set by the bootstrap process when it starts the real server.
     pub daemon_child: bool,
     /// Which settings the command line gave, since the config file only fills in the others.
@@ -65,12 +64,11 @@ impl Default for Args {
         Self {
             mode: Mode::Serve,
             port_range: 60000..=61000,
-            detached_timeout: Some(Duration::from_secs(7 * 24 * 3600)),
+            detached_timeout: None,
             max_detached: None,
             replay_capacity: 4 << 20,
             shell: None,
             shell_args: Vec::new(),
-            allow_root: false,
             daemon_child: false,
             explicit: Explicit::default(),
         }
@@ -83,7 +81,12 @@ impl Args {
         let mut out: Vec<OsString> = vec![
             "--daemon-child".into(),
             "--port-range".into(),
-            format!("{}:{}", self.port_range.start(), self.port_range.end()).into(),
+            if self.port_range == (0..=0) {
+                "0".to_owned()
+            } else {
+                format!("{}:{}", self.port_range.start(), self.port_range.end())
+            }
+            .into(),
             "--detached-timeout".into(),
             self.detached_timeout
                 .map_or("none".to_owned(), |t| t.as_secs().to_string())
@@ -105,14 +108,15 @@ impl Args {
         for arg in &self.shell_args {
             out.extend(["--shell-arg".into(), arg.clone()]);
         }
-        if self.allow_root {
-            out.push("--allow-root".into());
-        }
         out
     }
 }
 
+/// `LOW:HIGH`, or `0` for any port the kernel picks.
 pub fn parse_port_range(text: &str) -> Result<RangeInclusive<u16>, String> {
+    if text == "0" {
+        return Ok(0..=0);
+    }
     let (low, high) = text.split_once(':').ok_or("expected LOW:HIGH")?;
     let (low, high): (u16, u16) = (
         low.parse().map_err(|_| "LOW is not a port number")?,
@@ -213,7 +217,6 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--shell-arg" => out
                 .shell_args
                 .push(args.next().ok_or("--shell-arg needs a value")?),
-            "--allow-root" => out.allow_root = true,
             "--daemon-child" => out.daemon_child = true,
             other => return Err(format!("unknown argument {other:?}")),
         }

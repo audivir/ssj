@@ -93,7 +93,11 @@ pub fn run_bootstrap(
     let mut child = server_command(runtime)
         .args([
             "--port-range",
-            &format!("{}:{}", port_range.0, port_range.1),
+            &if port_range == (0, 0) {
+                "0".to_owned()
+            } else {
+                format!("{}:{}", port_range.0, port_range.1)
+            },
         ])
         .args(["--detached-timeout", "20", "--shell", "/bin/sh"])
         .args(["--shell-arg", "-c", "--shell-arg", script])

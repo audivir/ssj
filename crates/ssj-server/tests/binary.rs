@@ -105,10 +105,22 @@ fn single_port_range_is_used_and_a_busy_range_is_reported() {
     assert_eq!(status.code(), Some(1));
     assert!(stdout.is_empty());
     assert!(
-        String::from_utf8_lossy(&stderr).contains("no free UDP port"),
+        String::from_utf8_lossy(&stderr).contains("no free UDP port")
+            && String::from_utf8_lossy(&stderr).contains("port_range = \"0\""),
         "{}",
         String::from_utf8_lossy(&stderr)
     );
+}
+
+#[test]
+fn port_range_zero_takes_any_port() {
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    let first = launch(&runtime, &client, (0, 0), "cat");
+    let second = launch(&runtime, &client, (0, 0), "cat");
+    assert_ne!(first.connect.port, 0);
+    assert_ne!(second.connect.port, 0);
+    assert_ne!(first.connect.port, second.connect.port);
 }
 
 #[test]

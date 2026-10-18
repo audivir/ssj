@@ -11,9 +11,14 @@ fn args(list: &[&str]) -> Result<Args, String> {
 fn port_ranges_must_be_unprivileged_and_ordered() {
     assert_eq!(parse_port_range("60000:61000"), Ok(60000..=61000));
     assert_eq!(parse_port_range("1024:1024"), Ok(1024..=1024));
+    // any port
+    assert_eq!(parse_port_range("0"), Ok(0..=0));
     for bad in [
         "",
         "1000",
+        "00",
+        "0:0",
+        "0:2000",
         "1023:2000",
         "2000:1999",
         "a:b",
@@ -40,14 +45,16 @@ fn timeouts_are_seconds_or_none() {
 fn defaults_are_conservative_and_unknown_arguments_fail() {
     let defaults = args(&[]).unwrap();
     assert_eq!(defaults.port_range, 60000..=61000);
-    assert_eq!(
-        defaults.detached_timeout,
-        Some(Duration::from_secs(7 * 24 * 3600))
-    );
-    assert!(!defaults.allow_root);
+    assert_eq!(defaults.detached_timeout, None);
 
     assert!(args(&["--bogus"]).is_err());
     assert!(args(&["--port-range"]).is_err());
+}
+
+#[test]
+fn child_arguments_keep_any_port() {
+    let original = args(&["--port-range", "0"]).unwrap();
+    assert_eq!(parse(original.to_child_args()).unwrap().port_range, 0..=0);
 }
 
 // The daemon must behave exactly like the bootstrap process that started it.
@@ -64,7 +71,6 @@ fn child_arguments_carry_every_setting() {
         "-l",
         "--shell-arg",
         "-i",
-        "--allow-root",
     ])
     .unwrap();
     let child = parse(original.to_child_args()).unwrap();

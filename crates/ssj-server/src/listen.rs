@@ -49,7 +49,7 @@ pub fn bind_in_range(range: &RangeInclusive<u16>) -> io::Result<UdpSocket> {
     Err(io::Error::new(
         io::ErrorKind::AddrInUse,
         format!(
-            "no free UDP port between {} and {}",
+            "no free UDP port between {} and {} (port_range = \"0\" takes any port)",
             range.start(),
             range.end()
         ),

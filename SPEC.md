@@ -39,7 +39,8 @@ the workspace root):
 1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
    range, prints port and server certificate fingerprint on stdout, and detaches from the `ssh`
    channel. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
-   the client also accepts and passes on to `ssj-server`.
+   the client also accepts and passes on to `ssj-server`. `--port-range 0` takes any port that the
+   kernel gives, for hosts where the range is full or filtered anyway.
 1. Client reads the line, closes the `ssh` connection, and switches to UDP.
 
 No bearer secret exists. Both fingerprints are public values that need integrity, not
@@ -78,8 +79,8 @@ Findings of the M0 spike, whose code and tests now live in `crates/ssj-net`:
   default 4 MiB). On reconnect, the client sends the last received offset and the server replays
   from there. If the server had to forget output in the meantime, see Output while nobody listens.
 - Client input is also numbered and acknowledged, so no keystroke is lost or duplicated.
-- The server exits when the shell exits or after a configurable detached timeout (default off
-  for the shell, on for the pinned client fingerprint before the first connect).
+- The server exits when the shell exits or after a configurable detached timeout (default: no
+  timeout for the shell, on for the pinned client fingerprint before the first connect).
 
 ### Protocol version
 
@@ -621,9 +622,10 @@ UDP phase:
 - Local echo prediction.
 - Windows client and server.
 
-## Open questions
+## Decisions
 
-1. Default for the detached timeout, which applies to involuntary disconnects only. With no
-   timeout, a lost client leaves a live shell behind an open UDP port indefinitely. A finite
-   default (for example 7 days) is safer.
-1. Should `ssj-server` refuse to run as root (uid 0), since root is never needed?
+- The detached timeout has no default. A lost client leaves a live shell behind, and `ssj list`
+  and `ssj kill` are the tools to find and end it. A user who wants a limit sets
+  `detached_timeout`.
+- `ssj-server` runs as root with a warning on stderr (root is never needed, but refusing helps
+  nobody who has a reason).

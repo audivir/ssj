@@ -96,7 +96,7 @@ Any other character after `~` is sent as typed. Set another escape character wit
 ### Timeouts and detached sessions
 
 - After an involuntary disconnect, the server waits for the client and ends the session after the
-  detached timeout (configurable, `detached_timeout` in `server.toml`).
+  detached timeout (off by default, `detached_timeout` in `server.toml`).
 - After `~.` there is no timeout. The shell runs until you attach again, or until you end it with
   `ssj kill`. The server closes its UDP port on detach, so a detached session listens on nothing.
   Attaching again goes through `ssh` and opens a new port.
@@ -133,8 +133,8 @@ send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
 `$XDG_CONFIG_HOME/ssj/server.toml` on the host:
 
 ```toml
-port_range = "60000:61000"            # UDP ports the server may use
-detached_timeout = 604800             # seconds without a client, or "none"
+port_range = "60000:61000"            # UDP ports the server may use, "0" for any
+detached_timeout = "none"             # seconds without a client (default: none)
 max_detached = "none"                 # limit even after a deliberate detach
 replay_capacity = 4194304             # bytes of output kept for a client that is away
 shell = "/bin/zsh"                    # default: $SHELL

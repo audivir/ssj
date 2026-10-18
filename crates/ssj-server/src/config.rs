@@ -1,8 +1,8 @@
 //! The config file `server.toml`.
 //!
 //! ```toml
-//! port_range = "60000:61000"          # UDP ports the server may use
-//! detached_timeout = 604800           # seconds without a client, or "none"
+//! port_range = "60000:61000"          # UDP ports the server may use, "0" for any
+//! detached_timeout = "none"           # seconds without a client, or "none"
 //! max_detached = "none"               # upper limit even after a deliberate detach
 //! replay_capacity = 4194304           # bytes of output kept for an absent client
 //! shell = "/bin/zsh"                  # default: $SHELL

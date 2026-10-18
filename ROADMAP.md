@@ -13,12 +13,7 @@ These were decided and still need to be written into the spec when their phase l
 - One protocol version per binary, no backward compatibility. A handshake error names the release
   to use, and old server files stay side by side (`ssj-server-p<N>`). Revisit at the first protocol
   bump.
-- The detached timeout has no default (`none`). `max_detached` stays an optional hard limit.
-- Root is allowed, with a warning on stderr and in the log. `--allow-root` goes away.
-- The UDP port range stays configurable, default 60000 to 61000. `port_range = "0"` means any port.
 - The client CLI uses `clap`.
-- Wake and network change use platform APIs behind one trigger, with the clock check as a fallback.
-  (Built. The spec describes it already.)
 
 ## 3. Server hardening
 
@@ -28,8 +23,6 @@ These were decided and still need to be written into the spec when their phase l
   list or remove sockets of other hosts.
 - Check the values of `TERM`, `LANG`, and `LC_*` before they reach the shell: characters
   `A-Za-z0-9._@-` only, no path separators, length limit. Reject the whole set on a violation.
-- Root: warn instead of refusing. Remove `--allow-root`. Default `detached_timeout` to `none`.
-- `port_range = "0"` for any port, and an error message that suggests it when the range is full.
 - Close all inherited file descriptors above 2 in the daemon, as `SPEC.md` already promises. Today
   they leak into the daemon and its shell (found in a test: a pipe of the caller stayed open). This
   needs more than `rustix` offers without `unsafe`, so it needs a decision first.

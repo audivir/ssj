@@ -66,8 +66,8 @@ pub fn run_parent(args: &Args) -> ExitCode {
         Err(message) => return fail(&message, 2),
     }
     let args = &args;
-    if daemon::is_root() && !args.allow_root {
-        return fail("refusing to run as root (use --allow-root to override)", 2);
+    if daemon::is_root() {
+        eprintln!("ssj-server: warning: running as root, the session shell will be a root shell");
     }
     let Some(line) = read_line_with_timeout(std::io::stdin(), PIN_TIMEOUT) else {
         return fail("no pin line on stdin", 2);
