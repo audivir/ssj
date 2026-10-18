@@ -50,6 +50,9 @@ ssj user@host                       # start a session
 ssj attach [ID] user@host           # join a running session, for example after a restart
 ssj list user@host                  # sessions with state and age
 ssj kill [ID] user@host             # end a session
+ssj --name work user@host           # join the session `work`, or start it
+ssj attach work user@host           # an id or a name
+ssj user@host:2222                  # port of the ssh server; also ssh://user@host:2222
 ssj --server-path ~/bin/ssj-server user@host
 ssj --ssh-command 'ssh -J jump' user@host
 ssj --udp-host 203.0.113.7 user@host  # UDP address when it differs from the host name
@@ -139,6 +142,7 @@ escape_char = "~"                     # one character, or "none"
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
 transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
+auto_attach = false                   # `ssj host` joins the only session without a client
 ```
 
 `$XDG_CONFIG_HOME/ssj/server.toml` on the host:

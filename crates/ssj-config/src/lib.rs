@@ -156,6 +156,18 @@ impl Table {
         }
     }
 
+    /// `true` or `false`, or `None` if the key is not set.
+    pub fn take_bool(&mut self, key: &str) -> Result<Option<bool>, String> {
+        match self.take(key) {
+            None => Ok(None),
+            Some(Entry {
+                value: Value::Bool(value),
+                ..
+            }) => Ok(Some(value)),
+            Some(entry) => Err(format!("line {}: {key} must be true or false", entry.line)),
+        }
+    }
+
     /// A list of strings, or `None` if the key is not set.
     pub fn take_list(&mut self, key: &str) -> Result<Option<Vec<String>>, String> {
         match self.take(key) {

@@ -132,3 +132,20 @@ fn unsigned_numbers_are_read_and_checked() {
             .starts_with("line 4:")
     );
 }
+
+#[test]
+fn booleans_are_true_or_false_and_nothing_else() {
+    let mut table = parse("on = true\noff = false\n").unwrap();
+    assert_eq!(table.take_bool("on").unwrap(), Some(true));
+    assert_eq!(table.take_bool("off").unwrap(), Some(false));
+    assert_eq!(table.take_bool("absent").unwrap(), None);
+    table.finish().unwrap();
+    for text in ["x = 1", "x = \"true\""] {
+        let mut table = parse(text).unwrap();
+        let error = table.take_bool("x").unwrap_err();
+        assert!(
+            error.contains("line 1") && error.contains("true or false"),
+            "{text}: {error}"
+        );
+    }
+}

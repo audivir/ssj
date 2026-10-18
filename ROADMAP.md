@@ -3,7 +3,7 @@
 Everything that is decided but not built yet. Finished work is documented in `SPEC.md` and
 `README.md` and is not listed here. An entry is removed when it is implemented and tested.
 
-Order: the features first (2), then packaging, performance, and the release (3 to 5).
+Order: packaging first (2), then performance (3), and the release (4).
 
 ## Decisions to record in `SPEC.md`
 
@@ -14,19 +14,7 @@ These were decided and still need to be written into the spec when their phase l
   bump.
 - The client CLI uses `clap`.
 
-## 2. Names, destinations, and `ssh -G`
-
-- Look up `hostname`, `user`, `port`, `proxyjump`, and `proxycommand` with `ssh -G`. This fixes the
-  UDP address for aliases and replaces `--udp-host` as the default.
-- `--name` for `ssj`, stored by the server (no change of the wire protocol), shown by `ssj list`, and
-  accepted by `attach` and `kill`. Names are unique per user.
-- `ssj --name work host` attaches when the session exists and creates it otherwise.
-- `auto_attach = true` in `client.toml`.
-- Destination parser for `user@host:port`, `ssh://`, and IPv6 literals, with the check against a
-  leading `-` kept. Fuzz it.
-- `ssj attach` without an id when exactly one session exists (done); with several, list them.
-
-## 3. CLI and packaging
+## 2. CLI and packaging
 
 - Move the client CLI to `clap` (derive), keeping every flag and test. Generate completions for
   Bash, Zsh, and Fish and the man page in `build.rs`.
@@ -39,7 +27,7 @@ These were decided and still need to be written into the spec when their phase l
 - Optional: `ssj install --download`, fetching the server file from the release of the same version
   and checking it against `SHA256SUMS`.
 
-## 4. Performance
+## 3. Performance
 
 - Benchmark harness (an ignored test and a CI job) that compares `ssh`, `ssj` over UDP, and `ssj`
   over TCP: bulk output, keystroke latency, and the 8 MiB paste under `tc netem` (Linux only).
@@ -48,7 +36,7 @@ These were decided and still need to be written into the spec when their phase l
 - First run without gates to see real numbers. Then gate on them (the proposal suggested 5 percent
   for throughput and 1 ms for latency, which nobody has measured).
 
-## 5. Release
+## 4. Release
 
 - Push the repository to a remote so that `ci.yml`, `fuzz.yml`, and `supply-chain.yml` run. They
   have never run, and the Linux tests have never been executed anywhere. Expect to fix things.

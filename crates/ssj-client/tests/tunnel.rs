@@ -1,5 +1,5 @@
 use ssj_client::cli::Transport;
-use ssj_client::tunnel::{Kind, jump_in_config, tier_order};
+use ssj_client::tunnel::{Kind, SshConfig, jump_in_config, parse_ssh_config, tier_order};
 
 #[test]
 fn a_jump_host_or_proxy_command_is_found_in_the_ssh_configuration() {
@@ -40,4 +40,25 @@ fn the_order_of_transports_follows_the_choice_the_path_and_the_server() {
     assert_eq!(order(Transport::Stdio, false, true, true), [Stdio]);
     assert!(order(Transport::Udp, false, false, true).is_empty());
     assert!(order(Transport::Tcp, false, true, false).is_empty());
+}
+
+#[test]
+fn the_host_name_is_taken_from_the_ssh_configuration() {
+    let config = parse_ssh_config(
+        "host work\nuser tim\nhostname server.example.org\nport 22\nproxyjump none\n\
+         hostname second.example.org\n",
+    );
+    assert_eq!(
+        config,
+        SshConfig {
+            hostname: Some("server.example.org".to_owned()),
+            jump: false
+        }
+    );
+    let jump = parse_ssh_config("hostname 10.0.0.5\nproxyjump bastion\n");
+    assert!(jump.jump);
+    assert_eq!(jump.hostname.as_deref(), Some("10.0.0.5"));
+    assert_eq!(parse_ssh_config(""), SshConfig::default());
+    // no value, no host
+    assert_eq!(parse_ssh_config("hostname \nhostname\n").hostname, None);
 }

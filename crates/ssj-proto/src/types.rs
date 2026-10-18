@@ -23,6 +23,35 @@ impl WindowSize {
     }
 }
 
+/// Name that a user gives to a session, to find it again.
+///
+/// It appears in file names, commands, and lists, so only a few characters are allowed.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SessionName(String);
+
+impl SessionName {
+    pub const MAX_LEN: usize = 32;
+
+    /// Accepts 1 to 32 characters of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-`.
+    pub fn parse(name: &str) -> Option<Self> {
+        let valid = (1..=Self::MAX_LEN).contains(&name.len())
+            && !name.starts_with(['.', '-'])
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+        valid.then(|| Self(name.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Whether `text` can name a session, as an id or as a name.
+pub fn is_selector(text: &str) -> bool {
+    SessionId::parse(text).is_some() || SessionName::parse(text).is_some()
+}
+
 /// Identifier of a session, restricted to characters that are safe in file names and commands.
 ///
 /// It names control sockets and multiplexer sessions, so it must never contain path separators,

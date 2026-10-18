@@ -3,7 +3,7 @@ use ssj_proto::control::{
     ControlError, Reply, Request, SessionInfo, SessionState, format_reply, format_request,
     parse_reply, parse_request,
 };
-use ssj_proto::{ReplayBuffer, SessionId};
+use ssj_proto::{ReplayBuffer, SessionId, SessionName};
 
 const HEX: &str = "030b131b232b333b434b535b636b737b838b939ba3abb3bbc3cbd3dbe3ebf3fb";
 
@@ -18,6 +18,7 @@ fn fingerprint() -> [u8; 32] {
 fn info(state: SessionState) -> SessionInfo {
     SessionInfo {
         id: SessionId::parse("abcdef012345").unwrap(),
+        name: Some(SessionName::parse("work").unwrap()),
         state,
         age_secs: 3600,
         protocol: 1,
@@ -116,14 +117,17 @@ fn malformed_replies_are_refused() {
         "OK extra\n",
         "ERR \u{1b}[2J\n",
         "ERR caf\u{e9}\n",
-        "SSJ SESSION abcdef012345 connected 5\n",
-        "SSJ SESSION abcdef012345 connected 5 1 extra\n",
-        "SSJ SESSION ABCDEF012345 connected 5 1\n",
-        "SSJ SESSION abcdef012345 sleeping 5 1\n",
-        "SSJ SESSION abcdef012345 connected -5 1\n",
-        "SSJ SESSION abcdef012345 connected 05 1\n",
-        "SSJ SESSION abcdef012345 connected 99999999999 1\n",
-        "SSJ SESSION ../../etc/passwd connected 5 1\n",
+        "SSJ SESSION abcdef012345 connected 5 1\n",
+        "SSJ SESSION abcdef012345 connected 5 1 - extra\n",
+        "SSJ SESSION ABCDEF012345 connected 5 1 -\n",
+        "SSJ SESSION abcdef012345 sleeping 5 1 -\n",
+        "SSJ SESSION abcdef012345 connected -5 1 -\n",
+        "SSJ SESSION abcdef012345 connected 05 1 -\n",
+        "SSJ SESSION abcdef012345 connected 99999999999 1 -\n",
+        "SSJ SESSION ../../etc/passwd connected 5 1 -\n",
+        "SSJ SESSION abcdef012345 connected 5 1 ../x\n",
+        "SSJ SESSION abcdef012345 connected 5 1 -x\n",
+        "SSJ SESSION abcdef012345 connected 5 1 \n",
         "SSJ CONNECT 0 00\n",
         "OK\nOK\n",
         "OK\r\n",
@@ -182,4 +186,38 @@ fn a_reply_with_more_than_one_line_is_refused() {
         parse_reply(format!("noise\n{connect}").as_bytes()),
         Err(ControlError::Malformed)
     );
+}
+
+#[test]
+fn a_session_without_a_name_has_a_dash() {
+    let mut unnamed = info(SessionState::Detached);
+    unnamed.name = None;
+    let line = format_reply(&Reply::Info(unnamed.clone()));
+    assert_eq!(line, "SSJ SESSION abcdef012345 detached 3600 1 -\n");
+    assert_eq!(parse_reply(line.as_bytes()), Ok(Reply::Info(unnamed)));
+}
+
+#[test]
+fn names_have_a_small_alphabet_and_no_dot_or_dash_in_front() {
+    for good in ["work", "a", "My-Session_2.b", &"x".repeat(32)] {
+        assert!(SessionName::parse(good).is_some(), "{good:?}");
+    }
+    for bad in [
+        "",
+        "-x",
+        ".x",
+        "a b",
+        "a/b",
+        "a:b",
+        "ä",
+        "a\n",
+        "a\0",
+        &"x".repeat(33),
+    ] {
+        assert!(SessionName::parse(bad).is_none(), "{bad:?}");
+    }
+    // ids are selectors too
+    assert!(ssj_proto::is_selector("abcdef012345"));
+    assert!(ssj_proto::is_selector("work"));
+    assert!(!ssj_proto::is_selector("a b"));
 }

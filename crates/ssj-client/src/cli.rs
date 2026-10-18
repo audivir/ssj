@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use ssj_proto::{EnvFilter, PROTOCOL, SessionId};
+use ssj_proto::{EnvFilter, PROTOCOL, SessionName, is_selector};
 
 use crate::config::AutoInstall;
 
@@ -42,20 +42,24 @@ pub enum Command {
     /// Start a new session.
     Connect,
     /// Join a running session as a new client.
-    Attach(Option<SessionId>),
+    Attach(Option<String>),
     /// Print the sessions on the host.
     List,
     /// Put the server on the host.
     Install,
     /// End a session on the host.
-    Kill(Option<SessionId>),
+    Kill(Option<String>),
 }
 
 #[derive(Clone, Debug)]
 pub struct Args {
     pub command: Command,
-    /// `[user@]host` as given.
+    /// `[user@]host` for `ssh`: the destination without the port and without brackets.
     pub destination: String,
+    /// Port of the `ssh` server, when the destination names one.
+    pub ssh_port: Option<u16>,
+    /// Name of the session: it is joined if it runs and started otherwise.
+    pub name: Option<SessionName>,
     /// Command that replaces `ssh`, split at whitespace.
     pub ssh_command: Vec<String>,
     pub server_path: ServerPath,
@@ -73,6 +77,8 @@ pub struct Args {
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
     pub transport: Transport,
+    /// Join the only session without a client instead of starting another one.
+    pub auto_attach: bool,
     /// Which of `ssh_command`, `escape`, and `send_env` the command line set, since the config
     /// file only fills in the others.
     pub explicit: Explicit,
@@ -84,6 +90,7 @@ pub struct Explicit {
     pub escape: bool,
     pub send_env: bool,
     pub transport: bool,
+    pub auto_attach: bool,
 }
 
 impl Args {
@@ -95,6 +102,9 @@ impl Args {
         if !self.explicit.escape {
             self.escape = config.escape;
         }
+        if !self.explicit.auto_attach {
+            self.auto_attach = config.auto_attach;
+        }
         if !self.explicit.transport {
             self.transport = config.transport;
         }
@@ -104,6 +114,12 @@ impl Args {
         if self.auto_install.is_none() {
             self.auto_install = Some(config.auto_install);
         }
+    }
+
+    /// The options that tell `ssh` the port, to go before the destination.
+    pub fn ssh_port_args(&self) -> Vec<String> {
+        self.ssh_port
+            .map_or_else(Vec::new, |port| vec!["-p".to_owned(), port.to_string()])
     }
 
     /// Host part of the destination, without the user.
@@ -136,6 +152,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut escape = Some(b'~');
     let (mut ssh_command_set, mut escape_set) = (false, false);
     let mut transport = None;
+    let mut name = None;
+    let mut auto_attach = None;
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -166,6 +184,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "--no-install" => auto_install = Some(AutoInstall::Never),
             "--server-dir" => server_dir = Some(PathBuf::from(value("--server-dir")?)),
             "--server-binary" => server_binary = Some(PathBuf::from(value("--server-binary")?)),
+            "--name" => {
+                name = Some(
+                    SessionName::parse(&value("--name")?)
+                        .ok_or("--name: 1 to 32 characters of letters, digits, '.', '_', '-'")?,
+                );
+            }
+            "--auto-attach" => auto_attach = Some(true),
+            "--no-auto-attach" => auto_attach = Some(false),
             "--transport" => {
                 transport = Some(
                     parse_transport(&value("--transport")?)
@@ -196,7 +222,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             let (id, destination) = match rest {
                 [destination] => (None, destination.clone()),
                 [id, destination] if word == "attach" || word == "kill" => (
-                    Some(SessionId::parse(id).ok_or("not a valid session id")?),
+                    Some(
+                        is_selector(id)
+                            .then(|| id.clone())
+                            .ok_or("not a valid session id or name")?,
+                    ),
                     destination.clone(),
                 ),
                 _ => {
@@ -224,9 +254,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             _ => return Err("only one destination is allowed".to_owned()),
         },
     };
-    if destination.is_empty() || destination.contains(char::is_whitespace) {
-        return Err("invalid destination".to_owned());
-    }
+    let parsed = ssj_proto::destination::parse(&destination)
+        .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
     let send_env_set = send_env.is_some();
     let send_env = match send_env {
         Some(patterns) => EnvFilter::new(patterns).map_err(|e| format!("--send-env: {e:?}"))?,
@@ -234,7 +263,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     };
     Ok(Args {
         command,
-        destination,
+        destination: parsed.target(),
+        ssh_port: parsed.port,
+        name,
         ssh_command,
         server_path,
         server_args,
@@ -245,11 +276,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         server_binary,
         escape,
         transport: transport.unwrap_or_default(),
+        auto_attach: auto_attach.unwrap_or(false),
         explicit: Explicit {
             ssh_command: ssh_command_set,
             escape: escape_set,
             send_env: send_env_set,
             transport: transport.is_some(),
+            auto_attach: auto_attach.is_some(),
         },
     })
 }

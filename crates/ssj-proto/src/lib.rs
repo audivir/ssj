@@ -5,6 +5,7 @@
 
 pub mod bootstrap;
 pub mod control;
+pub mod destination;
 pub mod env;
 pub mod env_filter;
 pub mod frame;
@@ -19,7 +20,7 @@ pub use frame::{
     decode_client, decode_server,
 };
 pub use replay::{ReplayBuffer, ReplayError};
-pub use types::{SessionId, WindowSize};
+pub use types::{SessionId, SessionName, WindowSize, is_selector};
 
 /// Version of the wire protocol. Two peers talk only if their versions are equal.
 ///

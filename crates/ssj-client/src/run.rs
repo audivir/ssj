@@ -210,10 +210,21 @@ async fn session(mut args: Args) -> u8 {
     };
     args.apply_config(&config);
     match args.command.clone() {
-        Command::Connect => connect_session(args, &config, &[], false).await,
+        Command::Connect => {
+            // a name or `auto_attach` may mean a session that runs already; the server decides,
+            // and the client starts with an attach, which a new session answers with `NotStarted`
+            let mut extra = Vec::new();
+            if let Some(name) = &args.name {
+                extra.extend(["--name".to_owned(), name.as_str().to_owned()]);
+            } else if args.auto_attach {
+                extra.push("--reuse".to_owned());
+            }
+            let attach = !extra.is_empty();
+            connect_session(args, &config, &extra, attach).await
+        }
         Command::Attach(id) => {
             let mut extra = vec!["--attach".to_owned()];
-            extra.extend(id.map(|id| id.as_str().to_owned()));
+            extra.extend(id);
             connect_session(args, &config, &extra, true).await
         }
         Command::List => list_sessions(&args).await,
@@ -321,19 +332,20 @@ async fn list_sessions(args: &Args) -> u8 {
     }
     for info in infos {
         println!(
-            "{}  {:<12}  {:>4}  protocol {}",
+            "{}  {:<12}  {:>4}  protocol {}  {}",
             info.id.as_str(),
             state_word(info.state),
             format_age(info.age_secs),
-            info.protocol
+            info.protocol,
+            info.name.as_ref().map_or("-", |name| name.as_str())
         );
     }
     0
 }
 
-async fn kill_session(args: &Args, id: Option<ssj_proto::SessionId>) -> u8 {
+async fn kill_session(args: &Args, id: Option<String>) -> u8 {
     let mut extra = vec!["--kill".to_owned()];
-    extra.extend(id.map(|id| id.as_str().to_owned()));
+    extra.extend(id);
     match run_remote(args, &extra, "").await {
         Ok(remote) if remote.server_missing() => {
             eprintln!(
@@ -366,7 +378,13 @@ async fn build_tiers(
 ) -> Result<Vec<Tier>, String> {
     let choice = args.transport;
     // UDP does not travel through a jump host, so it is not even tried there
-    let jump = choice == Transport::Auto && crate::tunnel::uses_jump_host(args).await;
+    let udp_possible = matches!(choice, Transport::Auto | Transport::Udp) && connect.udp.is_some();
+    let config = if udp_possible {
+        crate::tunnel::ssh_config(args).await
+    } else {
+        None
+    };
+    let jump = choice == Transport::Auto && config.as_ref().is_some_and(|c| c.jump);
     let order =
         crate::tunnel::tier_order(choice, jump, connect.udp.is_some(), connect.tcp.is_some());
     let mut tiers = Vec::new();
@@ -375,9 +393,12 @@ async fn build_tiers(
         match kind {
             Kind::Udp => {
                 let port = connect.udp.expect("offered");
+                // the address of the server: the one given, else the `HostName` of the `ssh`
+                // configuration (the destination may be an alias), else the destination itself
                 let host = args
                     .udp_host
                     .clone()
+                    .or_else(|| config.as_ref().and_then(|c| c.hostname.clone()))
                     .unwrap_or_else(|| args.host().to_owned());
                 match resolve(&host, port).await {
                     Ok(addr) => tiers.push(Tier::Udp {
@@ -639,6 +660,8 @@ impl Link {
 
 enum Attempt {
     Linked(Link),
+    /// Try again at once on the same transport.
+    Again,
     /// Try again later.
     Retry,
     /// The session cannot continue.
@@ -750,6 +773,8 @@ impl Client {
                         Pumped::Lost => {}
                     }
                 }
+                // the answer was fine and only the kind of hello was wrong: no pause, no other tier
+                Attempt::Again => continue,
                 Attempt::Retry => {
                     if self.try_next_tier() {
                         continue;
@@ -969,7 +994,7 @@ impl Client {
                 if matches!(hello, Hello::Attach { .. }) && !self.started =>
             {
                 self.params.attach = false;
-                return Attempt::Retry;
+                return Attempt::Again;
             }
             Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
                 if matches!(
@@ -981,7 +1006,7 @@ impl Client {
                 ) && self.input.end() == 0 =>
             {
                 self.started = false;
-                return Attempt::Retry;
+                return Attempt::Again;
             }
             Ok(Some(ServerFrame::Error(ErrorCode::ReplayGap))) => {
                 return Attempt::Fatal(

@@ -86,3 +86,32 @@ fn child_arguments_carry_every_setting() {
         original
     );
 }
+
+#[test]
+fn names_and_selectors_are_checked_and_carried_to_the_daemon() {
+    let named = args(&["--name", "work", "--reuse"]).unwrap();
+    assert_eq!(named.name.as_ref().map(|n| n.as_str()), Some("work"));
+    assert!(named.reuse);
+    let child = parse(named.to_child_args()).unwrap();
+    assert_eq!(child.name, named.name);
+
+    for bad in ["", "-x", ".x", "a b", "a/b", &"n".repeat(33)] {
+        assert!(args(&["--name", bad]).is_err(), "{bad:?}");
+    }
+    assert!(args(&["--name"]).is_err());
+
+    // a selector is an id or a name
+    assert_eq!(
+        args(&["--attach", "work"]).unwrap().mode,
+        ssj_server::cli::Mode::Attach(Some("work".to_owned()))
+    );
+    assert_eq!(
+        args(&["--kill", "abcdef012345"]).unwrap().mode,
+        ssj_server::cli::Mode::Kill(Some("abcdef012345".to_owned()))
+    );
+    assert!(args(&["--kill", "a b"]).is_err());
+    assert_eq!(
+        args(&["--stdio", "work"]).unwrap().mode,
+        ssj_server::cli::Mode::Stdio(Some("work".to_owned()))
+    );
+}

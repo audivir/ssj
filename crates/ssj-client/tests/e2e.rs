@@ -87,35 +87,52 @@ fn run_client(ssh: &Path, shell_args: &[&str], input: &str) -> Output {
 
 /// Like [`run_client`] with more arguments for the client.
 fn run_client_with(ssh: &Path, shell_args: &[&str], input: &str, client_args: &[&str]) -> Output {
+    run_client_to(
+        ssh,
+        shell_args,
+        input,
+        client_args,
+        "user@localhost",
+        Some("127.0.0.1"),
+    )
+}
+
+/// Like [`run_client_with`] for another destination, and with or without the UDP address.
+fn run_client_to(
+    ssh: &Path,
+    shell_args: &[&str],
+    input: &str,
+    client_args: &[&str],
+    destination: &str,
+    udp_host: Option<&str>,
+) -> Output {
     let port = free_port();
     let mut command = Command::new(env!("CARGO_BIN_EXE_ssj"));
     command
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
-        .args([
-            "--udp-host",
-            "127.0.0.1",
-            "--port-range",
-            &format!("{port}:{port}"),
-        ])
-        .args([
-            "--detached-timeout",
-            "5",
-            "--server-arg",
-            "--max-detached",
-            "--server-arg",
-            "30",
-            "--server-arg",
-            "--shell",
-            "--server-arg",
-            "/bin/sh",
-        ]);
+        .args(["--port-range", &format!("{port}:{port}")]);
+    if let Some(host) = udp_host {
+        command.args(["--udp-host", host]);
+    }
+    command.args([
+        "--detached-timeout",
+        "5",
+        "--server-arg",
+        "--max-detached",
+        "--server-arg",
+        "30",
+        "--server-arg",
+        "--shell",
+        "--server-arg",
+        "/bin/sh",
+    ]);
     for arg in shell_args {
         command.args(["--server-arg", "--shell-arg", "--server-arg", arg]);
     }
     let mut child = command
         .args(client_args)
-        .arg("user@localhost")
+        .arg(destination)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1186,4 +1203,171 @@ fn a_chosen_transport_that_the_server_does_not_offer_is_an_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{stderr:?}");
     assert!(stderr.contains("no TCP port"), "{stderr:?}");
+}
+
+#[test]
+fn the_port_of_the_destination_goes_to_ssh_and_not_into_the_host_name() {
+    let log = fake_ssh("").with_file_name("args.log");
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\n{}",
+        log.display(),
+        &FAKE_SSH["#!/bin/sh\n".len()..]
+    );
+    let output = run_client_to(
+        &fake_ssh(&script),
+        &["-c", "exit 0"],
+        "",
+        &[],
+        "ssh://tim@localhost:2222",
+        Some("127.0.0.1"),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    for call in logged.lines() {
+        let (options, target) = call.split_once(" -- ").unwrap();
+        assert!(options.contains("-p 2222"), "{call}");
+        assert!(target.starts_with("tim@localhost"), "{call}");
+        assert!(!target.contains(":2222"), "{call}");
+    }
+}
+
+// The destination may be a name from the `ssh` configuration that DNS does not know. UDP goes to
+// the `HostName` that `ssh -G` reports.
+#[test]
+fn udp_goes_to_the_host_name_of_the_ssh_configuration() {
+    let marker = fake_ssh("").with_file_name("forwarded");
+    let ssh = transport_ssh("hostname 127.0.0.1\n", &note_forwarding(&marker));
+    let output = run_client_to(&ssh, &ASK, "xyz\n", &[], "tim@no-such-alias.invalid", None);
+    assert_session(&output);
+    assert!(!marker.exists(), "UDP was not used");
+}
+
+#[test]
+fn a_named_session_is_started_and_joined_again_by_its_name() {
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    let shell = [
+        "--server-arg",
+        "--shell",
+        "--server-arg",
+        "/bin/sh",
+        "--server-arg",
+        "--shell-arg",
+        "--server-arg",
+        "-c",
+        "--server-arg",
+        "--shell-arg",
+        "--server-arg",
+        "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done",
+    ];
+    let mut words = vec!["--name", "work"];
+    words.extend(shell);
+    words.push("user@localhost");
+
+    // the first call starts the session, the shell counts its lines
+    let first = ssj_typing(
+        &runtime,
+        &ssh,
+        &words,
+        &[("one\n", "got:one:1"), ("~.", "")],
+    );
+    assert!(
+        text(&first.stdout).contains("got:one:1"),
+        "{} / {}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    assert_eq!(first.status.code(), Some(0), "{}", text(&first.stderr));
+
+    let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
+    assert!(
+        listing.contains("detached") && listing.contains("work"),
+        "{listing}"
+    );
+
+    // the same call finds the session and the counter goes on
+    let second = ssj_typing(
+        &runtime,
+        &ssh,
+        &["--name", "work", "user@localhost"],
+        &[("two\n", "got:two:2"), ("~.", "")],
+    );
+    assert!(
+        text(&second.stdout).contains("got:two:2"),
+        "{} / {}",
+        text(&second.stdout),
+        text(&second.stderr)
+    );
+    assert_eq!(second.status.code(), Some(0), "{}", text(&second.stderr));
+    assert_eq!(
+        text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout)
+            .lines()
+            .filter(|l| l.contains("work"))
+            .count(),
+        1
+    );
+
+    // the name works for attach and kill as well
+    let third = ssj_typing(
+        &runtime,
+        &ssh,
+        &["attach", "work", "user@localhost"],
+        &[("three\n", "got:three:3"), ("~.", "")],
+    );
+    assert!(
+        text(&third.stdout).contains("got:three:3"),
+        "{}",
+        text(&third.stderr)
+    );
+    let killed = ssj(&runtime, &ssh, &["kill", "work", "user@localhost"], "");
+    assert!(killed.status.success(), "{}", text(&killed.stderr));
+}
+
+#[test]
+fn auto_attach_joins_the_only_session_without_a_client() {
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    let shell = [
+        "--server-arg",
+        "--shell",
+        "--server-arg",
+        "/bin/sh",
+        "--server-arg",
+        "--shell-arg",
+        "--server-arg",
+        "-c",
+        "--server-arg",
+        "--shell-arg",
+        "--server-arg",
+        "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done",
+    ];
+    let mut words = vec!["--auto-attach"];
+    words.extend(shell);
+    words.push("user@localhost");
+    let first = ssj_typing(
+        &runtime,
+        &ssh,
+        &words,
+        &[("one\n", "got:one:1"), ("~.", "")],
+    );
+    assert!(
+        text(&first.stdout).contains("got:one:1"),
+        "{}",
+        text(&first.stderr)
+    );
+
+    let second = ssj_typing(
+        &runtime,
+        &ssh,
+        &["--auto-attach", "user@localhost"],
+        &[("two\n", "got:two:2"), ("~.", "")],
+    );
+    assert!(
+        text(&second.stdout).contains("got:two:2"),
+        "{} / {}",
+        text(&second.stdout),
+        text(&second.stderr)
+    );
+    let killed = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+    assert!(killed.status.success(), "{}", text(&killed.stderr));
 }

@@ -6,7 +6,7 @@ use std::time::Instant;
 use ssj_proto::control::{
     MAX_LINE, Reply, Request, SessionInfo, SessionState, format_reply, parse_request,
 };
-use ssj_proto::{PROTOCOL, SessionId};
+use ssj_proto::{PROTOCOL, SessionId, SessionName};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, mpsc};
@@ -20,6 +20,7 @@ use crate::stream::bridge;
 /// What the control socket needs to know and to do.
 pub struct Context {
     pub id: SessionId,
+    pub name: Option<SessionName>,
     pub started: Instant,
     pub state: std::sync::Mutex<SessionState>,
     pub frontend: Mutex<Frontend>,
@@ -35,6 +36,7 @@ impl Context {
         match request {
             Request::Status => Reply::Info(SessionInfo {
                 id: self.id.clone(),
+                name: self.name.clone(),
                 state: *self.state.lock().expect("not poisoned"),
                 age_secs: self.started.elapsed().as_secs(),
                 protocol: PROTOCOL,

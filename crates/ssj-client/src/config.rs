@@ -5,6 +5,7 @@
 //! escape_char = "~"               # one character, or "none"
 //! ssh_command = "ssh -J jump"     # replaces `ssh`
 //! send_env = ["TERM", "LANG", "LC_*"]
+//! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
 //! ```
 //!
@@ -34,6 +35,7 @@ pub struct Config {
     pub ssh_command: Vec<String>,
     pub send_env: EnvFilter,
     pub transport: Transport,
+    pub auto_attach: bool,
 }
 
 impl Default for Config {
@@ -44,6 +46,7 @@ impl Default for Config {
             ssh_command: vec!["ssh".to_owned()],
             send_env: EnvFilter::default_patterns(),
             transport: Transport::default(),
+            auto_attach: false,
         }
     }
 }
@@ -74,6 +77,9 @@ impl Config {
         }
         if let Some(patterns) = table.take_list("send_env")? {
             config.send_env = EnvFilter::new(patterns).map_err(|e| format!("send_env: {e:?}"))?;
+        }
+        if let Some(on) = table.take_bool("auto_attach")? {
+            config.auto_attach = on;
         }
         if let Some(text) = table.take_text("transport")? {
             config.transport = parse_transport(&text).map_err(|e| format!("transport: {e}"))?;

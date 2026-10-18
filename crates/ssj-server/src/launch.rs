@@ -21,7 +21,9 @@ use tokio::sync::{Mutex, mpsc as tokio_mpsc};
 use crate::backend::Direct;
 use crate::cli::Args;
 use crate::config::Config;
+use crate::control_cli;
 use crate::control_server::{Context, serve_control};
+use crate::control_socket;
 use crate::control_socket::{SocketFile, control_dir, ensure_private_dir, socket_path};
 use crate::daemon;
 use crate::frontend::Frontend;
@@ -57,6 +59,37 @@ fn fail(message: &str, code: u8) -> ExitCode {
     ExitCode::from(code)
 }
 
+/// The running session that the arguments ask for, if there is one: the one with the name, or with
+/// `--reuse` the only session of this protocol that has no client. A name is unique per user.
+fn existing_session(args: &Args) -> Result<Option<control_socket::Found>, String> {
+    if args.name.is_none() && !args.reuse {
+        return Ok(None);
+    }
+    let sessions = control_socket::control_dir()
+        .map(|dir| control_socket::find_sessions(&dir))
+        .unwrap_or_default();
+    if let Some(name) = &args.name {
+        let found = sessions
+            .into_iter()
+            .find(|f| f.info.name.as_ref() == Some(name));
+        return match found {
+            Some(f) if f.info.protocol != ssj_proto::PROTOCOL => Err(format!(
+                "the name {} is used by a session of protocol {}",
+                name.as_str(),
+                f.info.protocol
+            )),
+            found => Ok(found),
+        };
+    }
+    let mut free: Vec<_> = sessions
+        .into_iter()
+        .filter(|f| {
+            f.info.protocol == ssj_proto::PROTOCOL && f.info.state != SessionState::Connected
+        })
+        .collect();
+    Ok(if free.len() == 1 { free.pop() } else { None })
+}
+
 /// The process started by `ssh`.
 pub fn run_parent(args: &Args) -> ExitCode {
     // the daemon gets the resolved values on its command line, so both agree
@@ -75,6 +108,12 @@ pub fn run_parent(args: &Args) -> ExitCode {
     let Ok(pin) = parse_pin(&line) else {
         return fail("stdin does not hold a valid SSJ PIN line", 2);
     };
+    // a named session, or the only free one, is joined instead of starting another
+    match existing_session(args) {
+        Err(message) => return fail(&message, 1),
+        Ok(Some(found)) => return control_cli::attach_session(&found, pin),
+        Ok(None) => {}
+    }
 
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
@@ -222,6 +261,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
     let (commands, commands_rx) = tokio_mpsc::unbounded_channel();
     let context = Arc::new(Context {
         id,
+        name: args.name.clone(),
         started: Instant::now(),
         state: std::sync::Mutex::new(SessionState::Disconnected),
         frontend: Mutex::new(frontend),

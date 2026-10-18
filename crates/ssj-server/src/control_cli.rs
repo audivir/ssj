@@ -4,9 +4,9 @@ use std::io::Write;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use ssj_proto::PROTOCOL;
 use ssj_proto::bootstrap::parse_pin;
 use ssj_proto::control::{Reply, Request, format_reply};
-use ssj_proto::{PROTOCOL, SessionId};
 
 use crate::cli::{Args, Mode};
 use crate::control_socket::{Found, ask, control_dir, find_sessions};
@@ -19,22 +19,24 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::from(1)
 }
 
-/// Picks the session an order is meant for.
+/// Picks the session an order is meant for, by id or by name.
 ///
-/// Without an id, the only session of this protocol is meant. Sessions of other protocols
+/// Without a selector, the only session of this protocol is meant. Sessions of other protocols
 /// belong to other versions of the server and are never touched.
-pub fn choose(sessions: Vec<Found>, id: Option<&SessionId>) -> Result<Found, String> {
-    if let Some(id) = id {
+pub fn choose(sessions: Vec<Found>, selector: Option<&str>) -> Result<Found, String> {
+    if let Some(selector) = selector {
         let found = sessions
             .into_iter()
-            .find(|f| &f.info.id == id)
-            .ok_or_else(|| format!("no running session {}", id.as_str()))?;
+            .find(|f| {
+                f.info.id.as_str() == selector
+                    || f.info.name.as_ref().is_some_and(|n| n.as_str() == selector)
+            })
+            .ok_or_else(|| format!("no running session {selector}"))?;
         return if found.info.protocol == PROTOCOL {
             Ok(found)
         } else {
             Err(format!(
-                "session {} speaks protocol {}, this server speaks {PROTOCOL}",
-                id.as_str(),
+                "session {selector} speaks protocol {}, this server speaks {PROTOCOL}",
                 found.info.protocol
             ))
         };
@@ -47,13 +49,41 @@ pub fn choose(sessions: Vec<Found>, id: Option<&SessionId>) -> Result<Found, Str
         0 => Err("no running session".to_owned()),
         1 => Ok(mine.remove(0)),
         _ => {
-            let ids: Vec<&str> = mine.iter().map(|f| f.info.id.as_str()).collect();
+            let shown: Vec<String> = mine
+                .iter()
+                .map(|f| match &f.info.name {
+                    Some(name) => format!("{} ({})", f.info.id.as_str(), name.as_str()),
+                    None => f.info.id.as_str().to_owned(),
+                })
+                .collect();
             Err(format!(
                 "several sessions are running ({}), name one",
-                ids.join(", ")
+                shown.join(", ")
             ))
         }
     }
+}
+
+/// Asks the session to accept the client with the pin, and prints the line to connect.
+pub fn attach_session(found: &Found, pin: [u8; 32]) -> ExitCode {
+    match ask(&found.path, &Request::Attach(pin)) {
+        Ok(Reply::Connect(connect)) => {
+            let mut out = std::io::stdout();
+            let _ = out.write_all(format_reply(&Reply::Connect(connect)).as_bytes());
+            let _ = out.flush();
+            ExitCode::SUCCESS
+        }
+        Ok(Reply::Error(text)) => fail(&text),
+        Ok(_) => fail("unexpected reply"),
+        Err(err) => fail(&err.to_string()),
+    }
+}
+
+/// Reads the pin line of the client from stdin.
+pub fn read_pin() -> Result<[u8; 32], String> {
+    let line =
+        read_line_with_timeout(std::io::stdin(), PIN_TIMEOUT).ok_or("no pin line on stdin")?;
+    parse_pin(&line).map_err(|_| "stdin does not hold a valid SSJ PIN line".to_owned())
 }
 
 pub fn run(args: &Args) -> ExitCode {
@@ -69,7 +99,7 @@ pub fn run(args: &Args) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Mode::Kill(id) => match choose(sessions, id.as_ref()) {
+        Mode::Kill(id) => match choose(sessions, id.as_deref()) {
             Err(message) => fail(&message),
             Ok(found) => match ask(&found.path, &Request::Kill) {
                 Ok(Reply::Ok) => {
@@ -81,29 +111,17 @@ pub fn run(args: &Args) -> ExitCode {
                 Err(err) => fail(&err.to_string()),
             },
         },
-        Mode::Attach(id) => {
-            let Some(line) = read_line_with_timeout(std::io::stdin(), PIN_TIMEOUT) else {
-                return fail("no pin line on stdin");
+        Mode::Attach(selector) => {
+            let pin = match read_pin() {
+                Ok(pin) => pin,
+                Err(message) => return fail(&message),
             };
-            let Ok(pin) = parse_pin(&line) else {
-                return fail("stdin does not hold a valid SSJ PIN line");
-            };
-            match choose(sessions, id.as_ref()) {
+            match choose(sessions, selector.as_deref()) {
                 Err(message) => fail(&message),
-                Ok(found) => match ask(&found.path, &Request::Attach(pin)) {
-                    Ok(Reply::Connect(connect)) => {
-                        let mut out = std::io::stdout();
-                        let _ = out.write_all(format_reply(&Reply::Connect(connect)).as_bytes());
-                        let _ = out.flush();
-                        ExitCode::SUCCESS
-                    }
-                    Ok(Reply::Error(text)) => fail(&text),
-                    Ok(_) => fail("unexpected reply"),
-                    Err(err) => fail(&err.to_string()),
-                },
+                Ok(found) => attach_session(&found, pin),
             }
         }
-        Mode::Stdio(id) => match choose(sessions, id.as_ref()) {
+        Mode::Stdio(id) => match choose(sessions, id.as_deref()) {
             Err(message) => fail(&message),
             Ok(found) => stdio(&found.path),
         },

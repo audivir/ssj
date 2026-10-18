@@ -203,13 +203,28 @@ cannot ask for a passphrase (`BatchMode=yes`), so they need an agent or a shared
 (`ControlMaster auto`, `ControlPersist`) when the key has a passphrase. The same holds for the
 reconnects of a session that started over UDP and later fell back.
 
-### Address of the UDP connection
+### Destination, address, and names
 
-The client needs the address of the server for the UDP connection. Its default is the host part
-of the destination, resolved by DNS (again during reconnects, see above). This is wrong when the destination is an alias from the
-`ssh` configuration. `--udp-host` overrides it. A later version should read the `HostName` that
-`ssh -G` reports. A jump host does not help for UDP, because the datagrams do not travel through
-it, so `auto` goes to the TCP transport there.
+The destination is `[user@]host[:port]` or `ssh://[user@]host[:port]`, with IPv6 addresses in
+brackets (`[2001:db8::1]:22`) or bare (`2001:db8::1`, without a port). The text goes to `ssh` and
+to DNS, so only the characters of names and addresses are accepted (letters, digits, `.`, `_`,
+`-`, and for the user `+`), and never a leading `-` or `.`. The client gives `ssh` the user and
+host, and the port as `-p`.
+
+The address of the server for UDP is, in this order: `--udp-host`; the `HostName` that `ssh -G`
+reports for the destination (the destination may be an alias from the `ssh` configuration);
+the host part of the destination. DNS is asked again during reconnects, see above. `ssh -G` also
+shows a jump host or proxy command, which makes `auto` leave out UDP.
+
+A session may have a name (`ssj --name work user@host`): 1 to 32 characters of letters, digits,
+`.`, `_`, `-`, not starting with `.` or `-`. The server keeps it and `ssj list` shows it. Names are
+unique per user and host. The command joins the session of that name if it runs and starts one
+otherwise; the client always begins with an attach, and a session without a shell answers
+`NotStarted`, on which the client sends a start. `ssj attach` and `ssj kill` take an id or a name.
+`auto_attach = true` in `client.toml` (or `--auto-attach`) makes a plain `ssj user@host` join the
+only session that has no client connected, and start a new one when there is none or more than one
+(a session with a client is never taken away). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
+protocol between client and server.
 
 ### Installation of the server
 

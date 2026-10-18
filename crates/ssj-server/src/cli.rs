@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ssj_proto::SessionId;
+use ssj_proto::{SessionName, is_selector};
 
 /// Bounds for the output buffer: a size below the lower one cannot hold a screenful of output, and
 /// the upper one keeps a runaway setting from using all the memory of a shared host.
@@ -22,21 +22,25 @@ pub enum Mode {
     #[default]
     Serve,
     /// Ask a running session to accept a new client. The pin comes on stdin.
-    Attach(Option<SessionId>),
+    Attach(Option<String>),
     /// Print the running sessions.
     List,
     /// Print the version and the protocol.
     Version,
     /// End a running session.
-    Kill(Option<SessionId>),
+    Kill(Option<String>),
     /// Carry the stream of a client over stdin and stdout, for hosts that allow only the `ssh`
     /// channel.
-    Stdio(Option<SessionId>),
+    Stdio(Option<String>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Args {
     pub mode: Mode,
+    /// Name of the session: a new session gets it, and a running one of that name is joined.
+    pub name: Option<SessionName>,
+    /// Join the only session that has no client, if there is one, instead of starting another.
+    pub reuse: bool,
     pub port_range: RangeInclusive<u16>,
     /// `None` waits forever.
     pub detached_timeout: Option<Duration>,
@@ -72,6 +76,8 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             mode: Mode::Serve,
+            name: None,
+            reuse: false,
             port_range: 60000..=61000,
             detached_timeout: None,
             max_detached: None,
@@ -123,6 +129,9 @@ impl Args {
         }
         for arg in &self.shell_args {
             out.extend(["--shell-arg".into(), arg.clone()]);
+        }
+        if let Some(name) = &self.name {
+            out.extend(["--name".into(), name.as_str().into()]);
         }
         if !self.udp {
             out.push("--no-udp".into());
@@ -193,13 +202,15 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
     let mut out = Args::default();
     let mut args = args.into_iter().peekable();
     // an optional session id follows `--attach` and `--kill`
-    let session_id = |args: &mut std::iter::Peekable<_>| -> Result<Option<SessionId>, String> {
+    let session_id = |args: &mut std::iter::Peekable<_>| -> Result<Option<String>, String> {
         let next: Option<&OsString> = args.peek();
         match next.map(|a| a.to_string_lossy().into_owned()) {
             Some(text) if !text.starts_with('-') => {
-                let id = SessionId::parse(&text).ok_or("not a valid session id")?;
+                if !is_selector(&text) {
+                    return Err("not a valid session id or name".to_owned());
+                }
                 args.next();
-                Ok(Some(id))
+                Ok(Some(text))
             }
             _ => Ok(None),
         }
@@ -217,6 +228,14 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--stdio" => {
                 out.mode = Mode::Stdio(session_id(&mut args).map_err(|e| format!("--stdio: {e}"))?)
             }
+            "--name" => {
+                let value = args.next().ok_or("--name needs a value")?;
+                out.name = Some(
+                    SessionName::parse(&value.to_string_lossy())
+                        .ok_or("--name: 1 to 32 characters of letters, digits, '.', '_', '-'")?,
+                );
+            }
+            "--reuse" => out.reuse = true,
             "--no-udp" => out.udp = false,
             "--no-tcp" => out.tcp = false,
             "--list" => out.mode = Mode::List,

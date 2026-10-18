@@ -321,3 +321,122 @@ fn a_runtime_directory_with_a_long_path_still_gets_a_working_socket() {
     assert!(!long.join("ssj").exists());
     run_control(&long, &["--kill"], "");
 }
+
+#[test]
+fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
+    let runtime = runtime_dir();
+    let first = Identity::generate();
+    let launched = launch_with(&runtime, &first, free_range(), "cat", &["--name", "work"]);
+    let id = launched.connect.id.clone();
+
+    let sessions = list(&runtime);
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].name.as_ref().map(|n| n.as_str()), Some("work"));
+
+    // the same command with a new client joins the session instead of starting another
+    let second = Identity::generate();
+    let joined = launch_with(&runtime, &second, free_range(), "cat", &["--name", "work"]);
+    assert_eq!(joined.connect.id, id);
+    assert_ne!(joined.connect.fingerprint, launched.connect.fingerprint);
+    assert_eq!(list(&runtime).len(), 1);
+
+    // another name is another session
+    let other = launch_with(&runtime, &first, free_range(), "cat", &["--name", "play"]);
+    assert_ne!(other.connect.id, id);
+    assert_eq!(list(&runtime).len(), 2);
+
+    // by name: attach, and kill
+    let pin = format_pin(&Identity::generate().fingerprint());
+    let attached = run_control(&runtime, &["--attach", "work"], &pin);
+    assert!(attached.status.success());
+    let line = stdout_of(&attached);
+    assert!(line.contains(id.as_str()), "{line}");
+    let killed = run_control(&runtime, &["--kill", "work"], "");
+    assert!(killed.status.success());
+    wait_gone_one(&runtime, id.as_str());
+    assert_eq!(list(&runtime).len(), 1);
+    let missing = run_control(&runtime, &["--kill", "work"], "");
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no running session work"));
+}
+
+#[test]
+fn several_sessions_are_listed_with_their_names_when_one_is_needed() {
+    let runtime = runtime_dir();
+    launch_with(
+        &runtime,
+        &Identity::generate(),
+        free_range(),
+        "cat",
+        &["--name", "work"],
+    );
+    launch(&runtime, &Identity::generate(), free_range(), "cat");
+    let unnamed = run_control(&runtime, &["--kill"], "");
+    let stderr = String::from_utf8_lossy(&unnamed.stderr);
+    assert!(
+        stderr.contains("several sessions") && stderr.contains("(work)"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn invalid_names_are_refused_before_anything_starts() {
+    let runtime = runtime_dir();
+    let pin = format_pin(&Identity::generate().fingerprint());
+    for name in ["", "-x", "a b", "../x", &"n".repeat(33)] {
+        let (status, stdout, _, _) =
+            run_bootstrap_with(&runtime, &pin, free_range(), "cat", &["--name", name]);
+        assert_eq!(status.code(), Some(2), "{name:?}");
+        assert!(stdout.is_empty());
+    }
+    assert!(list(&runtime).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reuse_joins_the_only_session_without_a_client_and_otherwise_starts_a_new_one() {
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    // nothing runs: a new session starts
+    let first = launch_with(&runtime, &client, free_range(), "cat", &["--reuse"]);
+    assert_eq!(list(&runtime).len(), 1);
+
+    // one session without a client: it is joined
+    let again = launch_with(&runtime, &client, free_range(), "cat", &["--reuse"]);
+    assert_eq!(again.connect.id, first.connect.id);
+    assert_eq!(list(&runtime).len(), 1);
+
+    // a client is connected: the session is not taken away, a new one starts
+    let (mut tx, mut rx, _conn) = open(&client, &again.connect).await.unwrap();
+    send(
+        &mut tx,
+        ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env: Env::default(),
+        }),
+    )
+    .await;
+    send(&mut tx, ClientFrame::Input(b"x\n".to_vec())).await;
+    read_until(&mut rx, |o| o.contains('x')).await;
+    wait_state(&runtime, SessionState::Connected);
+    let third = launch_with(&runtime, &client, free_range(), "cat", &["--reuse"]);
+    assert_ne!(third.connect.id, first.connect.id);
+    assert_eq!(list(&runtime).len(), 2);
+
+    // two candidates would be a guess: a third session starts instead of picking one
+    send(&mut tx, ClientFrame::Detach).await;
+    let start = Instant::now();
+    while list(&runtime)
+        .iter()
+        .any(|s| s.state == SessionState::Connected)
+    {
+        assert!(start.elapsed() < Duration::from_secs(8));
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let fourth = launch_with(&runtime, &client, free_range(), "cat", &["--reuse"]);
+    assert!(
+        ![&first, &third]
+            .iter()
+            .any(|l| l.connect.id == fourth.connect.id)
+    );
+    assert_eq!(list(&runtime).len(), 3);
+}

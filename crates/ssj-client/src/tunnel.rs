@@ -32,6 +32,7 @@ const CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
 fn ssh_base(args: &Args) -> Command {
     let mut ssh = Command::new(&args.ssh_command[0]);
     ssh.args(&args.ssh_command[1..])
+        .args(args.ssh_port_args())
         .args(["-e", "none", "-T", "-o", "BatchMode=yes"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -74,39 +75,60 @@ pub fn tier_order(choice: crate::cli::Transport, jump: bool, udp: bool, tcp: boo
     }
 }
 
-/// Whether the configuration of `ssh` for the destination goes through a jump host or a proxy
-/// command. UDP does not travel through one.
-pub async fn uses_jump_host(args: &Args) -> bool {
+/// What `ssh -G` says about the destination that matters here.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SshConfig {
+    /// The `HostName` after the aliases of the configuration, which is where UDP goes.
+    pub hostname: Option<String>,
+    /// A jump host or a proxy command is in the way. UDP does not travel through one.
+    pub jump: bool,
+}
+
+/// Reads the output of `ssh -G`: lines of a lowercase key and a value.
+pub fn parse_ssh_config(config: &str) -> SshConfig {
+    let mut out = SshConfig::default();
+    for line in config.lines() {
+        let mut words = line.splitn(2, ' ');
+        let (Some(key), Some(value)) = (words.next(), words.next()) else {
+            continue;
+        };
+        let value = value.trim();
+        match key {
+            "hostname" if out.hostname.is_none() && !value.is_empty() => {
+                out.hostname = Some(value.to_owned());
+            }
+            "proxyjump" | "proxycommand" if !value.is_empty() && value != "none" => {
+                out.jump = true;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether the configuration of `ssh` goes through a jump host or a proxy command.
+pub fn jump_in_config(config: &str) -> bool {
+    parse_ssh_config(config).jump
+}
+
+/// Asks `ssh -G` about the destination. `None` if `ssh` cannot say.
+pub async fn ssh_config(args: &Args) -> Option<SshConfig> {
     let mut ssh = Command::new(&args.ssh_command[0]);
     ssh.args(&args.ssh_command[1..])
+        .args(args.ssh_port_args())
         .args(["-G", "--"])
         .arg(&args.destination)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let Ok(child) = ssh.spawn() else {
-        return false;
-    };
+    let child = ssh.spawn().ok()?;
     match timeout(CONFIG_TIMEOUT, child.wait_with_output()).await {
         Ok(Ok(output)) if output.status.success() => {
-            jump_in_config(&String::from_utf8_lossy(&output.stdout))
+            Some(parse_ssh_config(&String::from_utf8_lossy(&output.stdout)))
         }
-        _ => false,
+        _ => None,
     }
-}
-
-/// Looks for a jump host or a proxy command in the output of `ssh -G`.
-pub fn jump_in_config(config: &str) -> bool {
-    config.lines().any(|line| {
-        let mut words = line.splitn(2, ' ');
-        match (words.next(), words.next()) {
-            (Some("proxyjump" | "proxycommand"), Some(value)) => {
-                !value.trim().is_empty() && value.trim() != "none"
-            }
-            _ => false,
-        }
-    })
 }
 
 /// Collects the error output of a process in the background, so that its pipe never fills up and

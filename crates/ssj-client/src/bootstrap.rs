@@ -97,6 +97,7 @@ pub async fn run_remote_command(
     // `-e none`: no escape character, so that a byte of the upload cannot end the command.
     // `-T`: no terminal, so that the output is not altered. `--`: no option injection.
     ssh.args(&args.ssh_command[1..])
+        .args(args.ssh_port_args())
         .args(["-e", "none", "-T", "--"])
         .arg(&args.destination)
         .arg(command)

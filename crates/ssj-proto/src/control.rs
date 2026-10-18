@@ -4,7 +4,7 @@
 //! for any other input.
 
 use crate::bootstrap::{BootstrapError, Connect, format_connect, parse_connect};
-use crate::types::SessionId;
+use crate::types::{SessionId, SessionName};
 
 /// Longest line in either direction.
 pub const MAX_LINE: usize = 512;
@@ -64,6 +64,7 @@ impl SessionState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionInfo {
     pub id: SessionId,
+    pub name: Option<SessionName>,
     pub state: SessionState,
     pub age_secs: u64,
     pub protocol: u16,
@@ -109,11 +110,12 @@ pub fn format_reply(reply: &Reply) -> String {
     match reply {
         Reply::Connect(connect) => format_connect(connect),
         Reply::Info(info) => format!(
-            "SSJ SESSION {} {} {} {}\n",
+            "SSJ SESSION {} {} {} {} {}\n",
             info.id.as_str(),
             info.state.word(),
             info.age_secs,
-            info.protocol
+            info.protocol,
+            info.name.as_ref().map_or("-", SessionName::as_str)
         ),
         Reply::Ok => "OK\n".to_owned(),
         Reply::Error(text) => {
@@ -163,7 +165,7 @@ pub fn parse_reply(line: &[u8]) -> Result<Reply, ControlError> {
         .ok_or(ControlError::Malformed)?
         .split(' ')
         .collect();
-    let [id, state, age, protocol] = fields[..] else {
+    let [id, state, age, protocol, name] = fields[..] else {
         return Err(ControlError::Malformed);
     };
     let plain_number = |s: &str| {
@@ -177,6 +179,10 @@ pub fn parse_reply(line: &[u8]) -> Result<Reply, ControlError> {
     }
     Ok(Reply::Info(SessionInfo {
         id: SessionId::parse(id).ok_or(ControlError::Malformed)?,
+        name: match name {
+            "-" => None,
+            name => Some(SessionName::parse(name).ok_or(ControlError::Malformed)?),
+        },
         state: SessionState::from_word(state).ok_or(ControlError::Malformed)?,
         age_secs: age.parse().map_err(|_| ControlError::Malformed)?,
         protocol: protocol.parse().map_err(|_| ControlError::Malformed)?,

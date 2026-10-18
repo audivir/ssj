@@ -138,9 +138,7 @@ fn default_command_runs_the_installed_file_or_reports_it_missing() {
 #[test]
 fn subcommands_need_a_destination_after_them() {
     use ssj_client::cli::Command;
-    use ssj_proto::SessionId;
-
-    let id = SessionId::parse("abcdef012345").unwrap();
+    let id = "abcdef012345".to_owned();
     let cases: Vec<(Vec<&str>, Command, &str)> = vec![
         (vec!["host"], Command::Connect, "host"),
         (vec!["list"], Command::Connect, "list"),
@@ -158,6 +156,17 @@ fn subcommands_need_a_destination_after_them() {
             Command::Kill(Some(id)),
             "host",
         ),
+        // a name works where an id does
+        (
+            vec!["attach", "work", "host"],
+            Command::Attach(Some("work".to_owned())),
+            "host",
+        ),
+        (
+            vec!["kill", "My-Session", "host"],
+            Command::Kill(Some("My-Session".to_owned())),
+            "host",
+        ),
         (
             vec!["--escape-char", "none", "list", "host"],
             Command::List,
@@ -172,7 +181,7 @@ fn subcommands_need_a_destination_after_them() {
     for bad in [
         vec!["list", "a", "b"],
         vec!["kill", "../../x", "host"],
-        vec!["kill", "ABCDEF012345", "host"],
+        vec!["kill", "a b", "host"],
         vec!["attach", "id", "a", "b"],
         vec!["host", "other"],
     ] {
@@ -230,4 +239,59 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
     set.apply_config(&config);
     assert_eq!(set.transport, Transport::Udp);
     assert!(Config::from_text("transport = \"x\"\n").is_err());
+}
+
+#[test]
+fn the_destination_gives_the_argument_for_ssh_and_its_port() {
+    for (text, target, port) in [
+        ("host", "host", None),
+        ("tim@host:2222", "tim@host", Some(2222)),
+        ("ssh://tim@host:22", "tim@host", Some(22)),
+        ("[2001:db8::1]:2200", "2001:db8::1", Some(2200)),
+        ("tim@2001:db8::1", "tim@2001:db8::1", None),
+    ] {
+        let parsed = args(&[text]).unwrap();
+        assert_eq!(parsed.destination, target, "{text}");
+        assert_eq!(parsed.ssh_port, port, "{text}");
+        assert_eq!(
+            parsed.ssh_port_args(),
+            port.map_or(vec![], |p| vec!["-p".to_owned(), p.to_string()]),
+            "{text}"
+        );
+    }
+    // the host part is what DNS gets
+    assert_eq!(args(&["tim@host:2222"]).unwrap().host(), "host");
+    assert_eq!(args(&["[::1]:22"]).unwrap().host(), "::1");
+    // an option or a command in place of a destination
+    for bad in ["-oProxyCommand=id", "host;id", "a b", "$(id)", "host:0", ""] {
+        assert!(args(&[bad]).is_err(), "{bad:?}");
+    }
+    // an option is no destination even after the other arguments
+    assert!(args(&["--", "-x"]).is_err());
+}
+
+#[test]
+fn a_name_and_auto_attach_are_settings_with_flags_and_a_file_key() {
+    use ssj_client::config::Config;
+
+    let plain = args(&["host"]).unwrap();
+    assert!(plain.name.is_none() && !plain.auto_attach);
+    let named = args(&["--name", "work", "host"]).unwrap();
+    assert_eq!(named.name.as_ref().map(|n| n.as_str()), Some("work"));
+    for bad in ["", "-x", "a b", "a/b", &"n".repeat(33)] {
+        assert!(args(&["--name", bad, "host"]).is_err(), "{bad:?}");
+    }
+    assert!(args(&["--name"]).is_err());
+
+    let config = Config::from_text("auto_attach = true\n").unwrap();
+    let mut open = args(&["host"]).unwrap();
+    open.apply_config(&config);
+    assert!(open.auto_attach);
+    let mut off = args(&["--no-auto-attach", "host"]).unwrap();
+    off.apply_config(&config);
+    assert!(!off.auto_attach);
+    let mut on = args(&["--auto-attach", "host"]).unwrap();
+    on.apply_config(&Config::default());
+    assert!(on.auto_attach);
+    assert!(Config::from_text("auto_attach = \"yes\"\n").is_err());
 }

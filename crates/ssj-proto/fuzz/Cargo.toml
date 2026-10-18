@@ -51,6 +51,13 @@ name = "control"
 path = "fuzz_targets/control.rs"
 test = false
 
+[[bin]]
+bench = false
+doc = false
+name = "destination"
+path = "fuzz_targets/destination.rs"
+test = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 ssj-proto = { path = ".." }
