@@ -3,8 +3,8 @@
 Everything that is decided but not built yet. Finished work is documented in `SPEC.md` and
 `README.md` and is not listed here. An entry is removed when it is implemented and tested.
 
-Order: the bug fixes first (2 and 3), then the features (4 and 5), then packaging, performance, and
-the release (6 to 8).
+Order: the bug fixes first (3), then the features (4 and 5), then packaging, performance, and the
+release (6 to 8).
 
 ## Decisions to record in `SPEC.md`
 
@@ -19,14 +19,6 @@ These were decided and still need to be written into the spec when their phase l
 - The client CLI uses `clap`.
 - Wake and network change use platform APIs behind one trigger, with the clock check as a fallback.
   (Built. The spec describes it already.)
-
-## 2. Client robustness
-
-- Resolve the host again during the reconnect loop, on every third attempt, so that a changed
-  address is found after a move or a long sleep.
-- Debounce window resizes: 50 ms trailing edge in the client, and the server applies only the last
-  size of a burst.
-- Pass `-e none` to every `ssh` the client starts.
 
 ## 3. Server hardening
 

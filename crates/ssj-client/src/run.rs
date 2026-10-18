@@ -1,6 +1,8 @@
 //! The session of the client: connect, pass bytes between terminal and server, and reconnect.
 
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -23,6 +25,7 @@ use tokio::time::{interval, sleep, timeout};
 use crate::bootstrap::{StartError, run_remote, start_server};
 use crate::cli::{Args, Command};
 use crate::config::Config;
+use crate::debounce::Debounce;
 use crate::escape::{Action, EscapeFilter, HELP};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
@@ -35,7 +38,7 @@ const INPUT_BUFFER: usize = 1 << 20;
 /// Time to deliver the last frames before the process ends.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 /// Time for one attempt to connect and to get the welcome.
-const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
+pub const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 /// Pauses between attempts to reconnect, the last one repeats.
 const BACKOFF: [Duration; 5] = [
     Duration::from_millis(250),
@@ -44,6 +47,12 @@ const BACKOFF: [Duration; 5] = [
     Duration::from_secs(2),
     Duration::from_secs(3),
 ];
+/// A new lookup of the server address happens before every attempt after this many failed ones.
+const RESOLVE_EVERY: usize = 3;
+/// Time a lookup may take before the old address is kept.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
+/// A resize is sent when no newer one has come for this long.
+const RESIZE_QUIET: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(1);
 /// The client says that the server is silent after four round trips, but not sooner than this
 /// and not later than the maximum, so that a good link reports a stall quickly and a slow link
@@ -66,11 +75,19 @@ pub enum Finished {
     Detached,
 }
 
+/// Looks up the address of the server again.
+pub type Resolver =
+    Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<SocketAddr, String>> + Send>> + Send>;
+
 /// Everything needed to talk to a started server.
 pub struct Params {
     pub identity: Identity,
     pub connect: Connect,
     pub addr: SocketAddr,
+    /// Finds the address again when it may have changed. `None` keeps `addr` for good.
+    pub resolver: Option<Resolver>,
+    /// Time for one attempt to connect and to get the welcome.
+    pub attempt_timeout: Duration,
     pub env: Env,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
@@ -117,8 +134,7 @@ fn local_env(args: &Args) -> Result<Env, String> {
     Env::new(vars).map_err(|e| format!("the selected environment is not valid: {e:?}"))
 }
 
-async fn resolve(args: &Args, port: u16) -> Result<SocketAddr, String> {
-    let host = args.udp_host.as_deref().unwrap_or_else(|| args.host());
+async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
     let host = host.trim_start_matches('[').trim_end_matches(']');
     tokio::net::lookup_host((host, port))
         .await
@@ -290,7 +306,8 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
         let connect =
             start_or_install(&args, config, &identity.fingerprint(), extra, attach).await?;
         let env = local_env(&args)?;
-        let addr = resolve(&args, connect.port).await?;
+        let host = args.udp_host.as_deref().unwrap_or_else(|| args.host());
+        let addr = resolve(host, connect.port).await?;
         Ok::<_, String>((connect, env, addr))
     }
     .await;
@@ -337,6 +354,18 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
             identity,
             connect,
             addr,
+            resolver: Some(Box::new({
+                let host = args
+                    .udp_host
+                    .clone()
+                    .unwrap_or_else(|| args.host().to_owned());
+                let port = connect.port;
+                move || {
+                    let host = host.clone();
+                    Box::pin(async move { resolve(&host, port).await })
+                }
+            })),
+            attempt_timeout: ATTEMPT_TIMEOUT,
             env,
             escape: args.escape,
             attach,
@@ -531,6 +560,9 @@ impl Client {
                     env: self.params.env.clone(),
                 }
             };
+            if attempts > 0 && attempts.is_multiple_of(RESOLVE_EVERY) {
+                self.refresh_address().await;
+            }
             match self.establish_watched(&hello).await {
                 Attempt::Fatal(message) => {
                     self.clear_status_at_end().await;
@@ -619,6 +651,25 @@ impl Client {
         }
     }
 
+    /// Looks up the address of the server again, since a move or a long sleep may have changed
+    /// it. A failed lookup keeps the old address.
+    async fn refresh_address(&mut self) {
+        let Some(resolver) = self.params.resolver.as_mut() else {
+            return;
+        };
+        let Ok(Ok(addr)) = timeout(RESOLVE_TIMEOUT, resolver()).await else {
+            return;
+        };
+        if addr != self.params.addr {
+            let family_changed = addr.is_ipv4() != self.params.addr.is_ipv4();
+            self.params.addr = addr;
+            if family_changed {
+                // the socket must be of the same family as the address
+                self.rebind();
+            }
+        }
+    }
+
     /// Makes an attempt to connect that a change of the network cuts short and starts again.
     async fn establish_watched(&mut self, hello: &Hello) -> Attempt {
         let mut net = self.net.take();
@@ -637,7 +688,7 @@ impl Client {
 
     /// Connects, sends the hello, and resends the input that the server has not consumed.
     async fn establish(&mut self, hello: &Hello) -> Attempt {
-        let attempt = timeout(ATTEMPT_TIMEOUT, async {
+        let attempt = timeout(self.params.attempt_timeout, async {
             let connecting = self.endpoint.connect(self.params.addr, SERVER_NAME).ok()?;
             let conn = connecting.await.ok()?;
             let (send, recv) = conn.open_bi().await.ok()?;
@@ -800,6 +851,7 @@ impl Client {
         let mut change: Option<(Cause, tokio::time::Instant)> = None;
         // when the server has to have answered after the client moved to a new path
         let mut probe: Option<tokio::time::Instant> = None;
+        let mut resizes = Debounce::new(RESIZE_QUIET);
         loop {
             // two bytes of reserve: the escape can turn one typed byte into two
             let room = self.input.free().saturating_sub(2).min(self.chunk.len());
@@ -853,7 +905,12 @@ impl Client {
                 }
                 Some(size) = self.io.resizes.recv() => {
                     self.size = size;
-                    link.send(ClientFrame::Resize(size));
+                    resizes.push(size, tokio::time::Instant::now());
+                }
+                _ = async { tokio::time::sleep_until(resizes.due().expect("guarded")).await }, if resizes.due().is_some() => {
+                    if let Some(size) = resizes.take(tokio::time::Instant::now()) {
+                        link.send(ClientFrame::Resize(size));
+                    }
                 }
                 cause = next_cause(&mut self.net) => match cause {
                     Some(cause) => {

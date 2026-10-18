@@ -151,6 +151,14 @@ Network changes and wakes from sleep:
   has been compiled but not run. `cargo run -p ssj-client --example netwatch` prints what the
   sources report.
 
+After every third failed attempt the client looks up the address of the server again (2 seconds at
+most), so that a changed address is found after a move or a long sleep. A failed lookup keeps the
+old address. If the address family changes, the UDP socket is replaced by one of the new family.
+
+Window sizes are collected: the client sends a size when no newer one has come for 50 milliseconds
+(trailing edge), and the server applies only the newest size of the messages that are queued, so
+dragging a window edge does not send a signal to the shell for every step.
+
 Status messages go to the window title. The client follows the output of the server just far
 enough to know whether it stopped inside an escape sequence or inside a multi-byte character, and
 holds the message back until it did not (it never changes or drops output). When the message goes,
@@ -162,7 +170,7 @@ stderr as lines.
 ### Address of the UDP connection
 
 The client needs the address of the server for the UDP connection. Its default is the host part
-of the destination, resolved by DNS. This is wrong when the destination is an alias from the
+of the destination, resolved by DNS (again during reconnects, see above). This is wrong when the destination is an alias from the
 `ssh` configuration or when `ssh` goes through a jump host. `--udp-host` overrides it. A later
 version should read the `HostName` that `ssh -G` reports. A jump host does not help for UDP,
 because the datagrams do not travel through it.
@@ -477,7 +485,8 @@ prediction as in `mosh` is out of scope.
 
 ## Security
 
-- Authentication relies on the `ssh` bootstrap. No password or key handling in `ssj`.
+- Authentication relies on the `ssh` bootstrap. No password or key handling in `ssj`. Every `ssh`
+  the client starts gets `-e none`, so that a `~` in the data it sends is never an escape.
 - Each session has its own ephemeral certificates on both sides. Nothing is stored on disk.
 - No secret is printed or logged. Only certificate fingerprints cross the `ssh` channel.
 - The server accepts one client per session and rejects every handshake that does not present

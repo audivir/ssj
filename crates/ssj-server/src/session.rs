@@ -219,6 +219,8 @@ impl<B: Backend> Session<B> {
         let mut active: Option<Active> = None;
         let mut generation = 0u64;
         let mut detached_since = Some(Instant::now());
+        // The newest size of a burst of resizes, applied when no other message is queued.
+        let mut pending_resize: Option<WindowSize> = None;
         // a deliberate detach disables the timeout until the next connection
         let mut detached_on_purpose = false;
         // since when a connected client has left the output buffer full
@@ -277,6 +279,12 @@ impl<B: Backend> Session<B> {
                 (true, Some(limit), Some(since)) => Some(since + limit),
                 _ => None,
             };
+            if control_rx.is_empty()
+                && let Some(size) = pending_resize.take()
+                && let Some(s) = shell.as_ref()
+            {
+                let _ = s.writer.resize(size);
+            }
             let event = {
                 let (reader, writer, exit) = match shell.as_mut() {
                     Some(s) => (
@@ -386,6 +394,8 @@ impl<B: Backend> Session<B> {
                                             }
                                         }
                                     }
+                                    // the size of the hello is newer than any waiting one
+                                    pending_resize = None;
                                     a.hello_done = true;
                                     if let Some(events) = &events {
                                         let _ = events.send(SessionEvent::Connected);
@@ -396,11 +406,7 @@ impl<B: Backend> Session<B> {
                                 }
                             }
                         }
-                        Control::Resize(size) => {
-                            if let Some(s) = shell.as_ref() {
-                                let _ = s.writer.resize(size);
-                            }
-                        }
+                        Control::Resize(size) => pending_resize = Some(size),
                         Control::OutputAck(offset) => {
                             if output.ack(offset).is_err() {
                                 violation(&mut active, &events, ErrorCode::Violation);

@@ -888,3 +888,23 @@ async fn attach_after_forgotten_output_gets_exactly_the_newest_tail() {
     assert_eq!(exit, Some(ExitStatus::Code(0)));
     let _ = std::fs::remove_file(&marker);
 }
+
+#[tokio::test]
+async fn a_burst_of_resizes_leaves_the_last_size_on_the_terminal() {
+    let harness = start(config("read x; stty size; exit 0"));
+    let mut client = harness.connect().await;
+    client.start().await;
+    for rows in 30..80 {
+        client
+            .send(ClientFrame::Resize(WindowSize::new(rows, 100).unwrap()))
+            .await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    client.send(ClientFrame::Input(b"go\n".to_vec())).await;
+    let seen = client.read_until(|s| s.exit.is_some()).await;
+    assert!(
+        contains(&seen.output, "79 100"),
+        "{:?}",
+        String::from_utf8_lossy(&seen.output)
+    );
+}

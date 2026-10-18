@@ -152,6 +152,23 @@ fn shell_command_runs_through_bootstrap_quic_and_pty_and_its_exit_code_is_return
 }
 
 #[test]
+fn ssh_gets_no_escape_character() {
+    let log = fake_ssh("").with_file_name("args.log");
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\n{}",
+        log.display(),
+        &FAKE_SSH["#!/bin/sh\n".len()..]
+    );
+    let output = run_client(&fake_ssh(&script), &["-c", "exit 0"], "");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let args: Vec<&str> = logged.lines().collect();
+    let at = args.iter().position(|a| *a == "-e").expect("-e given");
+    assert_eq!(args[at + 1], "none", "{args:?}");
+    assert!(at < args.iter().position(|a| *a == "--").unwrap());
+}
+
+#[test]
 fn piped_script_runs_in_an_interactive_shell() {
     let output = run_client(
         &fake_ssh(FAKE_SSH),

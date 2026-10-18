@@ -2,13 +2,13 @@
 
 use std::ffi::OsString;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use quinn::Endpoint;
 use ssj_client::netwatch::Cause;
-use ssj_client::run::{Finished, Io, Params, run_session};
+use ssj_client::run::{Finished, Io, Params, Resolver, run_session};
 use ssj_client::status::Status;
 use ssj_net::{Identity, quic_server, server_tls};
 use ssj_proto::bootstrap::Connect;
@@ -141,6 +141,7 @@ struct Terminal {
     seen: String,
     /// Sends a change of the network to the client.
     net: mpsc::UnboundedSender<Cause>,
+    resizes: mpsc::UnboundedSender<WindowSize>,
 }
 
 fn start_client(server: &Server, identity: Identity) -> Terminal {
@@ -157,15 +158,24 @@ fn start_client_with(
     addr: SocketAddr,
     attach: bool,
 ) -> Terminal {
+    start_client_full(server, identity, addr, attach, None, Duration::from_secs(8))
+}
+
+fn start_client_full(
+    server: &Server,
+    identity: Identity,
+    addr: SocketAddr,
+    attach: bool,
+    resolver: Option<Resolver>,
+    attempt_timeout: Duration,
+) -> Terminal {
     let (typed_tx, typed_rx) = tokio::io::duplex(1 << 20);
     let (shown_tx, shown_rx) = tokio::io::duplex(1 << 20);
     let (_, typed) = tokio::io::split(typed_tx);
     let (typed_rx, _) = tokio::io::split(typed_rx);
     let (_, shown_tx) = tokio::io::split(shown_tx);
     let (shown, _) = tokio::io::split(shown_rx);
-    let (_resizes_tx, resizes) = mpsc::unbounded_channel();
-    // keep the sender alive for the whole run
-    std::mem::forget(_resizes_tx);
+    let (resizes_tx, resizes) = mpsc::unbounded_channel();
     let status = Arc::new(Mutex::new(Vec::new()));
     let (net, net_rx) = mpsc::unbounded_channel();
     let io = Io {
@@ -183,6 +193,8 @@ fn start_client_with(
             fingerprint: server.fingerprint,
         },
         addr,
+        resolver,
+        attempt_timeout,
         env: Env::default(),
         escape: Some(b'~'),
         attach,
@@ -195,6 +207,7 @@ fn start_client_with(
         client,
         seen: String::new(),
         net,
+        resizes: resizes_tx,
     }
 }
 
@@ -584,7 +597,8 @@ async fn silence_after_a_change_starts_a_new_connection_quickly_and_loses_nothin
         let mut terminal = start_client_at(&server, client_id, proxy.addr);
         terminal.type_line("one").await;
         terminal.wait_for("got:one").await;
-        let first = live_connection(&mut server).await.stable_id();
+        // held until the end: the id comes from an address, which a new connection could reuse
+        let first = live_connection(&mut server).await;
 
         // the path is dead and nothing tells the connection so
         proxy.drop_replies.store(true, Ordering::Relaxed);
@@ -609,7 +623,7 @@ async fn silence_after_a_change_starts_a_new_connection_quickly_and_loses_nothin
         assert_eq!(terminal.got_lines(), ["got:one", "got:two"], "{cause:?}");
         assert_ne!(
             live_connection(&mut server).await.stable_id(),
-            first,
+            first.stable_id(),
             "{cause:?}: it must be a new connection"
         );
     }
@@ -787,4 +801,119 @@ async fn output_dropped_while_away_is_reported_exactly_once_and_the_rest_is_inta
         .unwrap();
     assert_eq!(finished, Ok(Finished::Exited(0)));
     let _ = std::fs::remove_file(&marker);
+}
+
+#[tokio::test]
+async fn the_address_is_looked_up_again_after_every_third_failed_attempt() {
+    let client_id = Identity::generate();
+    let mut server = start_server(ECHO_LINES, client_id.fingerprint());
+    let old = start_proxy(server.addr).await;
+    let new = start_proxy(server.addr).await;
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let resolver: Resolver = Box::new({
+        let (lookups, new_addr) = (lookups.clone(), new.addr);
+        move || {
+            lookups.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async move { Ok(new_addr) })
+        }
+    });
+    let mut terminal = start_client_full(
+        &server,
+        client_id,
+        old.addr,
+        false,
+        Some(resolver),
+        Duration::from_millis(400),
+    );
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+
+    // the connection ends, and the old address stops answering from then on
+    live_connection(&mut server)
+        .await
+        .close(9u8.into(), b"killed by the test");
+    sleep(Duration::from_millis(100)).await;
+    old.drop_replies.store(true, Ordering::Relaxed);
+    terminal.type_line("after").await;
+    terminal.wait_for("got:after").await;
+    terminal.settle().await;
+
+    assert_eq!(terminal.got_lines(), ["got:before", "got:after"]);
+    // exactly after the third failure, not earlier and not at every attempt
+    assert_eq!(lookups.load(Ordering::Relaxed), 1);
+    let last_attempt = terminal
+        .status()
+        .iter()
+        .filter_map(|s| s.split("attempt ").nth(1))
+        .filter_map(|n| n.trim_end_matches(')').parse::<usize>().ok())
+        .max();
+    assert_eq!(last_attempt, Some(3), "{:?}", terminal.status());
+}
+
+#[tokio::test]
+async fn a_failed_lookup_keeps_the_old_address() {
+    let client_id = Identity::generate();
+    let mut server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_proxy(server.addr).await;
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let resolver: Resolver = Box::new({
+        let lookups = lookups.clone();
+        move || {
+            lookups.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Err("no such host".to_owned()) })
+        }
+    });
+    let mut terminal = start_client_full(
+        &server,
+        client_id,
+        proxy.addr,
+        false,
+        Some(resolver),
+        Duration::from_millis(400),
+    );
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+
+    live_connection(&mut server)
+        .await
+        .close(9u8.into(), b"killed by the test");
+    sleep(Duration::from_millis(100)).await;
+    proxy.drop_replies.store(true, Ordering::Relaxed);
+    // three attempts fail, then the lookup fails, and the old address works again
+    assert!(
+        wait_until(Duration::from_secs(10), || lookups.load(Ordering::Relaxed)
+            >= 1)
+        .await
+        .is_some()
+    );
+    proxy.drop_replies.store(false, Ordering::Relaxed);
+    terminal.type_line("after").await;
+    terminal.wait_for("got:after").await;
+}
+
+#[tokio::test]
+async fn a_burst_of_resizes_reaches_the_shell_as_the_last_size() {
+    let client_id = Identity::generate();
+    let server = start_server(
+        "trap 'stty size' WINCH; echo ready; while read l; do echo \"got:$l\"; done",
+        client_id.fingerprint(),
+    );
+    let mut terminal = start_client(&server, client_id);
+    terminal.wait_for("ready").await;
+    for rows in 30..70 {
+        terminal
+            .resizes
+            .send(WindowSize::new(rows, 100).unwrap())
+            .unwrap();
+    }
+    terminal.type_line("wake").await;
+    terminal.wait_for("69 100").await;
+    terminal.settle().await;
+    // the sizes in between did not each reach the terminal of the shell
+    let reached = terminal.seen.matches(" 100").count();
+    assert!(
+        reached < 10,
+        "{reached} resizes reached the shell: {:?}",
+        terminal.seen
+    );
 }

@@ -94,9 +94,10 @@ pub async fn run_remote_command(
         return Err("the destination must not start with '-'".to_owned());
     }
     let mut ssh = Command::new(&args.ssh_command[0]);
+    // `-e none`: no escape character, so that a byte of the upload cannot end the command.
     // `-T`: no terminal, so that the output is not altered. `--`: no option injection.
     ssh.args(&args.ssh_command[1..])
-        .args(["-T", "--"])
+        .args(["-e", "none", "-T", "--"])
         .arg(&args.destination)
         .arg(command)
         .stdin(Stdio::piped())
