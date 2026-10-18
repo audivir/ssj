@@ -161,12 +161,9 @@ fn config_file_is_validated_and_the_server_refuses_a_bad_one() {
             .spawn_locked()
             .unwrap();
         let pin = format_pin(&Identity::generate().fingerprint());
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(pin.as_bytes())
-            .unwrap();
+        // a server that refuses its config exits without reading the pin, and the write then
+        // fails with a broken pipe, which is the very thing that is tested
+        let _ = child.stdin.take().unwrap().write_all(pin.as_bytes());
         child.wait_with_output().unwrap()
     };
 

@@ -1410,7 +1410,11 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
         .args(["--detached-timeout", "5", "--server-arg", "--max-detached"])
         .args(["--server-arg", "30", "--server-arg", "--shell"])
         .args(["--server-arg", "/bin/sh", "--server-arg", "--shell-arg"])
-        .args(["--server-arg", "-i", "me@localhost"])
+        // `cat` on the terminal: the line discipline of the server echoes every key at once, the
+        // same on every system, where an interactive shell draws its own line (and `ash` asks the
+        // terminal for the cursor position, which local echo takes as a reason not to predict)
+        .args(["--server-arg", "-c", "--server-arg", "--shell-arg"])
+        .args(["--server-arg", "echo ready; cat", "me@localhost"])
         .spawn(pts)
         .unwrap();
     let fd: std::os::fd::OwnedFd = pty.into();
@@ -1436,16 +1440,17 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
             }
         }
     };
-    wait_for(&mut seen, "$|# ");
-    // a first line with no prediction, so that the prompt is known, then a typed one
-    for line in ["true\n", "echo do$((40+2))ne\n"] {
+    wait_for(&mut seen, "ready");
+    // the first key of a line is not predicted, the rest are
+    for line in ["abcdefgh\n", "ijklmnop\n"] {
         for byte in line.bytes() {
             pty.write_all(&[byte]).unwrap();
             std::thread::sleep(Duration::from_millis(40));
         }
     }
-    wait_for(&mut seen, "do42ne");
-    pty.write_all(b"exit 0\n").unwrap();
+    // each line comes back twice: echoed key by key by the terminal, then printed whole by `cat`
+    wait_for(&mut seen, "\r\nijklmnop\r\n");
+    pty.write_all(&[4]).unwrap();
     let start = Instant::now();
     while child.try_wait().unwrap().is_none() {
         assert!(
