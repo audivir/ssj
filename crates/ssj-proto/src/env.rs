@@ -21,8 +21,11 @@ impl Env {
     pub const MAX_NAME: usize = 256;
     pub const MAX_VALUE: usize = 8 * 1024;
     pub const MAX_TOTAL: usize = 64 * 1024;
+    /// Longest value of `TERM`, `LANG`, and `LC_*`.
+    pub const MAX_PLAIN_VALUE: usize = 64;
 
-    /// Checks count, sizes, names (`[A-Za-z_][A-Za-z0-9_]*`), and values (no NUL byte).
+    /// Checks count, sizes, names (`[A-Za-z_][A-Za-z0-9_]*`), and values (no NUL byte; for `TERM`,
+    /// `LANG`, and `LC_*` only the characters of terminal and locale names).
     pub fn new(vars: Vec<(String, String)>) -> Result<Self, EnvError> {
         if vars.len() > Self::MAX_VARS {
             return Err(EnvError::TooMany);
@@ -40,7 +43,7 @@ impl Env {
             if !valid_name(name) {
                 return Err(EnvError::InvalidName);
             }
-            if value.contains('\0') {
+            if value.contains('\0') || !plain_value_ok(name, value) {
                 return Err(EnvError::InvalidValue);
             }
             if !seen.insert(name.as_str()) {
@@ -71,4 +74,18 @@ fn valid_name(name: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Programs use `TERM` and the locale variables to build file names (terminfo, locale archives),
+/// so a value with a path separator or a `..` could point them at files of the attacker. Real
+/// values are like `xterm-256color` and `de_DE.UTF-8@euro`.
+fn plain_value_ok(name: &str, value: &str) -> bool {
+    if name != "TERM" && name != "LANG" && !name.starts_with("LC_") {
+        return true;
+    }
+    value.len() <= Env::MAX_PLAIN_VALUE
+        && !value.starts_with('.')
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'@' | b'-'))
 }

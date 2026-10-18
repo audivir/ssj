@@ -68,3 +68,46 @@ fn values_may_not_contain_nul_and_names_may_not_repeat() {
         Err(EnvError::Duplicate)
     );
 }
+
+#[test]
+fn terminal_and_locale_values_are_plain_names() {
+    for (name, value) in [
+        ("TERM", "xterm-256color"),
+        ("TERM", "xterm-ghostty"),
+        ("TERM", ""),
+        ("LANG", "de_DE.UTF-8@euro"),
+        ("LC_ALL", "C.UTF-8"),
+        ("LC_TIME", "en_GB"),
+        // other variables are not restricted
+        ("EDITOR", "/usr/bin/vi --wait"),
+    ] {
+        assert!(Env::new(vec![var(name, value)]).is_ok(), "{name}={value}");
+    }
+    let long = "a".repeat(Env::MAX_PLAIN_VALUE + 1);
+    for (name, value) in [
+        ("TERM", "../../tmp/evil"),
+        ("TERM", "x/y"),
+        ("TERM", "a\\b"),
+        ("TERM", ".."),
+        ("TERM", "x y"),
+        ("TERM", "x\n"),
+        ("TERM", "\u{e4}"),
+        ("LANG", "/tmp/locale"),
+        ("LC_ALL", "$(id)"),
+        ("LC_MESSAGES", &long),
+    ] {
+        assert_eq!(
+            Env::new(vec![var(name, value)]),
+            Err(EnvError::InvalidValue),
+            "{name}={value}"
+        );
+    }
+    // the longest allowed value
+    let longest = "a".repeat(Env::MAX_PLAIN_VALUE);
+    assert!(Env::new(vec![var("TERM", &longest)]).is_ok());
+    // one bad variable rejects the whole set
+    assert_eq!(
+        Env::new(vec![var("COLORTERM", "truecolor"), var("TERM", "a/b")]),
+        Err(EnvError::InvalidValue)
+    );
+}
