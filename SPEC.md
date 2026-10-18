@@ -257,6 +257,37 @@ protocol between client and server.
   `SHA256SUMS` of the binaries. The release also lists the server files alone, a `SHA256SUMS` of
   everything, and the build provenance attestation for all of them.
 
+### Benchmark
+
+`bench/bench.py` (Python 3, standard library only) runs `ssh` and `ssj` over UDP, TCP, and the
+`ssh` channel against one host, each client on a pseudo terminal as a user runs it:
+
+- bulk output: `dd | tr` of 256 MiB by default, in MB/s, the best of three rounds;
+- keystroke latency: one byte at a time into a raw `cat`, the median, 95th percentile, and maximum
+  of the round trip;
+- a paste of 8 MiB into `head -c`, in seconds.
+
+`--netem "delay 40ms loss 1%"` wraps the run in `tc qdisc add dev lo root netem ...` (Linux, root),
+which hits `ssh` and `ssj` alike when the host is `localhost`. `--server` picks the server file,
+which is how the glibc and the musl build are compared. The workflow `bench.yml` runs both builds
+with and without `netem` on a GitHub runner against its own `sshd`, by hand. Nothing is gated yet.
+
+First numbers (macOS 26 on Apple silicon, `localhost`, release build, OpenSSH with a zsh login
+shell, 64 MiB bulk, 8 MiB paste, 200 samples):
+
+| client | bulk MB/s | median ms | p95 ms | paste s |
+| ------ | --------- | --------- | ------ | ------- |
+| ssh | 24.1 | 9.31 | 14.27 | 1.25 |
+| udp | 20.5 | 0.47 | 0.62 | 1.46 |
+| tcp | 20.0 | 0.57 | 0.76 | 1.61 |
+| stdio | 19.3 | 0.58 | 0.69 | 1.58 |
+
+Reading them: the latency of `ssh` is dominated by its keystroke timing obfuscation (OpenSSH 9.5
+and later sends keystrokes in 20 ms ticks while typing), so the comparison there says little about
+the transport. Bulk output and the paste are about 15 percent slower than `ssh` on this loopback;
+the source of the difference has not been looked for. These are one machine and one run each, not
+a baseline.
+
 ### Installation of the server
 
 The server needs no root: it is one file in the home directory of the user.

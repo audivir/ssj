@@ -7,12 +7,13 @@ Order: performance (2), then the release (3).
 
 ## 2. Performance
 
-- Benchmark harness (an ignored test and a CI job) that compares `ssh`, `ssj` over UDP, and `ssj`
-  over TCP: bulk output, keystroke latency, and the 8 MiB paste under `tc netem` (Linux only).
-- Run it on the glibc and musl builds and choose the default build for automatic installs from the
-  numbers.
-- First run without gates to see real numbers. Then gate on them (the proposal suggested 5 percent
-  for throughput and 1 ms for latency, which nobody has measured).
+- Run `bench.yml` once on GitHub (it has never run). Compare the glibc and musl builds of the
+  server, with and without `netem`, and choose the default build for automatic installs from the
+  numbers. `SPEC.md` still says musl.
+- Find why bulk output and the paste are about 15 percent slower than `ssh` on loopback (a profile
+  of the client and the server under the bulk case is the first step).
+- Then gate on the numbers (the proposal suggested 5 percent for throughput and 1 ms for latency,
+  which only make sense after the first point).
 
 ## 3. Release
 

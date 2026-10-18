@@ -177,6 +177,12 @@ keep more.
 `accept_env` can only be set in the file, never on the command line, because the command line of
 the server is built by the client.
 
+### Benchmark
+
+`bench/bench.py --host user@host` compares `ssh` with `ssj` over UDP, TCP, and the `ssh` channel:
+bulk output, keystroke latency, and an 8 MiB paste. It needs Python 3 and the release builds in
+`target/release`. See the specification for the options and the first numbers.
+
 ### Files
 
 Paths follow the XDG Base Directory specification: `$XDG_CONFIG_HOME/ssj/` (`client.toml`,
