@@ -133,7 +133,7 @@ async fn the_macos_source_starts_and_stays_quiet_without_a_change() {
 }
 
 // The state of the network cannot be changed without privileges, so this one is run by hand:
-// `cargo test -p ssj-client --test netwatch -- --ignored --nocapture`, then switch Wi-Fi off.
+// `cargo nextest run -p ssj-client --test netwatch --run-ignored only --no-capture`, then switch Wi-Fi off.
 #[cfg(all(target_os = "macos", feature = "netwatch"))]
 #[tokio::test]
 #[ignore = "needs a real change of the network"]

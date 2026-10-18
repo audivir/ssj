@@ -71,10 +71,16 @@ fn free_port() -> u16 {
     let base = 20_000 + (std::process::id() % 400) as u16 * 25;
     loop {
         let port = base + NEXT.fetch_add(1, Ordering::Relaxed) % 5_000;
-        // free on both families, since the server listens on a dual stack socket
-        let v4 = UdpSocket::bind(("0.0.0.0", port));
-        let v6 = UdpSocket::bind(("::", port));
-        if v4.is_ok() && v6.is_ok() {
+        // free on both families, since the server listens on a dual stack socket. Each socket is
+        // closed before the next is tried: on Linux a `::` socket cannot share the port with an
+        // open `0.0.0.0` one, and on macOS it can.
+        let v4_free = UdpSocket::bind(("0.0.0.0", port)).is_ok();
+        // a host without IPv6 (a container) has nothing to conflict with on that family
+        let v6_free = match UdpSocket::bind(("::", port)) {
+            Ok(_) => true,
+            Err(err) => err.kind() != std::io::ErrorKind::AddrInUse,
+        };
+        if v4_free && v6_free {
             return port;
         }
     }
@@ -285,9 +291,10 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
         }
     });
     let mut seen = String::new();
+    // alternatives are separated by `|`: the prompt is `$ ` for a user and `# ` for root
     let mut wait_for = |needle: &str| {
         let deadline = Instant::now() + Duration::from_secs(20);
-        while !seen.contains(needle) {
+        while !needle.split('|').any(|n| seen.contains(n)) {
             let left = deadline.saturating_duration_since(Instant::now());
             match rx.recv_timeout(left) {
                 Ok(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
@@ -296,7 +303,7 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
         }
     };
 
-    wait_for("$");
+    wait_for("$|# ");
     pty.write_all(b"stty size\n").unwrap();
     wait_for("31 97");
     pty.write_all(b"exit 7\n").unwrap();
@@ -1421,7 +1428,7 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
     let mut seen = String::new();
     let wait_for = |seen: &mut String, needle: &str| {
         let deadline = Instant::now() + Duration::from_secs(20);
-        while !seen.contains(needle) {
+        while !needle.split('|').any(|n| seen.contains(n)) {
             let left = deadline.saturating_duration_since(Instant::now());
             match rx.recv_timeout(left) {
                 Ok(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
@@ -1429,7 +1436,7 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
             }
         }
     };
-    wait_for(&mut seen, "$");
+    wait_for(&mut seen, "$|# ");
     // a first line with no prediction, so that the prompt is known, then a typed one
     for line in ["true\n", "echo do$((40+2))ne\n"] {
         for byte in line.bytes() {

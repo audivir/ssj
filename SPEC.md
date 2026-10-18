@@ -151,7 +151,7 @@ Network changes and wakes from sleep:
   ends that attempt and starts a new one on the new socket.
 - No source can be tested without a real change of the network. The clock watch, the collecting,
   and the reaction are tested with injected causes. The macOS source starts in a test, and
-  `cargo test -p ssj-client --test netwatch -- --ignored` waits for a real change. The Linux source
+  `cargo nextest run -p ssj-client --test netwatch --run-ignored only` waits for a real change. The Linux source
   has been compiled but not run. `cargo run -p ssj-client --example netwatch` prints what the
   sources report.
 
@@ -712,7 +712,7 @@ Session and shell (server):
   The server ignores `SIGHUP` and calls `setsid`. Both server processes (the one `ssh` starts and
   the daemon) close every descriptor above 2 first thing, from the list in `/proc/self/fd` or
   `/dev/fd`, or by counting up to the limit of open files (at most 65536) when there is no list.
-  This is the only `unsafe` call of the workspace, and it is safe because nothing owns a descriptor
+  This is the only place with `unsafe` in the workspace, and it is sound because nothing owns a descriptor
   yet. So neither the daemon nor the shell holds a socket or file of an unusual parent.
 - Log output goes to stderr only until detach, and afterwards nowhere unless a log file in the state
   directory is configured. Terminal content is never logged.

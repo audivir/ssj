@@ -69,10 +69,16 @@ pub fn free_port() -> u16 {
     let base = 20_000 + (std::process::id() % 400) as u16 * 25;
     loop {
         let port = base + NEXT.fetch_add(1, Ordering::Relaxed) % 5_000;
-        // free on both families, since the server listens on a dual stack socket
-        let v4 = UdpSocket::bind(("0.0.0.0", port));
-        let v6 = UdpSocket::bind(("::", port));
-        if v4.is_ok() && v6.is_ok() {
+        // free on both families, since the server listens on a dual stack socket. Each socket is
+        // closed before the next is tried: on Linux a `::` socket cannot share the port with an
+        // open `0.0.0.0` one, and on macOS it can.
+        let v4_free = UdpSocket::bind(("0.0.0.0", port)).is_ok();
+        // a host without IPv6 (a container) has nothing to conflict with on that family
+        let v6_free = match UdpSocket::bind(("::", port)) {
+            Ok(_) => true,
+            Err(err) => err.kind() != std::io::ErrorKind::AddrInUse,
+        };
+        if v4_free && v6_free {
             return port;
         }
     }

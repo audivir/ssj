@@ -88,7 +88,11 @@ jobs:
       - name: Install musl-tools
         if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo test --workspace --all-features --target ${{ matrix.target }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - run: cargo nextest run --profile ci --workspace --all-features --target ${{ matrix.target }}
       - name: Check release build with cargo-zigbuild
         if: matrix.zig
         run: cargo zigbuild --release --workspace --target ${{ matrix.target }}

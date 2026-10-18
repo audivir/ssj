@@ -1,0 +1,12 @@
+# The tests start real programs and wait for real clocks, so a test that hangs must be stopped
+# and named, not waited for.
+[profile.default]
+fail-fast = false
+# a test that runs for 30 seconds is reported as slow, and one that runs for 2 minutes is killed
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.ci]
+# a second try shows a test that is flaky, and the report lists it
+retries = 1
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }

@@ -2,7 +2,7 @@
 
 use std::fs::File;
 use std::io::{self, Read};
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd};
 
 use rustix::process::{Resource, Rlimit, setrlimit, setsid};
 
@@ -62,10 +62,16 @@ pub fn close_inherited_descriptors() {
     });
     for fd in candidates {
         // SAFETY: nothing else in this process owns a descriptor at this point (the function runs
-        // first in `main`, and the handle of the directory listing is gone), so closing by number
-        // cannot pull a descriptor from under a live `File` or socket. A number that is not open
-        // (the listing's own handle) fails with EBADF, which `close` ignores.
-        unsafe { rustix::io::close(fd) };
+        // first in `main`, and the handle of the directory listing is gone), so a number that is
+        // open belongs to nobody and can be closed without pulling it from under a live `File` or
+        // socket. The borrow only asks the kernel whether the number is open. A number that is
+        // not open (the listing's own handle) is skipped, since `close` treats it as a bug and
+        // panics in debug builds.
+        unsafe {
+            if rustix::io::fcntl_getfd(BorrowedFd::borrow_raw(fd)).is_ok() {
+                rustix::io::close(fd);
+            }
+        }
     }
 }
 

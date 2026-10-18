@@ -15,24 +15,21 @@ fn descriptors_above_2_are_closed_and_the_standard_ones_stay() {
     if std::env::var_os(CHILD).is_some() {
         assert!(open(0) && open(1) && open(2));
         assert!(open(9), "the test setup did not leave 9 open");
-        assert!(open(10));
+        assert!(open(8));
         close_inherited_descriptors();
-        assert!(
-            !open(9) && !open(10),
-            "inherited descriptors are still open"
-        );
+        assert!(!open(9) && !open(8), "inherited descriptors are still open");
         assert!(
             open(0) && open(1) && open(2),
             "a standard descriptor was closed"
         );
         return;
     }
-    // a shell opens two files on high descriptors and runs this test again
+    // a shell opens two files on descriptors above 2 and runs this test again
     let exe = std::env::current_exe().unwrap();
     let status = Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "exec 9</etc/hosts 10</etc/hosts; exec '{}' --exact \
+            "exec 9</etc/hosts; exec 8</etc/hosts; exec '{}' --exact \
              descriptors_above_2_are_closed_and_the_standard_ones_stay --nocapture",
             exe.display()
         ))

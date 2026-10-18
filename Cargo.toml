@@ -18,6 +18,11 @@ ssj-server = { path = "crates/ssj-server", version = "0.1.0" }
 # `deny` and not `forbid`, so that the few places that need `unsafe` can allow it with a reason
 unsafe_code = "deny"
 
+# Linux keeps the debug information in the binary, and a full one makes the server file larger than
+# the installer accepts when a test uploads it
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 debug = false
 lto = "fat"

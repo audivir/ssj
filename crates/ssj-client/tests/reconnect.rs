@@ -1062,7 +1062,7 @@ async fn a_failed_lookup_keeps_the_old_address() {
 async fn a_burst_of_resizes_reaches_the_shell_as_the_last_size() {
     let client_id = Identity::generate();
     let server = start_server(
-        "trap 'stty size' WINCH; echo ready; while read l; do echo \"got:$l\"; done",
+        "trap 'stty size' WINCH; echo ready; while :; do read l; echo \"got:$l\"; done",
         client_id.fingerprint(),
     );
     let mut terminal = start_client(&server, client_id);

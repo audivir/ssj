@@ -204,6 +204,14 @@ the server is built by the client.
 bulk output, keystroke latency, and an 8 MiB paste. It needs Python 3 and the release builds in
 `target/release`. See the specification for the options and the first numbers.
 
+### Tests
+
+The tests start real programs and wait for real clocks, so they run with
+[`cargo nextest`](https://nexte.st) (`cargo nextest run --workspace`, about 25 seconds on a laptop).
+It runs each test in its own process and stops and names a test that hangs. The settings are in
+`.config/nextest.toml`; CI uses the `ci` profile, which retries a failed test once and lists it as
+flaky. `cargo test` works too, but it does not stop a hanging test.
+
 ### Files
 
 Paths follow the XDG Base Directory specification: `$XDG_CONFIG_HOME/ssj/` (`client.toml`,

@@ -154,12 +154,16 @@ async fn new_connection_takes_over_while_old_one_is_still_open() {
         .unwrap();
 
     assert_eq!([prefix, rest].concat(), payload());
-    let ConnectionError::ApplicationClosed(closed) =
-        timeout(Duration::from_secs(5), first.closed())
-            .await
-            .unwrap()
-    else {
-        panic!("old connection must be closed by the server");
-    };
-    assert_eq!(closed.reason.as_ref(), b"replaced");
+    let error = timeout(Duration::from_secs(5), first.closed())
+        .await
+        .unwrap();
+    // The server's close frame can be overtaken by packets of the old client, which the endpoint
+    // then answers with a stateless reset. Both mean that the server ended the connection.
+    match error {
+        ConnectionError::ApplicationClosed(closed) => {
+            assert_eq!(closed.reason.as_ref(), b"replaced");
+        }
+        ConnectionError::Reset => {}
+        other => panic!("old connection must be closed by the server, got {other:?}"),
+    }
 }
