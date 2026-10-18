@@ -9,9 +9,11 @@ We want a secure shell (ssh) alternative with the following properties.
    works, so the stream is forwarded as bytes and not as synchronized screen state.
 1. No root on the remote server: no privileged port, no daemon, no setuid binary.
 1. UDP transport for speed.
-1. Written in memory safe Rust, with `#![forbid(unsafe_code)]` in every crate of the workspace.
-   Dependencies such as `ring`, `rustix`, and `tokio` contain `unsafe` code, which is audited
-   through the checks listed under Security and not avoided.
+1. Written in memory safe Rust. The workspace lint `unsafe_code` is `deny`, so `unsafe` needs an
+   explicit `#[allow(unsafe_code)]` with a safety comment. There is one such place:
+   `daemon::close_inherited_descriptors`, which calls `rustix::io::close`. Dependencies such as
+   `ring`, `rustix`, and `tokio` contain `unsafe` code, which is audited through the checks listed
+   under Security and not avoided.
 1. No new security vulnerabilities: no home-made cryptography, and no weaker trust model than `ssh`.
 
 ## Architecture
@@ -489,7 +491,7 @@ Holder backend (`--persist holder`), added as a second implementation of `Backen
 Optional, later: on a binary upgrade the server re-executes itself and passes the PTY file
 descriptor to the new process. This is a cheaper variant of the holder, for upgrades only and
 not for crashes. Rebuilding a PTY from a file descriptor needs `unsafe` in `pty-process`
-(`Pty::from_fd`), which `forbid(unsafe_code)` rules out in our crates. The holder backend does
+(`Pty::from_fd`), which `deny(unsafe_code)` rules out in our crates without a reason. The holder backend does
 not have this problem, so it is preferred.
 
 ### Session core (server)
@@ -667,9 +669,11 @@ Session and shell (server):
   their key for every reconnect until the session ends, and the copy inside the TLS library
   cannot be reached.
 - Detach redirects stdio to `/dev/null`, so the `ssh` channel closes and its output cannot leak.
-  The server ignores `SIGHUP` and calls `setsid`. Other inherited file descriptors stay open
-  (closing arbitrary descriptors needs `unsafe`). `sshd` hands over only descriptors 0 to 2, and
-  Rust marks its own descriptors as close-on-exec, so this matters only for an unusual parent.
+  The server ignores `SIGHUP` and calls `setsid`. Both server processes (the one `ssh` starts and
+  the daemon) close every descriptor above 2 first thing, from the list in `/proc/self/fd` or
+  `/dev/fd`, or by counting up to the limit of open files (at most 65536) when there is no list.
+  This is the only `unsafe` call of the workspace, and it is safe because nothing owns a descriptor
+  yet. So neither the daemon nor the shell holds a socket or file of an unusual parent.
 - Log output goes to stderr only until detach, and afterwards nowhere unless a log file in the state
   directory is configured. Terminal content is never logged.
 - Port selection: random free port from the range, retried on conflict. On shared hosts the range

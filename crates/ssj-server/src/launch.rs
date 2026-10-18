@@ -92,6 +92,7 @@ fn existing_session(args: &Args) -> Result<Option<control_socket::Found>, String
 
 /// The process started by `ssh`.
 pub fn run_parent(args: &Args) -> ExitCode {
+    daemon::close_inherited_descriptors();
     // the daemon gets the resolved values on its command line, so both agree
     let mut args = args.clone();
     match Config::load() {
@@ -175,6 +176,7 @@ fn base_env() -> Vec<(OsString, OsString)> {
 
 /// The daemon: runs the session until it ends.
 pub fn run_child(mut args: Args) -> ExitCode {
+    daemon::close_inherited_descriptors();
     let config = match Config::load() {
         Ok(config) => config,
         Err(message) => return fail(&message, 2),
