@@ -3,8 +3,7 @@
 Everything that is decided but not built yet. Finished work is documented in `SPEC.md` and
 `README.md` and is not listed here. An entry is removed when it is implemented and tested.
 
-Order: the bug fixes first (3), then the features (4 and 5), then packaging, performance, and the
-release (6 to 8).
+Order: the features first (2 and 3), then packaging, performance, and the release (4 to 6).
 
 ## Decisions to record in `SPEC.md`
 
@@ -15,20 +14,7 @@ These were decided and still need to be written into the spec when their phase l
   bump.
 - The client CLI uses `clap`.
 
-## 3. Server hardening
-
-- Control socket path: when `$XDG_RUNTIME_DIR/ssj/<id>.sock` would exceed the limit of `sun_path`
-  (104 bytes on macOS, 108 on Linux), use `/tmp/ssj-<uid>/` with the same mode and owner checks.
-- Home directories that several hosts share: record the host in the socket directory and do not
-  list or remove sockets of other hosts.
-- Check the values of `TERM`, `LANG`, and `LC_*` before they reach the shell: characters
-  `A-Za-z0-9._@-` only, no path separators, length limit. Reject the whole set on a violation.
-- Close all inherited file descriptors above 2 in the daemon, as `SPEC.md` already promises. Today
-  they leak into the daemon and its shell (found in a test: a pipe of the caller stayed open). This
-  needs more than `rustix` offers without `unsafe`, so it needs a decision first.
-- Zero the private keys after the handshake. Say in the docs what this does not cover.
-
-## 4. Transport tiers
+## 2. Transport tiers
 
 For jump hosts, blocked UDP, and hosts behind NAT. The session core stays unchanged, since it works
 on any pair of byte streams.
@@ -49,7 +35,7 @@ on any pair of byte streams.
 1. Tests with a fake `ssh` that relays `-W`: jump host, dropped datagrams, forbidden forwarding,
    a banner before the sync header, and reconnect on every tier.
 
-## 5. Names, destinations, and `ssh -G`
+## 3. Names, destinations, and `ssh -G`
 
 - Look up `hostname`, `user`, `port`, `proxyjump`, and `proxycommand` with `ssh -G`. This fixes the
   UDP address for aliases and replaces `--udp-host` as the default.
@@ -61,7 +47,7 @@ on any pair of byte streams.
   leading `-` kept. Fuzz it.
 - `ssj attach` without an id when exactly one session exists (done); with several, list them.
 
-## 6. CLI and packaging
+## 4. CLI and packaging
 
 - Move the client CLI to `clap` (derive), keeping every flag and test. Generate completions for
   Bash, Zsh, and Fish and the man page in `build.rs`.
@@ -74,7 +60,7 @@ on any pair of byte streams.
 - Optional: `ssj install --download`, fetching the server file from the release of the same version
   and checking it against `SHA256SUMS`.
 
-## 7. Performance
+## 5. Performance
 
 - Benchmark harness (an ignored test and a CI job) that compares `ssh`, `ssj` over UDP, and `ssj`
   over TCP: bulk output, keystroke latency, and the 8 MiB paste under `tc netem` (Linux only).
@@ -83,7 +69,7 @@ on any pair of byte streams.
 - First run without gates to see real numbers. Then gate on them (the proposal suggested 5 percent
   for throughput and 1 ms for latency, which nobody has measured).
 
-## 8. Release
+## 6. Release
 
 - Push the repository to a remote so that `ci.yml`, `fuzz.yml`, and `supply-chain.yml` run. They
   have never run, and the Linux tests have never been executed anywhere. Expect to fix things.
@@ -104,6 +90,8 @@ on any pair of byte streams.
 
 ## Known limits that stay until someone fixes them
 
+- Descriptors above 2 that a parent leaves open stay open in the daemon and the shell. Closing them
+  needs `unsafe`.
 - If the connection is lost right after the exit status was queued but before it arrived, the
   client finds no server and reports the end of the session without the exit code.
 - `attach` replays only the last 64 KiB of output.
@@ -113,6 +101,8 @@ on any pair of byte streams.
 
 ## Considered and not planned
 
+- Zeroing the private keys after the handshake: each side needs its key for every reconnect, and the
+  key copy inside the TLS library cannot be reached from safe code.
 - Offering two protocol versions in the ALPN list: against the decision to keep the code small.
 - Power-state APIs for sleep and wake: they need a run loop or D-Bus for no gain, since waking
   always brings the interfaces back and fires the network watch.

@@ -303,3 +303,21 @@ fn control_directory_that_others_can_enter_is_refused() {
         String::from_utf8_lossy(&stderr)
     );
 }
+
+#[test]
+fn a_runtime_directory_with_a_long_path_still_gets_a_working_socket() {
+    // longer than a socket path may be
+    let mut long = runtime_dir();
+    for _ in 0..4 {
+        long = long.join("a-long-directory-name-0123456789");
+    }
+    std::fs::create_dir_all(&long).unwrap();
+    assert!(long.as_os_str().len() > 100);
+
+    launch(&long, &Identity::generate(), free_range(), "cat");
+
+    // the session is found again with the same environment, and the socket is outside the path
+    assert!(!list(&long).is_empty());
+    assert!(!long.join("ssj").exists());
+    run_control(&long, &["--kill"], "");
+}

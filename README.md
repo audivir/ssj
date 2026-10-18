@@ -157,7 +157,8 @@ the server is built by the client.
 ### Files
 
 Paths follow the XDG Base Directory specification: `$XDG_CONFIG_HOME/ssj/` (`client.toml`,
-`server.toml`), `$XDG_STATE_HOME/ssj/`, and `$XDG_RUNTIME_DIR/ssj/`.
+`server.toml`), `$XDG_STATE_HOME/ssj/`, and `$XDG_RUNTIME_DIR/ssj/` (without it
+`$XDG_STATE_HOME/ssj/run/<host>/`, or `/tmp/ssj-<uid>/` if the path is too long for a socket).
 
 ## License
 

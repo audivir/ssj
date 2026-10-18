@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,32 +15,104 @@ use ssj_proto::control::{MAX_LINE, Reply, Request, format_request, parse_reply};
 /// Time a peer has to send its request or answer.
 pub const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Directory of the control sockets: `$XDG_RUNTIME_DIR/ssj`, or on systems without it
-/// `$XDG_STATE_HOME/ssj/run`. A variable with a relative path is ignored.
+/// Longest path of a socket that is used. The kernel takes 104 bytes on macOS and 108 on Linux,
+/// both with the NUL byte.
+const MAX_SOCKET_PATH: usize = 100;
+/// `/`, a session id of 16 characters, and `.sock`.
+const SOCKET_NAME: usize = 1 + 16 + 5;
+
+/// Directory of the control sockets for this user on this host.
 pub fn control_dir() -> io::Result<PathBuf> {
     let absolute = |name: &str| {
         std::env::var_os(name)
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
     };
-    if let Some(runtime) = absolute("XDG_RUNTIME_DIR") {
-        return Ok(runtime.join("ssj"));
-    }
-    if let Some(state) = absolute("XDG_STATE_HOME") {
-        return Ok(state.join("ssj").join("run"));
-    }
-    let home = absolute("HOME")
-        .ok_or_else(|| io::Error::other("neither XDG_RUNTIME_DIR nor HOME is set"))?;
-    Ok(home.join(".local/state/ssj/run"))
+    dir_for(
+        absolute("XDG_RUNTIME_DIR"),
+        absolute("XDG_STATE_HOME"),
+        absolute("HOME"),
+        &host_dir_name(),
+        rustix::process::getuid().as_raw(),
+    )
 }
 
-/// Creates the directory with mode 0700 if needed and refuses one that others can enter.
+/// The directory for the given environment: `$XDG_RUNTIME_DIR/ssj`, or on systems without it
+/// `$XDG_STATE_HOME/ssj/run/<host>` (default `~/.local/state`).
+///
+/// The runtime directory belongs to one host. The state directory may be shared by several (a
+/// home directory on a network file system), and a socket of another host would look like a dead
+/// one here, so each host gets its own directory. A path that would be too long for a socket
+/// moves to `/tmp/ssj-<uid>`.
+pub fn dir_for(
+    runtime: Option<PathBuf>,
+    state: Option<PathBuf>,
+    home: Option<PathBuf>,
+    host: &str,
+    uid: u32,
+) -> io::Result<PathBuf> {
+    let preferred = if let Some(runtime) = runtime {
+        runtime.join("ssj")
+    } else if let Some(state) = state {
+        state.join("ssj").join("run").join(host)
+    } else {
+        let home =
+            home.ok_or_else(|| io::Error::other("neither XDG_RUNTIME_DIR nor HOME is set"))?;
+        home.join(".local/state/ssj/run").join(host)
+    };
+    if preferred.as_os_str().len() + SOCKET_NAME <= MAX_SOCKET_PATH {
+        Ok(preferred)
+    } else {
+        Ok(PathBuf::from(format!("/tmp/ssj-{uid}")))
+    }
+}
+
+/// The name of this host as a single safe path component.
+pub fn host_dir_name() -> String {
+    let name = rustix::system::uname()
+        .nodename()
+        .to_string_lossy()
+        .into_owned();
+    let name: String = name
+        .chars()
+        .take(64)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    // no `.` or `..`, and nothing hidden
+    match name.trim_start_matches('.') {
+        "" => "host".to_owned(),
+        trimmed => trimmed.to_owned(),
+    }
+}
+
+/// Creates the directory with mode 0700 if needed. It refuses a symbolic link, a directory of
+/// another user (somebody could have made it first in a shared place such as `/tmp`), and one that
+/// others can enter.
 pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(dir)?;
-    let mode = fs::metadata(dir)?.permissions().mode();
+    let meta = fs::symlink_metadata(dir)?;
+    if !meta.is_dir() {
+        return Err(io::Error::other(format!(
+            "{} is not a directory",
+            dir.display()
+        )));
+    }
+    if meta.uid() != rustix::process::getuid().as_raw() {
+        return Err(io::Error::other(format!(
+            "{} belongs to another user",
+            dir.display()
+        )));
+    }
+    let mode = meta.permissions().mode();
     if mode & 0o077 != 0 {
         return Err(io::Error::other(format!(
             "{} is accessible to others (mode {:o})",

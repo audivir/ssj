@@ -472,7 +472,11 @@ Paths follow the XDG Base Directory specification, on Linux and on macOS alike.
 - State: `$XDG_STATE_HOME/ssj/` (default `~/.local/state/ssj/`), holding the optional log file.
 - A variable with a relative path is invalid and ignored, as the specification requires.
 - Runtime: `$XDG_RUNTIME_DIR/ssj/` holds one control socket per session. macOS has no
-  `XDG_RUNTIME_DIR`, so the fallback is `$XDG_STATE_HOME/ssj/run/`. The socket contains no
+  `XDG_RUNTIME_DIR`, so the fallback is `$XDG_STATE_HOME/ssj/run/<host>/`. The host name is in the
+  path because a home directory can be shared by several hosts, and a socket of another host
+  would look dead and be removed. A path that is too long for a socket (about 100 bytes) moves to
+  `/tmp/ssj-<uid>/`. The directory must be owned by the user, must not be a symbolic link, and
+  must not be accessible to others, or the server refuses to use it. The socket contains no
   secret, and it is removed when the session ends.
 - Nothing is written to the cache directory. Session keys stay in memory.
 - Created directories get mode `0700` and files mode `0600`. The server refuses to read a config
@@ -543,9 +547,13 @@ Session and shell (server):
 - While a client is connected and acknowledging, a full replay buffer stops the reading from the
   PTY (backpressure as in `ssh`) and no output is dropped. While nobody listens, the oldest output
   is forgotten instead (see Output while nobody listens), so that a detached job is never frozen.
-- The server disables core dumps (`RLIMIT_CORE` 0) and zeroizes private keys after use.
-- Detach closes all inherited file descriptors and redirects stdio to `/dev/null`, so the `ssh`
-  channel closes and its output cannot leak. The server ignores `SIGHUP` and calls `setsid`.
+- The server disables core dumps (`RLIMIT_CORE` 0). Private keys are not zeroed: both sides need
+  their key for every reconnect until the session ends, and the copy inside the TLS library
+  cannot be reached.
+- Detach redirects stdio to `/dev/null`, so the `ssh` channel closes and its output cannot leak.
+  The server ignores `SIGHUP` and calls `setsid`. Other inherited file descriptors stay open
+  (closing arbitrary descriptors needs `unsafe`). `sshd` hands over only descriptors 0 to 2, and
+  Rust marks its own descriptors as close-on-exec, so this matters only for an unusual parent.
 - Log output goes to stderr only until detach, and afterwards nowhere unless a log file in the state
   directory is configured. Terminal content is never logged.
 - Port selection: random free port from the range, retried on conflict. On shared hosts the range
