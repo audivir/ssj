@@ -825,6 +825,26 @@ Rules (nobody listens, and `wait` mode):
   slower than the writer. This is a property of that system and happens without `ssj` too, so the
   tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
+### Local echo (`local_echo`)
+
+Optional and off by default (`--local-echo auto`, or `local_echo = "auto"` in `client.toml`). It
+lives in the client alone (`echo.rs`) and changes nothing on the wire. A typed character is drawn
+faint at once and taken back before any byte of the server reaches the terminal, so the real echo
+always draws over a clean place.
+
+- Predicted: printable ASCII and characters that take one column in every terminal (`narrow`):
+  Latin-1 and Latin Extended letters and signs (ä, ö, ü, ß, é, ñ), Greek, and Cyrillic. Not
+  predicted: the no-break space, soft hyphen, combining marks, and wide characters (CJK, emoji),
+  which stop the prediction until Enter. Input and output are decoded as UTF-8 even when a
+  character arrives in pieces; invalid UTF-8 stops the prediction.
+- Epoch rule: after Enter nothing is drawn until the server has echoed one typed character, so a
+  password prompt is never drawn. The output must be the echo of what was typed apart from colors,
+  titles, and a few mode switches; any other character or sequence drops the trust. A wide
+  character in the output makes the column unknown until the next carriage return.
+- Nothing is drawn within three columns of the right edge, in the middle of an escape sequence or
+  of a character of the output, for a paste of more than 16 bytes, or when 64 predictions wait. A
+  prediction that stays unanswered for two seconds is taken back.
+
 ### Environment forwarding
 
 Works like `SendEnv` and `AcceptEnv` in `ssh`: the client selects variables, the server filters
@@ -1015,7 +1035,6 @@ UDP phase:
 
 - Port forwarding and X11 forwarding.
 - `sftp` or `scp` replacements.
-- Local echo prediction.
 - Windows client and server.
 
 ## Decisions

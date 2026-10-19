@@ -125,7 +125,13 @@ fn a_sequence_split_between_two_chunks_is_followed() {
 
 #[test]
 fn other_keys_stop_the_prediction_until_enter() {
-    for key in [&b"\x7f"[..], b"\x1b[A", b"\x03", "é".as_bytes()] {
+    for key in [
+        &b"\x7f"[..],
+        b"\x1b[A",
+        b"\x03",
+        "世".as_bytes(),
+        "😀".as_bytes(),
+    ] {
         let now = Instant::now();
         let mut echo = trusted(now);
         echo.typed(key, now);
@@ -194,4 +200,100 @@ fn off_by_default_means_no_bytes_at_all() {
         assert!(before.is_empty() && after.is_empty());
     }
     assert!(echo.cancel().is_empty());
+}
+
+#[test]
+fn umlauts_and_other_letters_of_one_column_are_predicted() {
+    for letter in ["ä", "Ö", "ü", "ß", "é", "ñ", "ç", "ł", "ж", "λ"] {
+        let now = Instant::now();
+        let mut echo = trusted(now);
+        let faint = format!("\x1b[2m{letter}\x1b[22m");
+        assert_eq!(
+            echo.typed(letter.as_bytes(), now),
+            faint.as_bytes(),
+            "{letter}"
+        );
+        // the echo replaces the drawing, and the next one is shown again
+        let (before, after) = echo.output(letter.as_bytes(), now);
+        assert_eq!(before, RETRACT_1, "{letter}");
+        assert!(after.is_empty());
+        assert_eq!(echo.typed(b"b", now), FAINT_B, "{letter}");
+    }
+}
+
+#[test]
+fn a_letter_that_arrives_in_pieces_is_followed_as_one_character() {
+    let now = Instant::now();
+    let mut echo = trusted(now);
+    // typed in two reads
+    assert!(echo.typed(&"ä".as_bytes()[..1], now).is_empty());
+    assert_eq!(
+        echo.typed(&"ä".as_bytes()[1..], now),
+        "\x1b[2mä\x1b[22m".as_bytes()
+    );
+    // and echoed in two writes of the server
+    let (before, after) = echo.output(&"ä".as_bytes()[..1], now);
+    assert_eq!(before, RETRACT_1);
+    // nothing is drawn into the middle of a character
+    assert!(after.is_empty());
+    let (before, after) = echo.output(&"ä".as_bytes()[1..], now);
+    assert!(before.is_empty() && after.is_empty());
+    // the echo matched, so the line is still trusted
+    assert_eq!(echo.typed(b"b", now), FAINT_B);
+}
+
+#[test]
+fn a_word_with_umlauts_is_drawn_and_taken_back_as_it_is_echoed() {
+    let now = Instant::now();
+    let mut echo = trusted(now);
+    let mut drawn = Vec::new();
+    for key in ["g", "r", "ü", "ß", "e"] {
+        drawn.extend(echo.typed(key.as_bytes(), now));
+    }
+    assert_eq!(
+        String::from_utf8(drawn).unwrap(),
+        "\x1b[2mg\x1b[22m\x1b[2mr\x1b[22m\x1b[2mü\x1b[22m\x1b[2mß\x1b[22m\x1b[2me\x1b[22m"
+    );
+    let (before, after) = echo.output("grü".as_bytes(), now);
+    assert_eq!(before, b"\x08\x08\x08\x08\x08\x1b[K");
+    assert_eq!(after, "\x1b[2mß\x1b[22m\x1b[2me\x1b[22m".as_bytes());
+}
+
+#[test]
+fn a_wide_character_in_the_echo_drops_the_trust_and_the_column() {
+    let now = Instant::now();
+    let mut echo = trusted(now);
+    echo.output("世".as_bytes(), now);
+    assert!(echo.typed(b"b", now).is_empty());
+}
+
+#[test]
+fn an_echo_that_differs_from_what_was_typed_drops_the_trust() {
+    let now = Instant::now();
+    let mut echo = trusted(now);
+    echo.typed("ä".as_bytes(), now);
+    // a shell in a locale without UTF-8 shows the bytes as an escape
+    echo.output(b"\\303\\244", now);
+    assert!(echo.typed(b"b", now).is_empty());
+}
+
+#[test]
+fn a_drawing_never_cuts_a_sequence_or_a_character_of_the_output() {
+    let now = Instant::now();
+    for cut in [&b"b\x1b[3"[..], b"b\x1b", b"b\x1b]2;ti"] {
+        let mut echo = trusted(now);
+        echo.typed(b"b", now);
+        echo.typed(b"c", now);
+        // the echo of b ends in the middle of a sequence: c is not drawn again yet
+        let (_, after) = echo.output(cut, now);
+        assert!(after.is_empty(), "{cut:?}");
+        assert!(echo.typed(b"d", now).is_empty(), "{cut:?}");
+    }
+    // and once the sequence is complete the waiting characters come back
+    let mut echo = trusted(now);
+    echo.typed(b"b", now);
+    echo.typed(b"c", now);
+    echo.output(b"b\x1b[3", now);
+    let (_, after) = echo.output(b"2m", now);
+    assert_eq!(after, b"\x1b[2mc\x1b[22m");
 }

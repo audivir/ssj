@@ -198,8 +198,11 @@ On a slow link a typed character shows only after the server has echoed it. With
 `--local-echo auto` (or `local_echo = "auto"` in `client.toml`) `ssj` shows it at once, dimmed, and
 the real echo replaces it. It is off by default, because it is a guess.
 
-- It predicts only printable ASCII at the end of a plain shell line. Arrow keys, control keys,
-  backspace, and non-ASCII characters stop it until the next Enter.
+- It predicts printable ASCII and letters of one column (German umlauts and ß, accented Latin
+  letters, Greek, Cyrillic) at the end of a plain shell line. Arrow keys, control keys, backspace,
+  and wide characters (Chinese, Japanese, Korean, emoji) stop it until the next Enter. If the
+  shell on the host is not set to UTF-8 and echoes the letter differently, the prediction is
+  taken back and stops, as for any echo that differs.
 - After Enter it shows nothing until the server has echoed one typed character, so a password
   prompt, which does not echo, is never shown. A full-screen program or a cursor movement in the
   output also stops it.

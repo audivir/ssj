@@ -6,8 +6,9 @@
 //! its drawing back before every byte that the server sends, which then draws the real thing in
 //! the same place. The rules:
 //!
-//! - Only printable ASCII is predicted. Any other key (arrows, control keys, UTF-8, backspace)
-//!   stops the prediction until the next Enter.
+//! - Only printable ASCII and letters of one column (umlauts and other Latin, Greek, and Cyrillic
+//!   letters, see [`narrow`]) are predicted. Any other key (arrows, control keys, wide characters
+//!   such as Chinese or emoji, backspace) stops the prediction until the next Enter.
 //! - After Enter nothing is shown until the server has echoed one typed character (the epoch rule
 //!   of mosh). A program that does not echo, such as a password prompt, never earns the trust.
 //! - The output of the server must be the echo of what was typed, apart from colors, titles and a
@@ -33,15 +34,82 @@ const PASTE: usize = 16;
 const EDGE: usize = 3;
 
 /// The faint attribute, a character, and the attribute off again.
-fn faint(byte: u8, out: &mut Vec<u8>) {
+fn faint(ch: char, out: &mut Vec<u8>) {
     out.extend_from_slice(b"\x1b[2m");
-    out.push(byte);
+    let mut buf = [0u8; 4];
+    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
     out.extend_from_slice(b"\x1b[22m");
+}
+
+/// Characters that take exactly one column in every terminal, which is what the prediction needs:
+/// printable ASCII, the letters and signs of Latin-1 and Latin Extended (ä, ö, ü, ß, é, ñ), Greek,
+/// and Cyrillic. The no-break space, the soft hyphen, the combining marks (which take none), and
+/// everything wide (Chinese, Japanese, Korean, emoji) are left out.
+fn narrow(c: char) -> bool {
+    matches!(c,
+        ' '..='~'
+        | '\u{a1}'..='\u{ac}'
+        | '\u{ae}'..='\u{2af}'
+        | '\u{370}'..='\u{3ff}'
+        | '\u{400}'..='\u{482}'
+        | '\u{48a}'..='\u{52f}')
+}
+
+/// Collects the bytes of a character of several bytes.
+#[derive(Debug, Default)]
+struct Utf8 {
+    bytes: Vec<u8>,
+    want: usize,
+}
+
+enum Step {
+    Char(char),
+    /// The character is not complete yet.
+    More,
+    /// The bytes are not UTF-8. The byte that broke a sequence is lost with it.
+    Invalid,
+}
+
+impl Utf8 {
+    fn step(&mut self, byte: u8) -> Step {
+        if self.bytes.is_empty() {
+            self.want = match byte {
+                0x00..=0x7f => return Step::Char(char::from(byte)),
+                0xc2..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf4 => 4,
+                _ => return Step::Invalid,
+            };
+            self.bytes.push(byte);
+            return Step::More;
+        }
+        if byte & 0xc0 != 0x80 {
+            self.bytes.clear();
+            return Step::Invalid;
+        }
+        self.bytes.push(byte);
+        if self.bytes.len() < self.want {
+            return Step::More;
+        }
+        let ch = std::str::from_utf8(&self.bytes)
+            .ok()
+            .and_then(|text| text.chars().next());
+        self.bytes.clear();
+        ch.map_or(Step::Invalid, Step::Char)
+    }
+
+    fn pending(&self) -> bool {
+        !self.bytes.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.bytes.clear();
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Entry {
-    byte: u8,
+    ch: char,
     drawn: bool,
 }
 
@@ -72,6 +140,9 @@ pub struct Echo {
     columns: usize,
     since: Option<Instant>,
     parse: Parse,
+    /// The character being typed, and the character being echoed, when they come in pieces.
+    typed_utf8: Utf8,
+    output_utf8: Utf8,
 }
 
 impl Echo {
@@ -86,6 +157,8 @@ impl Echo {
             columns: usize::from(columns),
             since: None,
             parse: Parse::Ground,
+            typed_utf8: Utf8::default(),
+            output_utf8: Utf8::default(),
         }
     }
 
@@ -113,6 +186,8 @@ impl Echo {
         self.trusted = false;
         self.column = None;
         self.parse = Parse::Ground;
+        self.typed_utf8.clear();
+        self.output_utf8.clear();
         self.retract()
     }
 
@@ -141,31 +216,42 @@ impl Echo {
             return out;
         }
         for &byte in bytes {
-            match byte {
-                0x20..=0x7e => {
+            let ch = match self.typed_utf8.step(byte) {
+                Step::Char(ch) => ch,
+                Step::More => continue,
+                Step::Invalid => {
+                    self.pending.clear();
+                    self.trusted = false;
+                    self.plain = false;
+                    continue;
+                }
+            };
+            match ch {
+                ch if narrow(ch) => {
                     let room = self
                         .column
                         .is_some_and(|column| column + self.drawn + 1 + EDGE < self.columns);
                     let all_drawn = self.pending.iter().all(|entry| entry.drawn);
                     let draw = self.trusted
                         && self.plain
+                        && self.idle()
                         && room
                         && all_drawn
                         && self.pending.len() < MAX_PENDING;
                     if self.pending.len() < MAX_PENDING {
-                        self.pending.push_back(Entry { byte, drawn: draw });
+                        self.pending.push_back(Entry { ch, drawn: draw });
                     } else {
                         // too much to follow: a paste, or a server that does not answer
                         self.pending.clear();
                         self.trusted = false;
                     }
                     if draw {
-                        faint(byte, &mut out);
+                        faint(ch, &mut out);
                         self.drawn += 1;
                         self.since.get_or_insert(now);
                     }
                 }
-                b'\r' | b'\n' => {
+                '\r' | '\n' => {
                     // a new line, and the first character of it is not shown
                     self.pending.clear();
                     self.trusted = false;
@@ -191,10 +277,14 @@ impl Echo {
             self.feed(byte);
         }
         let mut after = Vec::new();
-        for entry in &self.pending {
-            if entry.drawn {
-                faint(entry.byte, &mut after);
-                self.drawn += 1;
+        // In the middle of a sequence or of a character the drawing waits for the rest of it, or
+        // it would be part of it. The next output draws it.
+        if self.idle() {
+            for entry in &self.pending {
+                if entry.drawn {
+                    faint(entry.ch, &mut after);
+                    self.drawn += 1;
+                }
             }
         }
         if self.drawn > 0 {
@@ -203,18 +293,23 @@ impl Echo {
         (before, after)
     }
 
+    /// Whether the output stands between two characters, so that a drawing cannot cut one.
+    fn idle(&self) -> bool {
+        matches!(self.parse, Parse::Ground) && !self.output_utf8.pending()
+    }
+
     /// Drops the trust and the predictions: something else than an echo came.
     fn mismatch(&mut self) {
         self.pending.clear();
         self.trusted = false;
     }
 
-    fn printable(&mut self, byte: u8) {
+    fn printable(&mut self, ch: char) {
         if let Some(column) = &mut self.column {
             *column += 1;
         }
         match self.pending.front() {
-            Some(front) if front.byte == byte => {
+            Some(front) if front.ch == ch => {
                 self.pending.pop_front();
                 self.trusted = true;
             }
@@ -224,6 +319,10 @@ impl Echo {
     }
 
     fn feed(&mut self, byte: u8) {
+        if matches!(self.parse, Parse::Ground) && (self.output_utf8.pending() || byte >= 0x80) {
+            self.feed_utf8(byte);
+            return;
+        }
         match std::mem::take(&mut self.parse) {
             Parse::Ground => match byte {
                 0x1b => self.parse = Parse::Esc,
@@ -238,15 +337,7 @@ impl Echo {
                         self.mismatch();
                     }
                 }
-                0x20..=0x7e => self.printable(byte),
-                // the start of a character of several bytes counts as one column
-                0xc0..=0xff => {
-                    if let Some(column) = &mut self.column {
-                        *column += 1;
-                    }
-                    self.mismatch();
-                }
-                0x80..=0xbf => {}
+                0x20..=0x7e => self.printable(char::from(byte)),
                 _ => {
                     // backspace, tab, and the rest move the cursor in ways that are not tracked
                     self.column = None;
@@ -280,6 +371,27 @@ impl Echo {
                 if byte != b'\\' {
                     self.parse = Parse::Osc;
                 }
+            }
+        }
+    }
+
+    /// A byte of a character of several bytes in the output (or one that ends it).
+    fn feed_utf8(&mut self, byte: u8) {
+        // a sequence that a plain byte interrupts is broken, and the byte is handled as itself
+        if self.output_utf8.pending() && byte < 0x80 {
+            self.output_utf8.clear();
+            self.column = None;
+            self.mismatch();
+            self.feed(byte);
+            return;
+        }
+        match self.output_utf8.step(byte) {
+            Step::More => {}
+            Step::Char(ch) if narrow(ch) => self.printable(ch),
+            // a wide or unknown character: its width is not known, so neither is the column
+            Step::Char(_) | Step::Invalid => {
+                self.column = None;
+                self.mismatch();
             }
         }
     }
