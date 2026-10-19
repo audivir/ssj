@@ -995,6 +995,39 @@ fn without_a_terminal_a_missing_server_is_not_installed_unasked() {
 }
 
 #[test]
+fn a_missing_server_is_a_reason_to_install_for_auto_attach_and_name_but_not_for_attach() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_dir();
+    for flags in [&["--auto-attach"][..], &["--name", "work"][..]] {
+        let mut extra = vec!["--server-dir", dir.to_str().unwrap()];
+        extra.extend_from_slice(flags);
+        let session = host.session_words(&extra);
+
+        let output = host.ssj(&ssh, &words(&session), "");
+
+        // no terminal, so nobody can be asked: the message is the one of the install policy
+        let stderr = text(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{flags:?}: {stderr}");
+        assert!(
+            stderr.contains("no terminal") && stderr.contains("--install"),
+            "{flags:?}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("no session runs there"),
+            "{flags:?}: {stderr}"
+        );
+    }
+    // an explicit attach has no session to find without a server, and says so
+    let attached = host.ssj(&ssh, &["attach", "user@localhost"], "");
+    assert!(
+        text(&attached.stderr).contains("no session runs there"),
+        "{}",
+        text(&attached.stderr)
+    );
+}
+
+#[test]
 fn the_config_file_and_the_flags_decide_in_this_order() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);

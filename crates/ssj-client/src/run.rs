@@ -335,7 +335,6 @@ async fn start_or_install(
     config: &Config,
     fingerprint: &[u8; 32],
     extra: &[String],
-    attach: bool,
     prestart: Option<&Prestart>,
 ) -> Result<Connect, String> {
     vlog!(
@@ -359,10 +358,14 @@ async fn start_or_install(
         Err(StartError::Choose(sessions)) => {
             choose_and_start(args, fingerprint, prestart, sessions, reuse).await
         }
-        Err(StartError::Missing) if attach => Err(format!(
-            "ssj-server is not installed on {}, so no session runs there",
-            args.destination
-        )),
+        // only an explicit `ssj attach` has to find a session; `--name` and `--auto-attach` start
+        // one when there is none, and so may install the server
+        Err(StartError::Missing) if extra.first().is_some_and(|word| word == "--attach") => {
+            Err(format!(
+                "ssj-server is not installed on {}, so no session runs there",
+                args.destination
+            ))
+        }
         Err(StartError::Missing) => {
             vlog!(1, "the server is not installed on the host");
             let policy = args.auto_install.unwrap_or(config.auto_install);
@@ -903,14 +906,7 @@ async fn connect_session(
             agent: agent.is_some(),
         });
         let (connect, prefetched) = tokio::join!(
-            start_or_install(
-                &args,
-                config,
-                &fingerprint,
-                extra,
-                attach,
-                prestart.as_ref()
-            ),
+            start_or_install(&args, config, &fingerprint, extra, prestart.as_ref()),
             prefetch(&args)
         );
         let connect = connect?;
