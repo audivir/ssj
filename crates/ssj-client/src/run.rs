@@ -192,7 +192,6 @@ pub fn run(args: Args) -> ExitCode {
     ExitCode::from(code)
 }
 
-/// Selected variables of the local environment.
 /// The agent socket to forward, if the user asked for it.
 fn agent_socket(args: &Args) -> Result<Option<PathBuf>, String> {
     if !args.forward_agent {
@@ -204,6 +203,7 @@ fn agent_socket(args: &Args) -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Selected variables of the local environment.
 fn local_env(args: &Args) -> Result<Env, String> {
     let vars = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
@@ -245,6 +245,11 @@ async fn session(mut args: Args) -> u8 {
             "--compress".to_owned(),
             if on { "auto" } else { "off" }.to_owned(),
         ]);
+    }
+    if let Some(choice) = args.congestion {
+        ssj_net::set_congestion(choice);
+        args.server_args
+            .extend(["--congestion".to_owned(), choice.as_str().to_owned()]);
     }
     if args.batch {
         // nobody can answer a prompt of a background refresh, and nobody waits for it

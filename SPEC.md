@@ -370,6 +370,28 @@ What the measurements changed (each found with `sample`, CPU times from `ps`, an
 
 Nothing is gated yet.
 
+#### Congestion control (`congestion`)
+
+The default is BBR (`quinn::congestion::BbrConfig`, initial window 256 KiB), and
+`congestion = "cubic"` in either config file, or `--congestion cubic`, selects Cubic. The client
+passes its value to the server it starts (`--congestion`), and each side uses it for what it sends
+(output for the server, input for the client). `bench/bench.py --congestion` and
+`SCENARIOS="lossy slow clean fast"` measured both in a Linux container with `tc netem` (MB/s of
+the bulk output of `ssj` over UDP, one run each):
+
+| Link | Cubic | BBR |
+| --- | ---: | ---: |
+| 1 % loss, 40 ms each way (MTU 1500) | 0.5 | 7.1 |
+| 8 Mbit/s, 25 ms each way | 0.9 | 0.8 |
+| 100 Mbit/s, 10 ms each way | 10.9 | 10.8 |
+| 1 Gbit/s, 1 ms each way | 109.8 | 92.2 |
+| loopback | 190 | 48 (and a 256 MB transfer did not finish in 300 s) |
+
+Under loss the typing latency at the 95th percentile was 89 ms instead of 194 ms. On a clean link
+there is no difference up to 100 Mbit/s. BBR of `quinn` loses 15 % at a gigabit and breaks down on
+a loopback with a round trip of 50 microseconds, which is not a link a user roams on, and `ssj`
+over the loopback is a test setup only. Choose `cubic` for such a network.
+
 #### Start and end of a session
 
 `bench/bench.py --startup 5 --netem "delay 50ms"` (a round trip of 100 ms, Linux container, `ssh`

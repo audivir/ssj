@@ -184,6 +184,7 @@ pub fn run_child(mut args: Args) -> ExitCode {
         Err(message) => return fail(&message, 2),
     };
     args.apply_config(&config);
+    ssj_net::set_congestion(args.congestion);
     daemon::detach_from_session();
     if let Err(err) = daemon::disable_core_dumps() {
         eprintln!("ssj-server: cannot disable core dumps: {err}");

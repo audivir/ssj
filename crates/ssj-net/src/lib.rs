@@ -3,6 +3,7 @@
 pub mod channels;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -235,6 +236,50 @@ pub fn tls_connector(identity: &Identity, server_pin: Fingerprint) -> TlsConnect
     TlsConnector::from(Arc::new(client_tls(identity, server_pin)))
 }
 
+/// How a sender decides how fast to go.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Congestion {
+    /// Slows down when packets are lost, which suits a wired link.
+    Cubic,
+    /// Estimates the bandwidth and the round trip time and paces to them, so random loss (Wi-Fi,
+    /// mobile) does not slow it down.
+    #[default]
+    Bbr,
+}
+
+impl Congestion {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "cubic" => Ok(Self::Cubic),
+            "bbr" => Ok(Self::Bbr),
+            _ => Err("expected bbr or cubic".to_owned()),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cubic => "cubic",
+            Self::Bbr => "bbr",
+        }
+    }
+}
+
+static CONGESTION: AtomicU8 = AtomicU8::new(Congestion::Bbr as u8);
+
+/// Chooses the congestion controller of the connections made after this call (the process makes
+/// them all with the same one).
+pub fn set_congestion(choice: Congestion) {
+    CONGESTION.store(choice as u8, Ordering::Relaxed);
+}
+
+fn congestion() -> Congestion {
+    if CONGESTION.load(Ordering::Relaxed) == Congestion::Cubic as u8 {
+        Congestion::Cubic
+    } else {
+        Congestion::Bbr
+    }
+}
+
 /// Limits shared by both roles: no datagrams, no unidirectional streams, few bidirectional ones.
 fn base_transport() -> quinn::TransportConfig {
     let mut transport = quinn::TransportConfig::default();
@@ -242,9 +287,18 @@ fn base_transport() -> quinn::TransportConfig {
     transport.max_idle_timeout(None);
     transport.keep_alive_interval(Some(Duration::from_secs(1)));
     // a paste must not spend several round trips on slow start
-    let mut cubic = quinn::congestion::CubicConfig::default();
-    cubic.initial_window(INITIAL_CONGESTION_WINDOW);
-    transport.congestion_controller_factory(Arc::new(cubic));
+    match congestion() {
+        Congestion::Cubic => {
+            let mut cubic = quinn::congestion::CubicConfig::default();
+            cubic.initial_window(INITIAL_CONGESTION_WINDOW);
+            transport.congestion_controller_factory(Arc::new(cubic));
+        }
+        Congestion::Bbr => {
+            let mut bbr = quinn::congestion::BbrConfig::default();
+            bbr.initial_window(INITIAL_CONGESTION_WINDOW);
+            transport.congestion_controller_factory(Arc::new(bbr));
+        }
+    }
     // Bulk output is acknowledged every few packets and not every second one, which halves the
     // packets and system calls of the receiver. Data still goes out at once, so the delay of an
     // acknowledgement never delays an echo.

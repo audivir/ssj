@@ -7,6 +7,7 @@
 //! send_env = ["TERM", "LANG", "LC_*"]
 //! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
+//! congestion = "bbr"             # "bbr" (default) or "cubic": how fast to send
 //! compress = "off"                # "off" (default) or "auto": compress while the link is the limit
 //! forward_agent = false           # let programs on the host use the ssh agent of this machine
 //! local_echo = "off"              # "off" (default) or "auto": show typed characters at once
@@ -14,6 +15,7 @@
 //!
 //! Flags on the command line override the file.
 
+use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
 use crate::cli::{
@@ -45,6 +47,7 @@ pub struct Config {
     pub local_echo: LocalEcho,
     /// `None` when the file does not say.
     pub compress: Option<bool>,
+    pub congestion: Option<Congestion>,
 }
 
 impl Default for Config {
@@ -59,6 +62,7 @@ impl Default for Config {
             forward_agent: false,
             local_echo: LocalEcho::Off,
             compress: None,
+            congestion: None,
         }
     }
 }
@@ -89,6 +93,10 @@ impl Config {
         }
         if let Some(patterns) = table.take_list("send_env")? {
             config.send_env = EnvFilter::new(patterns).map_err(|e| format!("send_env: {e:?}"))?;
+        }
+        if let Some(text) = table.take_text("congestion")? {
+            config.congestion =
+                Some(Congestion::parse(&text).map_err(|e| format!("congestion: {e}"))?);
         }
         if let Some(text) = table.take_text("compress")? {
             config.compress = Some(parse_compress(&text).map_err(|e| format!("compress: {e}"))?);

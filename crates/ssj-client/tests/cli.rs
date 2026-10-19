@@ -297,6 +297,27 @@ fn a_name_and_auto_attach_are_settings_with_flags_and_a_file_key() {
 }
 
 #[test]
+fn congestion_is_a_flag_and_a_file_key() {
+    use ssj_client::config::Config;
+    use ssj_net::Congestion;
+
+    assert_eq!(args(&["host"]).unwrap().congestion, None);
+    assert_eq!(
+        args(&["--congestion", "cubic", "host"]).unwrap().congestion,
+        Some(Congestion::Cubic)
+    );
+    assert!(args(&["--congestion", "reno", "host"]).is_err());
+    let config = Config::from_text("congestion = \"cubic\"\n").unwrap();
+    let mut from_file = args(&["host"]).unwrap();
+    from_file.apply_config(&config);
+    assert_eq!(from_file.congestion, Some(Congestion::Cubic));
+    let mut flag_wins = args(&["--congestion", "bbr", "host"]).unwrap();
+    flag_wins.apply_config(&config);
+    assert_eq!(flag_wins.congestion, Some(Congestion::Bbr));
+    assert!(Config::from_text("congestion = \"reno\"\n").is_err());
+}
+
+#[test]
 fn agent_forwarding_is_off_unless_the_flag_or_the_file_turns_it_on() {
     use ssj_client::config::Config;
 
@@ -357,6 +378,7 @@ fn the_man_page_and_the_completions_are_built() {
         "port_range",
         "auto_attach",
         "forward_agent",
+        "congestion",
     ] {
         assert!(page.contains(word), "{word}");
     }

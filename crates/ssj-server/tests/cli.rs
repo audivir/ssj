@@ -73,6 +73,8 @@ fn child_arguments_carry_every_setting() {
         "200000",
         "--compress",
         "off",
+        "--congestion",
+        "cubic",
         "--shell",
         "/bin/zsh",
         "--shell-arg",
@@ -142,6 +144,18 @@ fn the_job_does_not_wait_for_a_slow_client_unless_asked() {
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
+}
+
+#[test]
+fn congestion_control_is_bbr_unless_cubic_is_asked_for() {
+    use ssj_net::Congestion;
+    assert_eq!(args(&[]).unwrap().congestion, Congestion::Bbr);
+    assert_eq!(
+        args(&["--congestion", "cubic"]).unwrap().congestion,
+        Congestion::Cubic
+    );
+    assert!(args(&["--congestion", "reno"]).is_err());
+    assert!(args(&["--congestion"]).is_err());
 }
 
 #[test]

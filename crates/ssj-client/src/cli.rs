@@ -117,6 +117,8 @@ pub struct Args {
     pub local_echo: LocalEcho,
     /// Compression of input and output; `None` leaves it to the files.
     pub compress: Option<bool>,
+    /// `None` leaves it to the files and the default.
+    pub congestion: Option<ssj_net::Congestion>,
     /// `list` prints JSON.
     pub json: bool,
     /// Never prompt and give up early: for refreshes that nobody waits for.
@@ -161,6 +163,7 @@ impl Args {
             forward_agent: false,
             local_echo: LocalEcho::Off,
             compress: None,
+            congestion: None,
             json: false,
             batch: false,
             explicit: Explicit::default(),
@@ -180,6 +183,9 @@ impl Args {
         }
         if !self.explicit.forward_agent {
             self.forward_agent = config.forward_agent;
+        }
+        if self.congestion.is_none() {
+            self.congestion = config.congestion;
         }
         if self.compress.is_none() {
             self.compress = config.compress;
@@ -273,6 +279,11 @@ fn from_options(options: Options) -> Result<Args, String> {
         .transport
         .as_deref()
         .map(|text| parse_transport(text).map_err(|e| format!("--transport: {e}")))
+        .transpose()?;
+    let congestion = options
+        .congestion
+        .as_deref()
+        .map(|text| ssj_net::Congestion::parse(text).map_err(|e| format!("--congestion: {e}")))
         .transpose()?;
     let compress = options
         .compress
@@ -379,6 +390,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         forward_agent: forward_agent.unwrap_or(false),
         local_echo: local_echo.unwrap_or_default(),
         compress,
+        congestion,
         json: options.json,
         batch: options.batch,
     })

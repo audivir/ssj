@@ -29,14 +29,17 @@ ssh-keyscan localhost >> ~/.ssh/known_hosts 2>/dev/null
 ssh -o BatchMode=yes localhost 'echo ssh-ok; uname -m'
 cargo build --release -p ssj-client -p ssj-server 2>&1 | tail -1
 bench="python3 bench/bench.py --host localhost --ssj /target/release/ssj --server /target/release/ssj-server"
+# CONGESTION=cubic or bbr, and ONLY=ssh,udp, narrow a run to one controller and some clients
+[ -n "$CONGESTION" ] && bench="$bench --congestion $CONGESTION"
+[ -n "$ONLY" ] && bench="$bench --only $ONLY"
 
-# SCENARIOS picks some of them (zeros text slow lossy start), for example SCENARIOS="slow lossy"
+# SCENARIOS picks some of them (zeros text slow lossy clean fast start), for example SCENARIOS="slow lossy"
 scenarios=${SCENARIOS:-"zeros text slow lossy"}
 want() { case " $scenarios " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 if want zeros; then
     echo "== loopback, zeros (the transport itself)"
-    $bench --raw-bulk --bulk-mb 256 --samples 150 --rounds 3
+    $bench --raw-bulk --bulk-mb ${BULK_MB:-256} --samples 150 --rounds ${ROUNDS:-3}
 fi
 
 if want text; then
@@ -44,7 +47,7 @@ if want text; then
     $bench --text-bulk --bulk-mb 64 --paste-mb 4 --samples 20 --rounds 2
 fi
 
-if (want slow || want lossy || want start) && command -v tc >/dev/null 2>&1 && tc qdisc add dev lo root netem delay 1ms 2>/dev/null; then
+if (want slow || want lossy || want clean || want fast || want start) && command -v tc >/dev/null 2>&1 && tc qdisc add dev lo root netem delay 1ms 2>/dev/null; then
     tc qdisc del dev lo root
     # The loopback has an MTU of 64 KiB, so TCP would send segments that are 40 times larger than
     # a QUIC packet, and a loss rate would hit them far less often. A real link has about 1500.
@@ -52,6 +55,14 @@ if (want slow || want lossy || want start) && command -v tc >/dev/null 2>&1 && t
     if want slow; then
         echo "== slow link: 8 Mbit/s, 25 ms each way, log-like text"
         $bench --text-bulk --bulk-mb 8 --paste-mb 2 --samples 50 --rounds 1 --netem "rate 8mbit delay 25ms"
+    fi
+    if want clean; then
+        echo "== clean link: 100 Mbit/s, 10 ms each way, zeros"
+        $bench --raw-bulk --bulk-mb 32 --paste-mb 4 --samples 50 --rounds 1 --netem "rate 100mbit delay 10ms"
+    fi
+    if want fast; then
+        echo "== fast link: 1 Gbit/s, 1 ms each way, zeros"
+        $bench --raw-bulk --bulk-mb 128 --paste-mb 4 --samples 50 --rounds 1 --netem "rate 1gbit delay 1ms"
     fi
     if want start; then
         echo "== start and end of a session, 50 ms each way"
@@ -62,6 +73,6 @@ if (want slow || want lossy || want start) && command -v tc >/dev/null 2>&1 && t
         $bench --raw-bulk --bulk-mb 32 --paste-mb 4 --samples 50 --rounds 1 --netem "delay 40ms loss 1%"
     fi
     ip link set dev lo mtu 65536
-elif want slow || want lossy || want start; then
+elif want slow || want lossy || want clean || want fast || want start; then
     echo "== no tc or no NET_ADMIN: the slow and the lossy link are skipped"
 fi

@@ -5,6 +5,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ssj_net::Congestion;
 use ssj_proto::{SessionName, is_selector};
 
 use crate::session::SlowClient;
@@ -56,6 +57,7 @@ pub struct Args {
     pub live_backlog: usize,
     /// Compress output when the link is the limit. Off by default.
     pub compress: bool,
+    pub congestion: Congestion,
     pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
@@ -78,6 +80,7 @@ pub struct Explicit {
     pub slow_client: bool,
     pub live_backlog: bool,
     pub compress: bool,
+    pub congestion: bool,
     pub shell: bool,
 }
 
@@ -95,6 +98,7 @@ impl Default for Args {
             slow_client: SlowClient::default(),
             live_backlog: DEFAULT_LIVE_BACKLOG,
             compress: false,
+            congestion: Congestion::default(),
             shell: None,
             shell_args: Vec::new(),
             udp: true,
@@ -141,6 +145,8 @@ impl Args {
             self.live_backlog.to_string().into(),
             "--compress".into(),
             if self.compress { "auto" } else { "off" }.into(),
+            "--congestion".into(),
+            self.congestion.as_str().into(),
         ]);
         out.extend([
             "--max-detached".into(),
@@ -330,6 +336,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 out.compress = parse_compress(&value.to_string_lossy())
                     .map_err(|e| format!("--compress: {e}"))?;
                 out.explicit.compress = true;
+            }
+            "--congestion" => {
+                let value = args.next().ok_or("--congestion needs a value")?;
+                out.congestion = Congestion::parse(&value.to_string_lossy())
+                    .map_err(|e| format!("--congestion: {e}"))?;
+                out.explicit.congestion = true;
             }
             "--live-backlog" => {
                 let value = args.next().ok_or("--live-backlog needs a value")?;

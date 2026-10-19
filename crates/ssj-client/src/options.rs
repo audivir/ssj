@@ -47,6 +47,10 @@ pub struct Options {
     #[arg(long, value_name = "WHEN", overrides_with = "local_echo")]
     pub local_echo: Option<String>,
 
+    /// How fast to send: bbr (default) or cubic
+    #[arg(long, value_name = "WAY", overrides_with = "congestion")]
+    pub congestion: Option<String>,
+
     /// Compress input and output while the link is the limit: off or auto
     #[arg(long, value_name = "WHEN", overrides_with = "compress")]
     pub compress: Option<String>,

@@ -7,7 +7,6 @@ Order: performance (2), then the release (3).
 
 ## 2. Performance
 
-- BBR instead of Cubic, to be measured under `netem` with loss.
 - Shorten the start further (measured in `SPEC.md`, "Start and end of a session"):
   - Start the shell during the bootstrap: the client gives the size, the environment, and the
     agent flag through the `ssh` channel, so that the shell runs its startup files during the

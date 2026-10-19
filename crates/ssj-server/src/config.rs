@@ -8,6 +8,7 @@
 //! away_after = 10                     # seconds a silent client may block the output (wait only)
 //! slow_client = "drop"                # "drop" (default): the job never waits for the link
 //! live_backlog = 1048576              # bytes that may wait for a connected client (drop only)
+//! congestion = "bbr"                  # "bbr" (default) or "cubic"
 //! compress = "off"                    # "off" (default), or "auto": compress output when the link is the limit
 //! shell = "/bin/zsh"                  # default: $SHELL
 //! accept_env = ["TERM", "LANG", "LC_*"]
@@ -20,6 +21,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
 use crate::cli::{
@@ -38,6 +40,7 @@ pub struct Config {
     pub slow_client: Option<SlowClient>,
     pub live_backlog: Option<usize>,
     pub compress: Option<bool>,
+    pub congestion: Option<Congestion>,
     pub shell: Option<PathBuf>,
     pub accept_env: Option<EnvFilter>,
 }
@@ -72,6 +75,10 @@ impl Config {
         }
         if let Some(text) = table.take_text("compress")? {
             config.compress = Some(parse_compress(&text).map_err(|e| format!("compress: {e}"))?);
+        }
+        if let Some(text) = table.take_text("congestion")? {
+            config.congestion =
+                Some(Congestion::parse(&text).map_err(|e| format!("congestion: {e}"))?);
         }
         if let Some(size) = table.take_unsigned("live_backlog")? {
             let size = usize::try_from(size).map_err(|_| "live_backlog is too large".to_owned())?;
@@ -147,6 +154,11 @@ impl Args {
             && let Some(on) = config.compress
         {
             self.compress = on;
+        }
+        if !self.explicit.congestion
+            && let Some(choice) = config.congestion
+        {
+            self.congestion = choice;
         }
         if !self.explicit.live_backlog
             && let Some(size) = config.live_backlog

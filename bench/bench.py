@@ -103,6 +103,8 @@ def clients(args):
     if not args.allow_drop:
         # every byte must arrive for the numbers to mean the same for every client
         ssj += ["--server-arg", "--slow-client", "--server-arg", "wait"]
+    if args.congestion:
+        ssj += ["--congestion", args.congestion]
     compress = ["--compress", "auto"]
     return {
         "ssh": ["ssh", "-tt", "-o", "BatchMode=yes", args.host],
@@ -225,6 +227,7 @@ def main():
     parser.add_argument("--ssj", default="target/release/ssj")
     parser.add_argument("--server", default="target/release/ssj-server")
     parser.add_argument("--ssh-command", default="ssh")
+    parser.add_argument("--congestion", choices=["bbr", "cubic"], help="for ssj (default: its own)")
     parser.add_argument("--only", help="comma separated: ssh,ssh-C,udp,udp-z,tcp,stdio")
     parser.add_argument("--text-bulk", action="store_true", help="log-like text for bulk and paste")
     parser.add_argument("--allow-drop", action="store_true", help="let ssj skip output on a slow link")
