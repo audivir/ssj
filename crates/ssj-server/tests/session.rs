@@ -40,6 +40,8 @@ fn config(script: &str) -> SessionConfig {
         live_backlog: 1 << 20,
         compress: false,
         agent_socket: None,
+        prestart: None,
+        first_client_timeout: Duration::from_secs(3600),
     }
 }
 
@@ -1374,4 +1376,106 @@ async fn no_agent_is_set_up_unless_the_client_asks_for_it() {
         String::from_utf8_lossy(&seen.output)
     );
     assert!(!path.exists());
+}
+
+fn prestarted(script: &str) -> SessionConfig {
+    let mut cfg = config(script);
+    cfg.prestart = Some(ssj_proto::bootstrap::Prestart {
+        size: WindowSize::new(30, 100).unwrap(),
+        env: Env::default(),
+        agent: false,
+    });
+    cfg
+}
+
+#[tokio::test]
+async fn a_prestarted_shell_runs_before_the_client_and_the_first_start_joins_it() {
+    let harness = start(prestarted("echo ready-early; read x; echo got:$x; exit 4"));
+    // the shell has run its startup before anybody connects
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut client = harness.connect().await;
+    let welcome = client.start().await;
+    assert_eq!((welcome.input_offset, welcome.output_offset), (0, 0));
+
+    client.send(ClientFrame::Input(b"late\n".to_vec())).await;
+    let seen = client.read_until(|s| s.exit.is_some()).await;
+    // the output of the shell from before the connection is in the stream from offset 0
+    assert!(
+        contains(&seen.output, "ready-early"),
+        "{:?}",
+        String::from_utf8_lossy(&seen.output)
+    );
+    assert!(contains(&seen.output, "got:late"));
+    assert_eq!(seen.exit, Some(ExitStatus::Code(4)));
+}
+
+#[tokio::test]
+async fn joining_a_prestarted_shell_applies_the_size_of_the_hello() {
+    let harness = start(prestarted("read x; stty size; sleep 5"));
+    let mut client = harness.connect().await;
+    // the hello says 24 rows and 80 columns, the bootstrap said 30 and 100
+    client.start().await;
+    client.send(ClientFrame::Input(b"go\n".to_vec())).await;
+    let seen = client.read_until(|s| contains(&s.output, "24 80")).await;
+    assert!(contains(&seen.output, "24 80"));
+}
+
+#[tokio::test]
+async fn only_the_first_start_joins_and_an_attach_joins_too() {
+    let harness = start(prestarted("cat"));
+    let mut first = harness.connect().await;
+    first.start().await;
+    first.send(ClientFrame::Input(b"x\n".to_vec())).await;
+    first.read_until(|s| contains(&s.output, "x")).await;
+    drop(first);
+
+    // a client that connected once is not a first start any more
+    let mut again = harness.connect().await;
+    again
+        .send(ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env: Env::default(),
+            agent: false,
+        }))
+        .await;
+    let seen = again.read_until(|s| s.error.is_some() || s.closed).await;
+    assert_eq!(seen.error, Some(ErrorCode::AlreadyStarted));
+
+    // and a fresh session can be joined with an attach, as a named or reused session is
+    let harness = start(prestarted("echo here; sleep 5"));
+    let mut attach = harness.connect().await;
+    attach
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    let seen = attach.read_until(|s| contains(&s.output, "here")).await;
+    assert!(seen.welcome.is_some());
+}
+
+#[tokio::test]
+async fn a_session_that_nobody_joins_ends_with_its_shell() {
+    let mut cfg = prestarted("sleep 60");
+    cfg.first_client_timeout = Duration::from_millis(300);
+    let harness = start(cfg);
+    assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
+
+    // also without a prestart, and a shorter detached timeout wins
+    let mut cfg = config("cat");
+    cfg.first_client_timeout = Duration::from_secs(3600);
+    cfg.detached_timeout = Some(Duration::from_millis(200));
+    let harness = start(cfg);
+    assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
+}
+
+#[tokio::test]
+async fn the_first_client_timeout_stops_counting_once_a_client_has_joined() {
+    let mut cfg = prestarted("sleep 5");
+    cfg.first_client_timeout = Duration::from_millis(300);
+    let harness = start(cfg);
+    let mut client = harness.connect().await;
+    client.start().await;
+    // longer than the timeout, and the session is still there
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    drop(client);
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert!(!harness.session.is_finished());
 }

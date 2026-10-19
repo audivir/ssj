@@ -46,6 +46,25 @@ the workspace root):
 1. Client reads the line, closes the `ssh` connection, and connects over the best transport (see
    Transports).
 
+The shell of a fresh session starts during the bootstrap:
+
+- After the pin line the client writes a second line, `SSJ START <hex>`, where the hex is a
+  `Hello::Start` frame (window size, selected environment, agent flag), the frame that the client
+  sends later anyway, decoded by the same code and under the same limits. A server that does not
+  find the line, or finds a broken one, ignores it, and the shell starts with the `Hello` as before.
+  Only a plain connect sends it, not `ssj attach` and not a join of a running session.
+- The daemon starts the shell at once, with `accept_env` applied as for a `Hello`, and the shell
+  runs its startup files while the client makes the handshake. What the shell prints waits in the
+  replay buffer.
+- The first `Start` hello of a client then joins the running shell: the welcome is 0 and 0 as for
+  any start, and the size of the hello is applied. An `Attach` joins it too. After a client has
+  connected once, a `Start` is refused with `AlreadyStarted` as before.
+- A session that no client has joined ends after 120 seconds with its shell, so that a client that
+  gave up while connecting leaves nothing behind. A `detached_timeout` that is shorter wins. After
+  the first connection only `detached_timeout` and `max_detached` count.
+- A client that uses `--auto-attach` while another client of the same user is still connecting may
+  join the session that the other one started, which then fails with `AlreadyStarted`.
+
 No bearer secret exists. Both fingerprints are public values that need integrity, not
 confidentiality, and the authenticated `ssh` channel provides that. The server expires the
 pinned client fingerprint if no client connects within a short timeout.
@@ -404,6 +423,9 @@ as the base) times the start until the shell answers a command, and the end afte
 | `ssj` TCP (a second `ssh -W`) | 3.25 s | 0.26 s |
 | `ssj` stdio (a second `ssh`) | 2.83 s | 0.16 s |
 
+- With a login shell that takes 0.4 s to start (`STARTUP_RC_DELAY=0.4`), `ssh` needs 1.66 s and
+  `ssj` over UDP 1.79 s, because the shell starts during the handshake and not after the `Hello`. Without a delay nothing
+  changes (1.79 s against 1.35 s for `ssh`).
 - The bootstrap is one `ssh`, and its handshake is most of the time. `ssj` adds a retry and the
   QUIC handshake (two round trips), then `Hello` and `Welcome` (one more), then the shell starts.
 - The TCP and stdio transports open a second `ssh` connection, which costs as much as the first.

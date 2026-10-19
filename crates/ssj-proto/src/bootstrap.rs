@@ -3,12 +3,19 @@
 //! The output of the remote side also contains banners and output of shell startup files, which
 //! are not trusted. Only an exact, complete line is accepted.
 
-use crate::types::SessionId;
+use crate::env::Env;
+use crate::frame::{ClientFrame, Hello, decode_client};
+use crate::types::{SessionId, WindowSize};
 
 /// Start of the line that carries the connection data.
 pub const PREFIX: &str = "SSJ CONNECT ";
 /// Start of the line that the client writes to the stdin of `ssj-server`.
 pub const PIN_PREFIX: &str = "SSJ PIN ";
+/// Start of the optional second line that the client writes to the stdin of `ssj-server`: what a
+/// fresh session needs to start its shell at once.
+pub const START_PREFIX: &str = "SSJ START ";
+/// Longest second line the server reads: the hex of the largest frame, and the prefix.
+pub const MAX_START_LINE: usize = 2 * crate::frame::MAX_FRAME_LEN + 64;
 /// First bytes of the stream when the `ssh` channel itself carries the session (`--stdio`). The
 /// client skips everything before it, since shell startup files may print text first.
 pub const SYNC_HEADER: &[u8] = b"\0SSJ_SYNC_STREAM\n";
@@ -181,4 +188,64 @@ pub fn parse_pin(line: &[u8]) -> Result<[u8; 32], BootstrapError> {
         .strip_prefix(PIN_PREFIX.as_bytes())
         .ok_or(BootstrapError::Malformed)?;
     parse_fingerprint(hex)
+}
+
+/// What the shell of a fresh session needs, sent before the client has connected, so that the
+/// shell can run its startup files while the connection is made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prestart {
+    pub size: WindowSize,
+    pub env: Env,
+    /// The client offers its ssh agent, so the shell gets a socket for it.
+    pub agent: bool,
+}
+
+/// Formats the line `SSJ START <hex of a Start hello frame>`, including the newline. `None` if the
+/// frame cannot be encoded.
+pub fn format_start(start: &Prestart) -> Option<String> {
+    let mut frame = Vec::new();
+    ClientFrame::Hello(Hello::Start {
+        size: start.size,
+        env: start.env.clone(),
+        agent: start.agent,
+    })
+    .encode(&mut frame)
+    .ok()?;
+    let mut line = String::from(START_PREFIX);
+    for byte in frame {
+        line.push_str(&format!("{byte:02x}"));
+    }
+    line.push('\n');
+    debug_assert!(line.len() <= MAX_START_LINE);
+    Some(line)
+}
+
+/// Parses the line made by [`format_start`], with an optional `\r` before the newline. The frame
+/// is decoded by the same code that decodes a `Hello`, so it has the same limits.
+pub fn parse_start(line: &[u8]) -> Result<Prestart, BootstrapError> {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let hex = line
+        .strip_prefix(START_PREFIX.as_bytes())
+        .ok_or(BootstrapError::Malformed)?;
+    if hex.len() % 2 != 0 {
+        return Err(BootstrapError::Malformed);
+    }
+    let digit = |b: u8| match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        _ => Err(BootstrapError::Malformed),
+    };
+    let mut frame = Vec::with_capacity(hex.len() / 2);
+    for pair in hex.chunks(2) {
+        frame.push(digit(pair[0])? << 4 | digit(pair[1])?);
+    }
+    match decode_client(&frame) {
+        Ok(Some((ClientFrame::Hello(Hello::Start { size, env, agent }), used)))
+            if used == frame.len() =>
+        {
+            Ok(Prestart { size, env, agent })
+        }
+        _ => Err(BootstrapError::Malformed),
+    }
 }

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use quinn::Endpoint;
 use ssj_net::{Identity, SERVER_NAME, client_tls, quic_client};
-use ssj_proto::bootstrap::{Connect, sanitize};
+use ssj_proto::bootstrap::{Connect, Prestart, sanitize};
 use ssj_proto::compress::{Compressor, inflate};
 use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
@@ -268,12 +268,12 @@ async fn session(mut args: Args) -> u8 {
                 extra.push("--reuse".to_owned());
             }
             let attach = !extra.is_empty();
-            connect_session(args, &config, &extra, attach).await
+            connect_session(args, &config, &extra, attach, true).await
         }
         Command::Attach(id) => {
             let mut extra = vec!["--attach".to_owned()];
             extra.extend(id);
-            connect_session(args, &config, &extra, true).await
+            connect_session(args, &config, &extra, true, false).await
         }
         Command::List => list_sessions(&args).await,
         Command::Kill(id) => kill_session(&args, id).await,
@@ -297,8 +297,9 @@ async fn start_or_install(
     fingerprint: &[u8; 32],
     extra: &[String],
     attach: bool,
+    prestart: Option<&Prestart>,
 ) -> Result<Connect, String> {
-    match start_server(args, fingerprint, extra).await {
+    match start_server(args, fingerprint, extra, prestart).await {
         Ok(connect) => Ok(connect),
         Err(StartError::Failed(message)) => Err(message),
         Err(StartError::Missing) if attach => Err(format!(
@@ -312,7 +313,7 @@ async fn start_or_install(
                 Decision::Install => {
                     let path = install(args).await?;
                     eprintln!("ssj: installed {path}");
-                    match start_server(args, fingerprint, extra).await {
+                    match start_server(args, fingerprint, extra, prestart).await {
                         Ok(connect) => Ok(connect),
                         Err(StartError::Missing) => {
                             Err("the server is still missing after the installation".to_owned())
@@ -617,18 +618,37 @@ async fn build_tiers(
     Ok(tiers)
 }
 
-async fn connect_session(args: Args, config: &Config, extra: &[String], attach: bool) -> u8 {
+/// With `fresh` the server may start the shell of a new session at once (see `Prestart`).
+async fn connect_session(
+    args: Args,
+    config: &Config,
+    extra: &[String],
+    attach: bool,
+    fresh: bool,
+) -> u8 {
     let identity = Identity::generate();
     let prepared = async {
         let fingerprint = identity.fingerprint();
+        let env = local_env(&args)?;
+        let agent = agent_socket(&args)?;
+        let prestart = fresh.then(|| Prestart {
+            size: window_size(),
+            env: env.clone(),
+            agent: agent.is_some(),
+        });
         let (connect, prefetched) = tokio::join!(
-            start_or_install(&args, config, &fingerprint, extra, attach),
+            start_or_install(
+                &args,
+                config,
+                &fingerprint,
+                extra,
+                attach,
+                prestart.as_ref()
+            ),
             prefetch(&args)
         );
         let connect = connect?;
-        let env = local_env(&args)?;
         let tiers = build_tiers(&args, &identity, &connect, prefetched).await?;
-        let agent = agent_socket(&args)?;
         Ok::<_, String>((connect, env, tiers, agent))
     }
     .await;

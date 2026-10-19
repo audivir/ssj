@@ -106,6 +106,8 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
         live_backlog: 1 << 20,
         compress: false,
         agent_socket: Some(remote.clone()),
+        prestart: None,
+        first_client_timeout: Duration::from_secs(3600),
     };
     let session = tokio::spawn(Session::new(Direct, config).run(conns_rx));
 

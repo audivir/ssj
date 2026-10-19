@@ -101,6 +101,8 @@ fn start_server_full(
         live_backlog,
         compress,
         agent_socket: None,
+        prestart: None,
+        first_client_timeout: Duration::from_secs(3600),
     };
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();

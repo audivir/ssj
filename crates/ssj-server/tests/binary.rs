@@ -63,6 +63,62 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
 }
 
 #[tokio::test]
+async fn the_daemon_starts_the_shell_from_the_start_line_before_a_client_connects() {
+    use ssj_proto::bootstrap::{Prestart, format_start};
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    let start = format_start(&Prestart {
+        size: size(),
+        env: Env::default(),
+        agent: false,
+    })
+    .unwrap();
+    let stdin = format!("{}{start}", format_pin(&client.fingerprint()));
+    let (status, stdout, stderr, _) = run_bootstrap(
+        &runtime,
+        &stdin,
+        free_range(),
+        "echo early-marker; read x; echo got:$x; exit 3",
+    );
+    assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
+    let connect = ssj_proto::bootstrap::parse_connect(&stdout)
+        .unwrap()
+        .expect("a CONNECT line");
+
+    // the shell has printed before anybody connects
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (mut tx, mut rx, _conn) = open(&client, &connect).await.unwrap();
+    send(
+        &mut tx,
+        ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env: Env::default(),
+            agent: false,
+        }),
+    )
+    .await;
+    send(&mut tx, ClientFrame::Input(b"x\n".to_vec())).await;
+    let (output, exit) = read_until(&mut rx, |_| false).await;
+    assert!(output.contains("early-marker"), "{output}");
+    assert!(output.contains("got:x"), "{output}");
+    assert_eq!(exit, Some(ExitStatus::Code(3)));
+}
+
+#[test]
+fn a_broken_start_line_is_ignored_and_the_hello_starts_the_shell() {
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    let stdin = format!("{}SSJ START nonsense\n", format_pin(&client.fingerprint()));
+    let (status, stdout, stderr, _) = run_bootstrap(&runtime, &stdin, free_range(), "cat");
+    assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(
+        ssj_proto::bootstrap::parse_connect(&stdout)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn detach_closes_the_endpoint_of_the_daemon() {
     let runtime = runtime_dir();
     let client = Identity::generate();

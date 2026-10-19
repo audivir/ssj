@@ -218,3 +218,79 @@ fn the_stream_of_stdio_starts_after_the_sync_header_whatever_came_before() {
     assert_eq!(find_sync(b"SSJ_SYNC_STREAM\n"), None);
     assert_eq!(find_sync(b""), None);
 }
+
+mod start_line {
+    use ssj_proto::bootstrap::{
+        BootstrapError, MAX_START_LINE, Prestart, format_start, parse_start,
+    };
+    use ssj_proto::{Env, WindowSize};
+
+    fn start(vars: Vec<(String, String)>) -> Prestart {
+        Prestart {
+            size: WindowSize::new(30, 100).unwrap(),
+            env: Env::new(vars).unwrap(),
+            agent: true,
+        }
+    }
+
+    #[test]
+    fn a_start_line_round_trips_with_the_size_the_environment_and_the_agent() {
+        let wanted = start(vec![
+            ("TERM".into(), "xterm-256color".into()),
+            ("LANG".into(), "de_DE.UTF-8".into()),
+            ("EMPTY".into(), String::new()),
+        ]);
+        let line = format_start(&wanted).unwrap();
+        assert!(line.starts_with("SSJ START ") && line.ends_with('\n'));
+        assert_eq!(line.matches('\n').count(), 1);
+        assert_eq!(parse_start(line.as_bytes()), Ok(wanted.clone()));
+        // a carriage return before the newline is accepted
+        let crlf = line.replace('\n', "\r\n");
+        assert_eq!(parse_start(crlf.as_bytes()), Ok(wanted));
+    }
+
+    #[test]
+    fn an_environment_with_odd_values_cannot_break_the_line() {
+        let wanted = start(vec![(
+            "NOTE".into(),
+            "a b\nc\u{e4}\u{1f600} 'q' \"d\"".into(),
+        )]);
+        let line = format_start(&wanted).unwrap();
+        assert_eq!(line.matches('\n').count(), 1);
+        assert_eq!(parse_start(line.as_bytes()), Ok(wanted));
+    }
+
+    #[test]
+    fn the_largest_environment_fits_in_the_line() {
+        // seven values of the largest size, close to the limit of the total
+        let vars: Vec<(String, String)> = (0..7)
+            .map(|i| (format!("BIG{i}"), "x".repeat(Env::MAX_VALUE)))
+            .collect();
+        let line = format_start(&start(vars)).unwrap();
+        assert!(line.len() <= MAX_START_LINE, "{}", line.len());
+    }
+
+    #[test]
+    fn broken_start_lines_are_refused() {
+        let good = format_start(&start(vec![])).unwrap();
+        let hex = good.trim_end().strip_prefix("SSJ START ").unwrap();
+        for bad in [
+            String::new(),
+            "SSJ START \n".to_owned(),
+            "SSJ START zz\n".to_owned(),
+            "SSJ START abc\n".to_owned(),
+            format!("SSJ START {}\n", hex.to_uppercase()),
+            format!("SSJ START {}00\n", hex),
+            format!("SSJ START {}\n", &hex[..hex.len() - 2]),
+            // a frame that is not a start
+            "SSJ START 0000000105\n".to_owned(),
+            format!("SSJ PIN {hex}\n"),
+        ] {
+            assert_eq!(
+                parse_start(bad.as_bytes()),
+                Err(BootstrapError::Malformed),
+                "{bad:?}"
+            );
+        }
+    }
+}

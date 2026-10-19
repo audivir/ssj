@@ -49,6 +49,8 @@ fn start(script: &str, client_pin: ssj_net::Fingerprint) -> Server {
         slow_client: ssj_server::session::SlowClient::Wait,
         live_backlog: 1 << 20,
         agent_socket: None,
+        prestart: None,
+        first_client_timeout: Duration::from_secs(3600),
         compress: false,
     };
     let (conns, rx) = mpsc::channel(4);

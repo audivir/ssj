@@ -11,7 +11,9 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use ssj_proto::bootstrap::{format_connect, format_pin, parse_connect, parse_pin};
+use ssj_proto::bootstrap::{
+    MAX_START_LINE, Prestart, format_connect, format_pin, parse_connect, parse_pin, parse_start,
+};
 use ssj_proto::control::SessionState;
 use ssj_proto::{EnvFilter, SessionId};
 use tokio::net::UnixListener;
@@ -35,6 +37,13 @@ use crate::session::{
 pub(crate) const MAX_LINE: usize = 512;
 const PIN_TIMEOUT: Duration = Duration::from_secs(10);
 const START_TIMEOUT: Duration = Duration::from_secs(15);
+/// Time for the optional second line after the pin line. The client writes both at once, so this
+/// only matters for a person who types the pin by hand.
+const START_LINE_TIMEOUT: Duration = Duration::from_secs(2);
+/// A session that no client joins within this time ends with its shell (see
+/// `SessionConfig::first_client_timeout`). The client has to get through `ssh`, UDP that may be
+/// blocked, and the transports after it.
+const FIRST_CLIENT_TIMEOUT: Duration = Duration::from_secs(120);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Silence after which a connection is given up, see `SessionConfig::lost_after`.
 const LOST_AFTER: Duration = Duration::from_secs(60);
@@ -54,6 +63,63 @@ pub(crate) fn read_line_with_timeout(
         let _ = tx.send(result);
     });
     rx.recv_timeout(limit).ok()?.ok()
+}
+
+/// What the client writes to the stdin of the server: the pin line, and after it the optional line
+/// with what the shell of a fresh session needs.
+pub(crate) struct BootstrapInput {
+    pub pin: [u8; 32],
+    /// The line as it came, for the daemon. `None` if it was missing or not valid.
+    pub start_line: Option<Vec<u8>>,
+    pub start: Option<Prestart>,
+}
+
+/// Reads the pin line, then the start line if there is one. The reading runs in a thread, so
+/// that the wait has a limit.
+pub(crate) fn read_bootstrap_input(
+    source: impl Read + Send + 'static,
+) -> Result<BootstrapInput, &'static str> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(source);
+        let mut pin = Vec::new();
+        let first = (&mut reader)
+            .take(MAX_LINE as u64)
+            .read_until(b'\n', &mut pin)
+            .map(|_| pin);
+        let failed = first.is_err();
+        let _ = tx.send(first);
+        if failed {
+            return;
+        }
+        let mut start = Vec::new();
+        let second = (&mut reader)
+            .take(MAX_START_LINE as u64)
+            .read_until(b'\n', &mut start)
+            .map(|_| start);
+        let _ = tx.send(second);
+    });
+    let pin_line = rx
+        .recv_timeout(PIN_TIMEOUT)
+        .ok()
+        .and_then(Result::ok)
+        .ok_or("no pin line on stdin")?;
+    let pin = parse_pin(&pin_line).map_err(|_| "stdin does not hold a valid SSJ PIN line")?;
+    let start_line = rx
+        .recv_timeout(START_LINE_TIMEOUT)
+        .ok()
+        .and_then(Result::ok)
+        .filter(|line| !line.is_empty());
+    // a start line that is wrong only costs the head start of the shell
+    let start = start_line
+        .as_deref()
+        .and_then(|line| parse_start(line).ok());
+    let start_line = start.as_ref().and(start_line);
+    Ok(BootstrapInput {
+        pin,
+        start_line,
+        start,
+    })
 }
 
 fn fail(message: &str, code: u8) -> ExitCode {
@@ -105,12 +171,11 @@ pub fn run_parent(args: &Args) -> ExitCode {
     if daemon::is_root() {
         eprintln!("ssj-server: warning: running as root, the session shell will be a root shell");
     }
-    let Some(line) = read_line_with_timeout(std::io::stdin(), PIN_TIMEOUT) else {
-        return fail("no pin line on stdin", 2);
+    let input = match read_bootstrap_input(std::io::stdin()) {
+        Ok(input) => input,
+        Err(message) => return fail(message, 2),
     };
-    let Ok(pin) = parse_pin(&line) else {
-        return fail("stdin does not hold a valid SSJ PIN line", 2);
-    };
+    let pin = input.pin;
     // a named session, or the only free one, is joined instead of starting another
     match existing_session(args) {
         Err(message) => return fail(&message, 1),
@@ -133,7 +198,14 @@ pub fn run_parent(args: &Args) -> ExitCode {
         Err(err) => return fail(&format!("cannot start the server process: {err}"), 1),
     };
     let mut stdin = child.stdin.take().expect("piped");
-    if stdin.write_all(format_pin(&pin).as_bytes()).is_err() {
+    let written =
+        stdin
+            .write_all(format_pin(&pin).as_bytes())
+            .and_then(|_| match &input.start_line {
+                Some(line) => stdin.write_all(line),
+                None => Ok(()),
+            });
+    if written.is_err() {
         return fail("the server process did not start", 1);
     }
     drop(stdin);
@@ -189,11 +261,9 @@ pub fn run_child(mut args: Args) -> ExitCode {
     if let Err(err) = daemon::disable_core_dumps() {
         eprintln!("ssj-server: cannot disable core dumps: {err}");
     }
-    let Some(line) = read_line_with_timeout(std::io::stdin(), PIN_TIMEOUT) else {
-        return fail("no pin line on stdin", 2);
-    };
-    let Ok(pin) = parse_pin(&line) else {
-        return fail("stdin does not hold a valid SSJ PIN line", 2);
+    let input = match read_bootstrap_input(std::io::stdin()) {
+        Ok(input) => input,
+        Err(message) => return fail(message, 2),
     };
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -202,10 +272,11 @@ pub fn run_child(mut args: Args) -> ExitCode {
         Ok(runtime) => runtime,
         Err(err) => return fail(&format!("cannot start the runtime: {err}"), 1),
     };
-    runtime.block_on(run_session(args, config.accept_env(), pin))
+    runtime.block_on(run_session(args, config.accept_env(), input))
 }
 
-async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCode {
+async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -> ExitCode {
+    let pin = input.pin;
     let id = daemon::random_session_id()
         .ok()
         .and_then(|id| SessionId::parse(&id));
@@ -263,6 +334,8 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         // the directory exists: the control socket was made in it
         agent_socket: control_dir().ok().map(|dir| agent_path(&dir, id.as_str())),
         compress: args.compress,
+        prestart: input.start,
+        first_client_timeout: FIRST_CLIENT_TIMEOUT,
         detached_timeout: args.detached_timeout,
         max_detached: args.max_detached,
         hello_timeout: HELLO_TIMEOUT,

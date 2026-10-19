@@ -12,6 +12,7 @@ use std::process::ExitStatus;
 use std::time::Duration;
 
 use ssj_net::channels::{Channels, Piece};
+use ssj_proto::bootstrap::Prestart;
 use ssj_proto::compress::{Compressor, inflate};
 use ssj_proto::frame::{MAX_DATA_LEN, MAX_FRAME_LEN};
 use ssj_proto::resume::{Action, ServerView, negotiate};
@@ -88,6 +89,13 @@ pub struct SessionConfig {
     /// With [`SlowClient::Drop`]: the most output that may wait to be sent to a connected client.
     /// What the shell wrote before the client connected (the replay) does not count.
     pub live_backlog: usize,
+    /// The shell is started when the session starts, with this size, environment, and agent flag,
+    /// and the first `Start` hello of a client only joins it (see [`Prestart`]).
+    pub prestart: Option<Prestart>,
+    /// A session that no client has joined yet ends after this long, so that a client which
+    /// gave up while connecting does not leave a shell behind. It applies on top of
+    /// `detached_timeout`, which only counts from the first connection.
+    pub first_client_timeout: Duration,
     /// Where the socket for the agent of the client is made when the client asks for it.
     /// `None` refuses agent forwarding.
     pub agent_socket: Option<PathBuf>,
@@ -281,6 +289,23 @@ impl<B: Backend> Session<B> {
         // the socket of the forwarded agent, once the client has asked for it
         let mut agent_listener: Option<(UnixListener, SocketFile)> = None;
         let mut next_channel = 0u32;
+        // whether a client ever completed its handshake
+        let mut ever_connected = false;
+        if let Some(start) = config.prestart.clone() {
+            match start_shell(
+                &backend,
+                &config,
+                start.size,
+                &start.env,
+                start.agent,
+                &mut agent_listener,
+            )
+            .await
+            {
+                Ok(running) => shell = Some(running),
+                Err(err) => return SessionEnd::Failed(err),
+            }
+        }
 
         loop {
             enum Event {
@@ -346,6 +371,13 @@ impl<B: Backend> Session<B> {
                 config.max_detached
             } else {
                 config.detached_timeout
+            };
+            let limit = if ever_connected {
+                limit
+            } else {
+                Some(limit.map_or(config.first_client_timeout, |l| {
+                    l.min(config.first_client_timeout)
+                }))
             };
             let deadline = match (active.is_none(), limit, detached_since) {
                 (true, Some(limit), Some(since)) => Some(since + limit),
@@ -447,7 +479,23 @@ impl<B: Backend> Session<B> {
                                 input_received,
                             };
                             let a = active.as_mut().expect("checked above");
-                            match negotiate(hello, &view) {
+                            // The shell was started before any client came, so the first
+                            // `Start` joins it: nothing was consumed, and the size is applied.
+                            let joins = config.prestart.is_some()
+                                && !ever_connected
+                                && input_received == 0
+                                && output.start() == 0;
+                            let negotiated = match hello {
+                                Hello::Start { size, .. } if joins => Ok((
+                                    ssj_proto::Welcome {
+                                        input_offset: 0,
+                                        output_offset: 0,
+                                    },
+                                    Action::Resize(size),
+                                )),
+                                hello => negotiate(hello, &view),
+                            };
+                            match negotiated {
                                 Err(code) => {
                                     let _ = a.out.try_send(ServerFrame::Error(code));
                                     active = None;
@@ -456,14 +504,15 @@ impl<B: Backend> Session<B> {
                                 Ok((welcome, action)) => {
                                     match action {
                                         Action::Spawn { size, env, agent } => {
-                                            if agent && let Some(path) = &config.agent_socket {
-                                                agent_listener = listen_for_agent(path);
-                                            }
-                                            let socket = agent_listener
-                                                .as_ref()
-                                                .and(config.agent_socket.as_deref());
-                                            match spawn_shell(&backend, &config, size, &env, socket)
-                                                .await
+                                            match start_shell(
+                                                &backend,
+                                                &config,
+                                                size,
+                                                &env,
+                                                agent,
+                                                &mut agent_listener,
+                                            )
+                                            .await
                                             {
                                                 Ok(running) => shell = Some(running),
                                                 Err(err) => {
@@ -483,6 +532,7 @@ impl<B: Backend> Session<B> {
                                     // the size of the hello is newer than any waiting one
                                     pending_resize = None;
                                     a.hello_done = true;
+                                    ever_connected = true;
                                     if let Some(events) = &events {
                                         let _ = events.send(SessionEvent::Connected);
                                     }
@@ -795,6 +845,22 @@ fn tell_channel_closed(out: &mpsc::Sender<ServerFrame>, id: u32) {
     tokio::spawn(async move {
         let _ = out.send(ServerFrame::AgentClose(id)).await;
     });
+}
+
+/// Starts the shell, and the socket for the agent of the client when it is asked for.
+async fn start_shell<B: Backend>(
+    backend: &B,
+    config: &SessionConfig,
+    size: WindowSize,
+    client_env: &Env,
+    agent: bool,
+    agent_listener: &mut Option<(UnixListener, SocketFile)>,
+) -> io::Result<Running<B::Shell>> {
+    if agent && let Some(path) = &config.agent_socket {
+        *agent_listener = listen_for_agent(path);
+    }
+    let socket = agent_listener.as_ref().and(config.agent_socket.as_deref());
+    spawn_shell(backend, config, size, client_env, socket).await
 }
 
 async fn spawn_shell<B: Backend>(

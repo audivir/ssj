@@ -3,7 +3,9 @@
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
-use ssj_proto::bootstrap::{Connect, MAX_OUTPUT, format_pin, parse_connect, sanitize};
+use ssj_proto::bootstrap::{
+    Connect, MAX_OUTPUT, Prestart, format_pin, format_start, parse_connect, sanitize,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -159,13 +161,19 @@ pub enum StartError {
 
 /// Starts the server, or attaches to one that runs, and returns its connection data.
 ///
-/// `extra` holds the arguments for the attach case; the client fingerprint goes in on stdin.
+/// `extra` holds the arguments for the attach case; the client fingerprint goes in on stdin. With
+/// `prestart` a fresh session starts its shell at once, while the client is still connecting.
 pub async fn start_server(
     args: &Args,
     client_fingerprint: &[u8; 32],
     extra: &[String],
+    prestart: Option<&Prestart>,
 ) -> Result<Connect, StartError> {
-    let remote = run_remote(args, extra, &format_pin(client_fingerprint))
+    let mut stdin = format_pin(client_fingerprint);
+    if let Some(line) = prestart.and_then(format_start) {
+        stdin.push_str(&line);
+    }
+    let remote = run_remote(args, extra, &stdin)
         .await
         .map_err(StartError::Failed)?;
     if remote.server_missing() {
