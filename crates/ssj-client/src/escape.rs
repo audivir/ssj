@@ -96,8 +96,14 @@ impl EscapeFilter {
     }
 }
 
-/// Text for `~?`; `detach_key` is added when one is set.
+/// Text for `~?`; `detach_key` is added when one is set. Inside an `ssh` session, `ssh` reads
+/// `~.` first, so the text says how to get it through.
 pub fn help(detach_key: Option<u8>) -> String {
+    help_in(detach_key, std::env::var_os("SSH_TTY").is_some())
+}
+
+/// Like [`help`], with the knowledge whether this runs inside an `ssh` session.
+pub fn help_in(detach_key: Option<u8>, inside_ssh: bool) -> String {
     let mut text = String::from(
         "\r\nSupported escape sequences:\r\n  ~.  detach and leave the session running\r\n  ~~  send a single ~\r\n  ~?  this list\r\n(only at the start of a line)\r\n",
     );
@@ -107,6 +113,11 @@ pub fn help(detach_key: Option<u8>) -> String {
             "  ^{}  detach, anywhere\r\n",
             char::from(key + b'@')
         ));
+    }
+    if inside_ssh {
+        text.push_str(
+            "(inside ssh: it reads ~. first and would end this connection and the session;\r\n type ~~. instead, or set a detach key with --detach-key)\r\n",
+        );
     }
     text
 }

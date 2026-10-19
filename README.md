@@ -117,6 +117,14 @@ the key is no longer sent to the program). Tab and Enter are refused. From anoth
 `ssj detach user@host [ID...]` makes the connected clients leave and prints that it did; the shell
 keeps running, and `ssj attach` brings you back.
 
+### Inside an `ssh` session
+
+When you run `ssj` on a machine you reached with `ssh`, `ssh` reads `~.` first and ends its own
+connection. The terminal of `ssj` is then closed, which ends the session. Type `~~.` instead (the
+outer `ssh` turns it into `~.`), or set a detach key, which `ssh` does not see: `detach_key =
+"ctrl-]"` in `client.toml` on that machine. `~?` says so when `ssj` finds that it runs inside an
+`ssh` session (`SSH_TTY` is set).
+
 ### Choosing a session
 
 When you leave out the id and several sessions fit, `ssj` asks on a terminal instead of guessing
