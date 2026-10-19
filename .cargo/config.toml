@@ -1,0 +1,14 @@
+# `cargo zigbuild` links with zig, whose linker prints "ignoring deprecated linker optimization
+# setting 1" for the -O1 that rustc passes on Linux. The message is harmless, and rustc turns it
+# into a warning of every build, so the lint is off for the Linux targets that zig links.
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-A", "linker_messages"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-A", "linker_messages"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-A", "linker_messages"]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-A", "linker_messages"]
