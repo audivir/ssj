@@ -2,7 +2,41 @@
 //! so `build.rs` includes it to generate the completions and the man page. Every value is text
 //! here, and `cli::parse` checks it.
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+
+/// The flags that have a counterpart which turns them off: the id of each, its name, and the
+/// line that the help shows for both.
+// `build.rs` includes this file for the completions and the man page and does not call `command`
+#[allow(dead_code)]
+const PAIRS: [[&str; 4]; 3] = [
+    [
+        "auto_attach",
+        "no_auto_attach",
+        "auto-attach",
+        "auto-attach / --no-auto-attach",
+    ],
+    [
+        "forward_agent",
+        "no_forward_agent",
+        "forward-agent",
+        "forward-agent / --no-forward-agent",
+    ],
+    ["install", "no_install", "install", "install / --no-install"],
+];
+
+/// The command for parsing and for `--help`. The help shows a flag and its counterpart on one line
+/// (`--auto-attach / --no-auto-attach`), the way `typer` does: the flag gets that text as its long
+/// name, which nobody types, and keeps the real name as a hidden alias. The counterpart is hidden.
+#[allow(dead_code)]
+pub fn command() -> clap::Command {
+    let mut command = Options::command();
+    for [on, off, name, shown] in PAIRS {
+        command = command
+            .mut_arg(off, |arg| arg.hide(true))
+            .mut_arg(on, |arg| arg.long(shown).alias(name));
+    }
+    command
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -23,7 +57,7 @@ pub struct Options {
     #[arg(long, value_name = "NAME", overrides_with = "name")]
     pub name: Option<String>,
 
-    /// Join the only session without a client instead of starting another
+    /// Join the only session without a client, or always start a new one (default)
     #[arg(long, overrides_with = "no_auto_attach")]
     pub auto_attach: bool,
 
@@ -31,7 +65,7 @@ pub struct Options {
     #[arg(long, overrides_with = "auto_attach")]
     pub no_auto_attach: bool,
 
-    /// Let programs on the host use your ssh agent (SSH_AUTH_SOCK) for signing
+    /// Let programs on the host use your ssh agent (SSH_AUTH_SOCK) for signing, or not (default)
     #[arg(short = 'A', long, overrides_with = "no_forward_agent")]
     pub forward_agent: bool,
 
@@ -80,7 +114,7 @@ pub struct Options {
     #[arg(long, value_name = "TIME", overrides_with = "detached_timeout")]
     pub detached_timeout: Option<String>,
 
-    /// Install the server on the host without asking
+    /// Install the server on the host without asking, or never install it
     #[arg(long, overrides_with = "no_install")]
     pub install: bool,
 

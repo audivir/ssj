@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use ssj_proto::{EnvFilter, PROTOCOL, SessionName, is_selector};
 
-use clap::Parser;
-
 use crate::config::AutoInstall;
+use clap::FromArgMatches;
+
 use crate::options::Options;
 
 /// Where the server file is, as seen on the remote host.
@@ -228,7 +228,10 @@ pub fn parse_escape(text: &str) -> Result<Option<u8>, String> {
 }
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let options = match Options::try_parse_from(std::iter::once("ssj".to_owned()).chain(args)) {
+    let parsed = crate::options::command()
+        .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(args))
+        .and_then(|matches| Options::from_arg_matches(&matches));
+    let options = match parsed {
         Ok(options) => options,
         Err(error) if error.use_stderr() => {
             return Err(error.render().to_string().trim_end().to_owned());

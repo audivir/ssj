@@ -410,3 +410,27 @@ fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
     assert_eq!(off.local_echo, LocalEcho::Off);
     assert!(Config::from_text("local_echo = \"yes\"\n").is_err());
 }
+
+#[test]
+fn the_help_shows_a_flag_and_its_counterpart_on_one_line() {
+    let help = ssj_client::options::command()
+        .render_long_help()
+        .to_string();
+    for line in [
+        "--auto-attach / --no-auto-attach",
+        "-A, --forward-agent / --no-forward-agent",
+        "--install / --no-install",
+    ] {
+        assert!(help.contains(line), "{line}\n{help}");
+    }
+    // the counterparts have no line of their own
+    assert!(!help.contains("\n      --no-auto-attach"));
+    // and both spellings still work
+    assert!(args(&["--auto-attach", "h"]).unwrap().auto_attach);
+    assert!(
+        !args(&["--auto-attach", "--no-auto-attach", "h"])
+            .unwrap()
+            .auto_attach
+    );
+    assert!(args(&["--install", "h"]).is_ok() && args(&["--no-install", "h"]).is_ok());
+}
