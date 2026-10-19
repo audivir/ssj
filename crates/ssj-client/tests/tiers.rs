@@ -118,6 +118,7 @@ async fn a_stream_that_is_slow_to_open_is_not_given_up_after_the_short_first_tim
         stream_dead_after: Duration::from_secs(60),
         env: Env::default(),
         escape: None,
+        detach_key: None,
         attach: false,
         local_echo: false,
         compress: false,

@@ -29,6 +29,7 @@ fn info(state: SessionState) -> SessionInfo {
 fn requests_have_a_fixed_shape_and_survive_a_round_trip() {
     assert_eq!(format_request(&Request::Status), "STATUS\n");
     assert_eq!(format_request(&Request::Kill), "KILL\n");
+    assert_eq!(format_request(&Request::Detach), "DETACH\n");
     assert_eq!(format_request(&Request::Stream), "STREAM\n");
     assert_eq!(
         format_request(&Request::Attach(fingerprint())),
@@ -38,6 +39,7 @@ fn requests_have_a_fixed_shape_and_survive_a_round_trip() {
         Request::Status,
         Request::Stream,
         Request::Kill,
+        Request::Detach,
         Request::Attach(fingerprint()),
     ] {
         assert_eq!(
@@ -69,7 +71,8 @@ fn malformed_requests_are_refused() {
         format!("ATTACH {HEX}00\n"),
         format!("ATTACH  {HEX}\n"),
         format!("SSJ PIN {HEX}\n"),
-        "DETACH\n".into(),
+        "DETACH 1\n".into(),
+        "detach\n".into(),
     ] {
         assert_eq!(
             parse_request(bad.as_bytes()),

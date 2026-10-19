@@ -111,6 +111,18 @@ pub fn run(args: &Args) -> ExitCode {
                 Err(err) => fail(&err.to_string()),
             },
         },
+        Mode::Detach(id) => match choose(sessions, id.as_deref()) {
+            Err(message) => fail(&message),
+            Ok(found) => match ask(&found.path, &Request::Detach) {
+                Ok(Reply::Ok) => {
+                    println!("OK");
+                    ExitCode::SUCCESS
+                }
+                Ok(Reply::Error(text)) => fail(&text),
+                Ok(_) => fail("unexpected reply"),
+                Err(err) => fail(&err.to_string()),
+            },
+        },
         Mode::Attach(selector) => {
             let pin = match read_pin() {
                 Ok(pin) => pin,

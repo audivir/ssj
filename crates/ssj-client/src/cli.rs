@@ -76,6 +76,8 @@ pub enum Command {
     Install,
     /// End a session on the host.
     Kill(Option<String>),
+    /// Make the client of a session on the host leave; the session keeps running.
+    Detach(Option<String>),
     /// Edit `client.toml` here, or `server.toml` on the host if there is a destination.
     Edit,
     /// Print the cached session names of a host, or of all hosts, for tab completion.
@@ -113,6 +115,8 @@ pub struct Args {
     pub server_binary: Option<PathBuf>,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
+    /// A control byte that detaches wherever it is typed; `None` turns it off.
+    pub detach_key: Option<u8>,
     pub transport: Transport,
     /// Join the only session without a client instead of starting another one.
     pub auto_attach: bool,
@@ -140,6 +144,7 @@ pub struct Args {
 pub struct Explicit {
     pub ssh_command: bool,
     pub escape: bool,
+    pub detach_key: bool,
     pub send_env: bool,
     pub transport: bool,
     pub auto_attach: bool,
@@ -167,6 +172,7 @@ impl Args {
             server_dir: None,
             server_binary: None,
             escape: Some(b'~'),
+            detach_key: None,
             transport: Transport::Auto,
             auto_attach: false,
             forward_agent: false,
@@ -188,6 +194,9 @@ impl Args {
         }
         if !self.explicit.escape {
             self.escape = config.escape;
+        }
+        if !self.explicit.detach_key {
+            self.detach_key = config.detach_key;
         }
         if !self.explicit.auto_attach {
             self.auto_attach = config.auto_attach;
@@ -238,6 +247,32 @@ pub fn parse_escape(text: &str) -> Result<Option<u8>, String> {
     }
 }
 
+/// A control key as `ctrl-]` or `^]` (letters in either case, and `[ \ ] ^ _`), or `none`. Enter,
+/// Tab, and Escape are refused, since they are part of every line and every key sequence.
+pub fn parse_detach_key(text: &str) -> Result<Option<u8>, String> {
+    if text == "none" {
+        return Ok(None);
+    }
+    let key = text.strip_prefix('^').or_else(|| {
+        text.get(..5)
+            .filter(|p| p.eq_ignore_ascii_case("ctrl-"))
+            .map(|_| &text[5..])
+    });
+    let error = || "expected ctrl-A to ctrl-Z, ctrl-\\, ctrl-], ctrl-^, ctrl-_, or none".to_owned();
+    let [byte] = key.ok_or_else(error)?.as_bytes() else {
+        return Err(error());
+    };
+    let byte = match byte.to_ascii_uppercase() {
+        letter @ b'A'..=b'Z' => letter - b'@',
+        symbol @ (b'\\' | b']' | b'^' | b'_') => symbol - b'@',
+        _ => return Err(error()),
+    };
+    if matches!(byte, 0x09 | 0x0a | 0x0d) {
+        return Err("Tab and Enter cannot detach".to_owned());
+    }
+    Ok(Some(byte))
+}
+
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let parsed = crate::options::command()
         .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(args))
@@ -255,7 +290,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
 
 /// Words that are commands of `ssj` when a destination follows them.
 fn is_command_word(word: &str) -> bool {
-    matches!(word, "list" | "attach" | "kill" | "install" | "edit")
+    matches!(
+        word,
+        "list" | "attach" | "kill" | "detach" | "install" | "edit"
+    )
 }
 
 fn from_options(options: Options) -> Result<Args, String> {
@@ -318,6 +356,10 @@ fn from_options(options: Options) -> Result<Args, String> {
         Some(text) => parse_escape(text).map_err(|e| format!("--escape-char: {e}"))?,
         None => Some(b'~'),
     };
+    let detach_key = match &options.detach_key {
+        Some(text) => parse_detach_key(text).map_err(|e| format!("--detach-key: {e}"))?,
+        None => None,
+    };
     let transport = options
         .transport
         .as_deref()
@@ -360,11 +402,11 @@ fn from_options(options: Options) -> Result<Args, String> {
     let local_edit = positionals.as_slice() == ["edit"];
     let (command, destination) = match command_word {
         _ if local_edit => (Command::Edit, String::new()),
-        Some(word @ ("list" | "attach" | "kill" | "install" | "edit")) => {
+        Some(word @ ("list" | "attach" | "kill" | "detach" | "install" | "edit")) => {
             let rest = &positionals[1..];
             let (id, destination) = match rest {
                 [destination] => (None, destination.clone()),
-                [destination, id] if word == "attach" || word == "kill" => (
+                [destination, id] if matches!(word, "attach" | "kill" | "detach") => (
                     Some(
                         is_selector(id)
                             .then(|| id.clone())
@@ -375,7 +417,7 @@ fn from_options(options: Options) -> Result<Args, String> {
                 _ => {
                     return Err(format!(
                         "usage: ssj {word} user@host{}",
-                        if matches!(word, "attach" | "kill") {
+                        if matches!(word, "attach" | "kill" | "detach") {
                             " [ID]"
                         } else {
                             ""
@@ -388,6 +430,7 @@ fn from_options(options: Options) -> Result<Args, String> {
                 "install" => Command::Install,
                 "edit" => Command::Edit,
                 "attach" => Command::Attach(id),
+                "detach" => Command::Detach(id),
                 _ => Command::Kill(id),
             };
             (command, destination)
@@ -419,6 +462,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         explicit: Explicit {
             ssh_command: options.ssh_command.is_some(),
             escape: options.escape_char.is_some(),
+            detach_key: options.detach_key.is_some(),
             send_env: send_env_set,
             transport: transport.is_some(),
             auto_attach: auto_attach.is_some(),
@@ -439,6 +483,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         server_dir: options.server_dir.map(PathBuf::from),
         server_binary: options.server_binary.map(PathBuf::from),
         escape,
+        detach_key,
         transport: transport.unwrap_or_default(),
         auto_attach: auto_attach.unwrap_or(false),
         forward_agent: forward_agent.unwrap_or(false),

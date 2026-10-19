@@ -139,6 +139,9 @@ pub enum ServerFrame {
     /// them (see `slow_client`). The stream goes on after them, and the client adds the number
     /// to its output offset.
     Gap(u64),
+    /// Someone detached this client from the host (`ssj detach`): the client leaves and the
+    /// session keeps running, as after `~.`.
+    Detached,
     /// Output that is compressed (see [`crate::compress`]). It holds the same as an `Output`
     /// frame and counts for the output offset by its uncompressed length.
     Compressed(Vec<u8>),
@@ -174,6 +177,7 @@ const COMPRESSED: u8 = 0x88;
 const AGENT_OPEN: u8 = 0x89;
 const SERVER_AGENT: u8 = 0x8a;
 const SERVER_AGENT_CLOSE: u8 = 0x8b;
+const DETACHED: u8 = 0x8c;
 
 const HELLO_START: u8 = 0;
 const HELLO_RESUME: u8 = 1;
@@ -453,6 +457,10 @@ impl ServerFrame {
             Self::AgentOpen(id) => put_id(out, AGENT_OPEN, *id),
             Self::Agent(id, data) => put_channel(out, SERVER_AGENT, *id, data),
             Self::AgentClose(id) => put_id(out, SERVER_AGENT_CLOSE, *id),
+            Self::Detached => {
+                out.push(DETACHED);
+                Ok(())
+            }
             Self::Gap(skipped) => {
                 out.push(GAP);
                 out.extend_from_slice(&skipped.to_be_bytes());
@@ -498,6 +506,7 @@ impl ServerFrame {
             }
             ERROR => Self::Error(ErrorCode::from_u8(body.u8()?).ok_or(DecodeError::InvalidValue)?),
             PONG => Self::Pong,
+            DETACHED => Self::Detached,
             AGENT_OPEN => Self::AgentOpen(body.u32()?),
             SERVER_AGENT => {
                 let id = body.u32()?;

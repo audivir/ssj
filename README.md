@@ -56,7 +56,7 @@ auto_install = "ask"   # "ask" (default), "always", or "never"
   is installed, and the message tells you what to do.
 - `always`: installs without asking. `never`: never installs.
 - `--install` and `--no-install` override the setting for one run.
-- `ssj attach`, `ssj list`, and `ssj kill` never install anything.
+- `ssj attach`, `ssj list`, `ssj kill`, and `ssj detach` never install anything.
 
 ## Usage
 
@@ -65,6 +65,7 @@ ssj user@host                       # start a session
 ssj attach user@host [ID]           # join a running session, for example after a restart
 ssj list user@host                  # sessions with state and age
 ssj kill user@host [ID]             # end a session
+ssj detach user@host [ID]           # make the client of a session leave; the session keeps running
 ssj --name work user@host           # join the session `work`, or start it
 ssj attach user@host work           # an id or a name
 ssj user@host:2222                  # port of the ssh server; also ssh://user@host:2222
@@ -92,6 +93,8 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
 | `ssj kill user@host [ID]` | Ends the session from another terminal. |
 | `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
+| The detach key, anywhere | The same, also in the middle of a line or a program. |
+| `ssj detach user@host [ID]` | The same, from another terminal, for the client of that session. |
 | Closing the terminal, `SIGHUP`, `SIGTERM` | Ends the session, as with `ssh`. `ssj` exits with 129. |
 | `kill -9` of `ssj`, a lost connection | Leaves it. The shell keeps running. |
 
@@ -106,6 +109,13 @@ The `~` is the escape character, as in `ssh`. It counts only at the start of a l
 Any other character after `~` is sent as typed. Set another escape character with
 `--escape-char C`, or turn the feature off with `--escape-char none`. The `escape_char` setting in
 `client.toml` does the same for every run.
+
+`~.` cannot be typed in the middle of a line or inside a program. For that, set a detach key:
+`--detach-key ctrl-]` (or `detach_key = "ctrl-]"` in `client.toml`). The key is a control key,
+`ctrl-A` to `ctrl-Z`, `ctrl-\`, `ctrl-]`, `ctrl-^`, or `ctrl-_`, or `none` (the default, because
+the key is no longer sent to the program). Tab and Enter are refused. From another terminal,
+`ssj detach user@host [ID]` makes the connected client leave and prints that it did; the shell
+keeps running, and `ssj attach` brings you back.
 
 ### Connection problems
 
@@ -166,6 +176,7 @@ the file.
 ```toml
 auto_install = "ask"                  # "ask", "always", or "never"
 escape_char = "~"                     # one character, or "none"
+detach_key = "none"                   # "none", or a key such as "ctrl-]" that detaches anywhere
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = ["TERM", "LANG", "LC_*"]   # variables sent to the server
 transport = "auto"                    # "auto", "udp", "tcp", or "stdio"

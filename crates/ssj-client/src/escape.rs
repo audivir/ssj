@@ -1,4 +1,5 @@
-//! The escape character of the client, as in `ssh`: `~` at the start of a line.
+//! The escape character of the client, as in `ssh`: `~` at the start of a line, and the detach key,
+//! which works anywhere.
 
 /// What the client has to do with the typed input.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,6 +17,8 @@ pub enum Action {
 pub struct EscapeFilter {
     /// `None` turns the feature off.
     escape: Option<u8>,
+    /// A control byte that detaches wherever it is typed; `None` leaves every byte to the shell.
+    detach_key: Option<u8>,
     at_line_start: bool,
     /// The escape character was typed at the start of a line and waits for the next byte.
     pending: bool,
@@ -25,15 +28,21 @@ impl EscapeFilter {
     pub fn new(escape: Option<u8>) -> Self {
         Self {
             escape,
+            detach_key: None,
             at_line_start: true,
             pending: false,
         }
     }
 
+    pub fn with_detach_key(mut self, key: Option<u8>) -> Self {
+        self.detach_key = key;
+        self
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Action> {
-        let Some(escape) = self.escape else {
+        if self.escape.is_none() && self.detach_key.is_none() {
             return vec![Action::Send(bytes.to_vec())];
-        };
+        }
         let mut actions = Vec::new();
         let mut run = Vec::new();
         let flush = |run: &mut Vec<u8>, actions: &mut Vec<Action>| {
@@ -42,6 +51,16 @@ impl EscapeFilter {
             }
         };
         for &byte in bytes {
+            if self.detach_key == Some(byte) {
+                flush(&mut run, &mut actions);
+                actions.push(Action::Detach);
+                return actions;
+            }
+            // the escape character is off when it is none: no byte equals it
+            let Some(escape) = self.escape else {
+                run.push(byte);
+                continue;
+            };
             if self.pending {
                 self.pending = false;
                 match byte {

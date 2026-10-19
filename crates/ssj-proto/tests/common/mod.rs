@@ -64,5 +64,6 @@ pub fn server_frames() -> Vec<ServerFrame> {
         ServerFrame::AgentOpen(7),
         ServerFrame::Agent(7, b"\0\0\0\x05\x0c\0\0\0\0".to_vec()),
         ServerFrame::AgentClose(u32::MAX),
+        ServerFrame::Detached,
     ]
 }

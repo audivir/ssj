@@ -28,6 +28,7 @@ pub const CLIENT_TEMPLATE: &str = "\
 # Settings of ssj, read at every start. Flags on the command line override them.
 # auto_install = \"ask\"            # \"ask\", \"always\", or \"never\"
 # escape_char = \"~\"               # one character, or \"none\"
+# detach_key = \"none\"           # \"none\" or a key such as \"ctrl-]\" that detaches anywhere
 # ssh_command = \"ssh -J jump\"     # replaces ssh
 # send_env = [\"TERM\", \"LANG\", \"LC_*\"]
 # transport = \"auto\"              # \"auto\", \"udp\", \"tcp\", or \"stdio\"

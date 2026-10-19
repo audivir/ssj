@@ -25,6 +25,10 @@ Whether to install the server when it is missing.
 \fBescape_char\fR = "~" | "none"
 The escape character.
 .TP
+\fBdetach_key\fR = "none" | "ctrl-]"
+A key that detaches from the session wherever it is typed. Off by default, since the key is not
+sent to the program.
+.TP
 \fBssh_command\fR = "ssh -J jump"
 The command that replaces \fBssh\fR.
 .TP
@@ -153,11 +157,11 @@ fn main() {
             let helpers = r#"_ssj_sessions() { local -a s; s=(${(f)"$(ssj --complete 2>/dev/null)"}); compadd -a s; }
 _ssj_words() {
     if (( CURRENT == 1 )); then
-        _alternative 'commands:command:compadd list attach kill install' 'hosts:host:_hosts'
-    elif [[ $words[1] == (list|attach|kill|install) ]]; then
+        _alternative 'commands:command:compadd list attach kill detach install' 'hosts:host:_hosts'
+    elif [[ $words[1] == (list|attach|kill|detach|install) ]]; then
         if (( CURRENT == 2 )); then
             _hosts
-        elif (( CURRENT == 3 )) && [[ $words[1] == (attach|kill) ]]; then
+        elif (( CURRENT == 3 )) && [[ $words[1] == (attach|kill|detach) ]]; then
             local -a s; s=(${(f)"$(ssj --complete $words[2] 2>/dev/null)"}); compadd -a s
         fi
     else
@@ -175,8 +179,8 @@ _ssj_words() {
     }
 }
 
-/// Hooks that let `attach`, `kill`, and `--name` offer the session names of `ssj --complete`: for
-/// the id after the host of `attach` and `kill` those of that host.
+/// Hooks that let `attach`, `kill`, `detach`, and `--name` offer the session names of `ssj --complete`: for
+/// the id after the host of `attach`, `kill`, and `detach` those of that host.
 fn dynamic(shell: Shell) -> &'static str {
     match shell {
         Shell::Bash => {
@@ -184,9 +188,9 @@ fn dynamic(shell: Shell) -> &'static str {
 _ssj_sessions() {
     local current=${COMP_WORDS[COMP_CWORD]}
     local previous=${COMP_WORDS[COMP_CWORD-1]}
-    # ssj attach|kill HOST <name>: the sessions of that host
+    # ssj attach|kill|detach HOST <name>: the sessions of that host
     case ${COMP_WORDS[1]} in
-        attach|kill)
+        attach|kill|detach)
             if [[ $COMP_CWORD -eq 3 ]]; then
                 COMPREPLY=($(compgen -W "$(ssj --complete "${COMP_WORDS[2]}" 2>/dev/null)" -- "$current"))
                 [[ ${#COMPREPLY[@]} -gt 0 ]] && return
@@ -206,7 +210,7 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
         }
         Shell::Fish => {
             r#"
-complete -c ssj -n '__fish_seen_subcommand_from attach kill; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
+complete -c ssj -n '__fish_seen_subcommand_from attach kill detach; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
 complete -c ssj -l name -x -a '(ssj --complete 2>/dev/null)'
 "#
         }

@@ -247,7 +247,7 @@ A session may have a name (`ssj --name work user@host`): 1 to 32 characters of l
 `.`, `_`, `-`, not starting with `.` or `-`. The server keeps it and `ssj list` shows it. Names are
 unique per user and host. The command joins the session of that name if it runs and starts one
 otherwise; the client always begins with an attach, and a session without a shell answers
-`NotStarted`, on which the client sends a start. `ssj attach` and `ssj kill` take an id or a name.
+`NotStarted`, on which the client sends a start. `ssj attach`, `ssj kill`, and `ssj detach` take an id or a name.
 `auto_attach = true` in `client.toml` (or `--auto-attach`) makes a plain `ssj user@host` join the
 only session that has no client connected, and start a new one when there is none or more than one
 (a session with a client is never taken away). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
@@ -257,7 +257,7 @@ protocol between client and server.
 
 - The client parses its command line with `clap` (derive). The definition lives in
   `crates/ssj-client/src/options.rs`, free of other dependencies of the crate, and every value is
-  text there; `cli::parse` checks the values. A word is a command (`list`, `attach`, `kill`,
+  text there; `cli::parse` checks the values. A word is a command (`list`, `attach`, `kill`, `detach`,
   `install`) only when a destination follows it, so a host named `list` still works. An option
   given twice takes the last value, except `--server-arg` and `--send-env`, which collect.
 - `build.rs` writes the man page (`ssj.1`, with a FILES section for `client.toml` and
@@ -516,7 +516,7 @@ Two ways to get it there:
      names `ssj install` and `--install`.
    - `always`: installs without asking. `never`: never installs and says how to do it by hand.
    - The flags `--install` and `--no-install` override the config file for one run.
-   - `attach`, `list`, and `kill` never install. Without a server there are no sessions.
+   - `attach`, `list`, `kill`, and `detach` never install. Without a server there are no sessions.
 
 How the upload works:
 
@@ -649,6 +649,18 @@ Leaving (the shell keeps running):
   - Any other character after `~` is sent as typed, including the `~`.
     The escape character is configurable (`--escape-char C` or `escape_char` in `client.toml`),
     and `none` turns the feature off.
+- The detach key detaches from anywhere, also in the middle of a line or of a full-screen program
+  (`--detach-key KEY` or `detach_key` in `client.toml`). It is a control byte, `ctrl-A` to
+  `ctrl-Z` or `ctrl-\`, `ctrl-]`, `ctrl-^`, `ctrl-_` (also written `^]`), or `none`, which is the
+  default, since the byte is no longer sent to the program. Tab and Enter (`ctrl-I`, `ctrl-J`,
+  `ctrl-M`) are refused, and `ctrl-[` (Escape) is not accepted, since every line and key sequence
+  uses them. Typed bytes before the key in the same read are sent first.
+- `ssj detach DESTINATION [ID]` detaches the connected client from another terminal. It runs
+  `ssj-server --detach [ID]`, which sends `DETACH` on the control socket. The server answers
+  `ERR no client is connected` when the state is not connected. Otherwise the session sends the
+  frame `Detached` (0x8c) to the client, waits 300 ms so that the frame can leave before the
+  endpoint is closed, and then does what `Detach` does. The client leaves with exit code 0 and
+  the same message as after `~.`.
 - `Detach` keeps the session running and **disables the detached timeout** until a client
   attaches again. The reason is intent: a user who detaches on purpose wants to come back later,
   for example to a long job, so the server must not end the shell behind their back. After the
@@ -846,7 +858,7 @@ The session starts the command and not an interactive shell, and ends with its e
   session survives a lost connection, the command can be joined again with `ssj attach`, and the
   exit status is that of the shell.
 - Where the command starts: after `--`, or without it after the destination, when the first word
-  is not one of the commands of `ssj` (`list`, `attach`, `kill`, `install`, `edit`). With the
+  is not one of the commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`). With the
   dashes there must be exactly one word before them, the destination, so a host with the name of
   a command is `ssj attach -- ls`. Options of `ssj` may stand anywhere before the `--`; an option
   after the destination without dashes is one of `ssj`, which is why `ssj host ls -l` is refused

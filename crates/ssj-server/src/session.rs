@@ -149,6 +149,8 @@ pub enum SessionEvent {
 pub enum SessionCommand {
     /// Hangs up the terminal of the shell, as closing a terminal window would, and ends.
     Kill,
+    /// Tells the connected client to leave and keeps the shell running, as after `~.`.
+    Detach,
 }
 
 /// Manages the shell of one session across the connections of its client.
@@ -431,6 +433,21 @@ impl<B: Backend> Session<B> {
                 Event::Command(Some(SessionCommand::Kill)) => {
                     hang_up(shell.take(), active.as_ref()).await;
                     return SessionEnd::Killed;
+                }
+                Event::Command(Some(SessionCommand::Detach)) => {
+                    if active.as_ref().is_some_and(|a| a.hello_done) {
+                        let a = active.take().expect("checked above");
+                        let _ = a.out.try_send(ServerFrame::Detached);
+                        // the transport closes the endpoint right after the event, and the frame
+                        // needs a moment to leave first
+                        sleep(Duration::from_millis(300)).await;
+                        drop(a);
+                        detached_since = Some(Instant::now());
+                        detached_on_purpose = true;
+                        if let Some(events) = &events {
+                            let _ = events.send(SessionEvent::Detached);
+                        }
+                    }
                 }
                 Event::Connection(None) => return SessionEnd::Closed,
                 Event::Connection(Some(conn)) => {

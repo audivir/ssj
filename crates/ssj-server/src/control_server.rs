@@ -45,6 +45,14 @@ impl Context {
                 let _ = self.commands.send(SessionCommand::Kill);
                 Reply::Ok
             }
+            Request::Detach => {
+                if *self.state.lock().expect("not poisoned") == SessionState::Connected {
+                    let _ = self.commands.send(SessionCommand::Detach);
+                    Reply::Ok
+                } else {
+                    Reply::Error("no client is connected".to_owned())
+                }
+            }
             // handled by the caller, since the connection itself is needed
             Request::Stream => Reply::Error("not a stream".to_owned()),
             Request::Attach(pin) => match self.frontend.lock().await.open(pin).await {

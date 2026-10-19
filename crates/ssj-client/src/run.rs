@@ -156,6 +156,8 @@ pub struct Params {
     pub env: Env,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
+    /// A control byte that detaches wherever it is typed.
+    pub detach_key: Option<u8>,
     /// Join a running session instead of starting one.
     pub attach: bool,
     /// Show typed characters before the server echoes them (see [`crate::echo`]).
@@ -303,6 +305,7 @@ async fn session(mut args: Args) -> u8 {
         }
         Command::List => list_sessions(&args).await,
         Command::Kill(id) => kill_session(&args, id).await,
+        Command::Detach(id) => detach_session(&args, id).await,
         Command::Edit => crate::edit::run(&args).await,
         Command::Install => match install(&args).await {
             Ok(path) => {
@@ -556,6 +559,32 @@ async fn kill_session(args: &Args, id: Option<String>) -> u8 {
     }
 }
 
+async fn detach_session(args: &Args, id: Option<String>) -> u8 {
+    let mut extra = vec!["--detach".to_owned()];
+    extra.extend(id);
+    match run_remote(args, &extra, "").await {
+        Ok(remote) if remote.server_missing() => {
+            eprintln!(
+                "ssj: no running session (ssj-server is not installed on {})",
+                args.destination
+            );
+            1
+        }
+        Ok(remote) if remote.status.success() => {
+            println!("client detached; the session keeps running");
+            0
+        }
+        Ok(remote) => {
+            eprintln!("ssj: could not detach the session: {}", remote.error_text());
+            1
+        }
+        Err(message) => {
+            eprintln!("ssj: {message}");
+            1
+        }
+    }
+}
+
 /// Reports SIGHUP (the terminal went away) and SIGTERM (`kill`): `ssj` then ends the session, as
 /// `ssh` would end its shell. Losing the connection is a different thing and keeps the session.
 fn hangup_signals() -> mpsc::UnboundedReceiver<()> {
@@ -777,6 +806,7 @@ async fn connect_session(
             stream_dead_after: STREAM_DEAD_AFTER,
             env,
             escape: args.escape,
+            detach_key: args.detach_key,
             attach,
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
             compress: args.compress == Some(true),
@@ -982,6 +1012,7 @@ fn server_frame_name(frame: &ServerFrame) -> String {
         ServerFrame::Error(code) => format!("error {code:?}"),
         ServerFrame::Pong => "pong".to_owned(),
         ServerFrame::Gap(skipped) => format!("gap {skipped} bytes"),
+        ServerFrame::Detached => "detached by `ssj detach`".to_owned(),
         ServerFrame::AgentOpen(id) => format!("agent open {id}"),
         ServerFrame::Agent(id, data) => format!("agent {id} {} bytes", data.len()),
         ServerFrame::AgentClose(id) => format!("agent close {id}"),
@@ -1088,7 +1119,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         return Err("no way to reach the server".to_owned());
     }
     let size = io.size;
-    let escape = EscapeFilter::new(params.escape);
+    let escape = EscapeFilter::new(params.escape).with_detach_key(params.detach_key);
     let echo = Echo::new(params.local_echo, size.cols());
     let compress = params.compress;
     let mut io = io;
@@ -1796,6 +1827,10 @@ impl Client {
                             self.output_offset += skipped;
                             self.note_gap(skipped).await;
                             link.send(ClientFrame::OutputAck(self.output_offset));
+                        }
+                        ServerFrame::Detached => {
+                            vlog!(1, "`ssj detach` was run for this session: leaving it");
+                            return Ok(Pumped::Done(Finished::Detached));
                         }
                         ServerFrame::Exit(status) => {
                             link.send(ClientFrame::Close);

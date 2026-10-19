@@ -166,6 +166,12 @@ fn subcommands_need_a_destination_after_them() {
             Command::Kill(Some("My-Session".to_owned())),
             "host",
         ),
+        (vec!["detach", "host"], Command::Detach(None), "host"),
+        (
+            vec!["detach", "host", "work"],
+            Command::Detach(Some("work".to_owned())),
+            "host",
+        ),
         (
             vec!["--escape-char", "none", "list", "host"],
             Command::List,

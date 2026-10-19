@@ -3,6 +3,7 @@
 //! ```toml
 //! auto_install = "ask"            # "ask" (default), "always", or "never"
 //! escape_char = "~"               # one character, or "none"
+//! detach_key = "none"            # "none" (default) or a key such as "ctrl-]" that detaches anywhere
 //! ssh_command = "ssh -J jump"     # replaces `ssh`
 //! send_env = ["TERM", "LANG", "LC_*"]
 //! auto_attach = false             # `ssj host` joins the only session that has no client
@@ -19,7 +20,8 @@ use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
 use crate::cli::{
-    LocalEcho, Transport, parse_compress, parse_escape, parse_local_echo, parse_transport,
+    LocalEcho, Transport, parse_compress, parse_detach_key, parse_escape, parse_local_echo,
+    parse_transport,
 };
 
 /// What to do when the server is not installed on the host.
@@ -39,6 +41,8 @@ pub struct Config {
     pub auto_install: AutoInstall,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
+    /// A control byte that detaches wherever it is typed; `None` turns it off.
+    pub detach_key: Option<u8>,
     pub ssh_command: Vec<String>,
     pub send_env: EnvFilter,
     pub transport: Transport,
@@ -55,6 +59,7 @@ impl Default for Config {
         Self {
             auto_install: AutoInstall::default(),
             escape: Some(b'~'),
+            detach_key: None,
             ssh_command: vec!["ssh".to_owned()],
             send_env: EnvFilter::default_patterns(),
             transport: Transport::default(),
@@ -83,6 +88,9 @@ impl Config {
         }
         if let Some(text) = table.take_text("escape_char")? {
             config.escape = parse_escape(&text).map_err(|e| format!("escape_char: {e}"))?;
+        }
+        if let Some(text) = table.take_text("detach_key")? {
+            config.detach_key = parse_detach_key(&text).map_err(|e| format!("detach_key: {e}"))?;
         }
         if let Some(text) = table.take_text("ssh_command")? {
             let words: Vec<String> = text.split_whitespace().map(str::to_owned).collect();

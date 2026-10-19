@@ -88,3 +88,26 @@ fn another_escape_character_works_and_none_turns_it_off() {
     let mut off = EscapeFilter::new(None);
     assert_eq!(off.feed(b"~."), vec![send(b"~.")]);
 }
+
+#[test]
+fn the_detach_key_detaches_anywhere_and_keeps_what_came_before() {
+    let mut filter = EscapeFilter::new(Some(b'~')).with_detach_key(Some(0x1d));
+    // in the middle of a line, which the escape character cannot do
+    assert_eq!(
+        filter.feed(b"ls -l\x1dmore"),
+        vec![send(b"ls -l"), Action::Detach]
+    );
+
+    // also with the escape character off, and when the key comes first
+    let mut only_key = EscapeFilter::new(None).with_detach_key(Some(0x1d));
+    assert_eq!(only_key.feed(b"abc"), vec![send(b"abc")]);
+    assert_eq!(only_key.feed(b"\x1d"), vec![Action::Detach]);
+
+    // the escape character still works next to it
+    let mut both = EscapeFilter::new(Some(b'~')).with_detach_key(Some(0x1d));
+    assert_eq!(both.feed(b"~."), vec![Action::Detach]);
+
+    // without a key every byte is for the shell
+    let mut none = EscapeFilter::new(Some(b'~'));
+    assert_eq!(none.feed(b"a\x1db"), vec![send(b"a\x1db")]);
+}

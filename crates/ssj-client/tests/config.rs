@@ -127,3 +127,32 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
         (Some(b'!'), vec!["my-ssh".to_owned()])
     );
 }
+
+#[test]
+fn the_detach_key_is_a_control_key_or_none() {
+    assert_eq!(Config::default().detach_key, None);
+    for (text, byte) in [
+        ("ctrl-]", 0x1d),
+        ("CTRL-]", 0x1d),
+        ("^]", 0x1d),
+        ("ctrl-a", 0x01),
+        ("^Z", 0x1a),
+        ("ctrl-\\\\", 0x1c),
+        ("ctrl-_", 0x1f),
+    ] {
+        let config = Config::from_text(&format!("detach_key = \"{text}\"")).unwrap();
+        assert_eq!(config.detach_key, Some(byte), "{text}");
+    }
+    assert_eq!(
+        Config::from_text("detach_key = \"none\"")
+            .unwrap()
+            .detach_key,
+        None
+    );
+    for bad in [
+        "", "]", "ctrl-", "ctrl-ab", "ctrl-1", "ctrl-i", "ctrl-m", "ctrl-j", "x",
+    ] {
+        let error = Config::from_text(&format!("detach_key = \"{bad}\"")).unwrap_err();
+        assert!(error.starts_with("detach_key: "), "{bad}: {error}");
+    }
+}

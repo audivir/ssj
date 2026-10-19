@@ -395,6 +395,7 @@ fn start_client_inner(
         stream_dead_after,
         env: Env::default(),
         escape: Some(b'~'),
+        detach_key: None,
         local_echo: false,
         compress: false,
         agent: None,

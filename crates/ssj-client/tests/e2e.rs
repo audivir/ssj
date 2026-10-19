@@ -607,6 +607,102 @@ fn list_attach_detach_attach_kill_through_the_client() {
     }
 }
 
+/// Waits until `ssj list` shows a session in `state` and returns its id.
+fn wait_for_state(runtime: &Path, ssh: &Path, state: &str) -> String {
+    let start = Instant::now();
+    loop {
+        let listing = text(&ssj(runtime, ssh, &["list", "user@localhost"], "").stdout);
+        if listing.contains(state) {
+            return listing.split_whitespace().next().unwrap().to_owned();
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "no session {state}: {listing}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    let marker = runtime.join("typed");
+    let script = format!(
+        "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; touch {}; done",
+        marker.display()
+    );
+    let helper = {
+        let (runtime, ssh) = (runtime.clone(), ssh.clone());
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            while !runtime.join("typed").exists() {
+                assert!(start.elapsed() < Duration::from_secs(20), "nothing typed");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            // the client is connected and has typed: this is the other terminal
+            ssj(&runtime, &ssh, &["detach", "user@localhost"], "")
+        })
+    };
+    let first = ssj_typing(
+        &runtime,
+        &ssh,
+        &["user@localhost", "--", &script],
+        &[("one\n", "got:one:1")],
+    );
+    let detached = helper.join().unwrap();
+    assert!(detached.status.success(), "{}", text(&detached.stderr));
+    assert!(text(&detached.stdout).contains("detached"));
+    assert_eq!(first.status.code(), Some(0), "{}", text(&first.stderr));
+    assert!(
+        text(&first.stderr).contains("detached"),
+        "{}",
+        text(&first.stderr)
+    );
+
+    // the shell kept its state for the next client
+    wait_for_state(&runtime, &ssh, "detached");
+    let again = ssj_typing(
+        &runtime,
+        &ssh,
+        &["attach", "user@localhost"],
+        &[("two\n", "got:two:2"), ("~.", "")],
+    );
+    assert!(text(&again.stdout).contains("got:two:2"));
+
+    // nobody is connected now
+    let nobody = ssj(&runtime, &ssh, &["detach", "user@localhost"], "");
+    assert_eq!(nobody.status.code(), Some(1));
+    assert!(
+        text(&nobody.stderr).contains("no client is connected"),
+        "{}",
+        text(&nobody.stderr)
+    );
+    let _ = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+}
+
+#[test]
+fn the_detach_key_leaves_in_the_middle_of_a_line() {
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    let output = ssj_typing(
+        &runtime,
+        &ssh,
+        &["--detach-key", "ctrl-]", "user@localhost"],
+        // typed in the middle of a line, which `~.` cannot do
+        &[("half a line\x1d", "")],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("detached"),
+        "{}",
+        text(&output.stderr)
+    );
+    let id = wait_for_state(&runtime, &ssh, "detached");
+    assert!(!id.is_empty());
+    let _ = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+}
+
 #[test]
 fn attach_and_kill_without_a_session_say_so() {
     let runtime = short_dir();

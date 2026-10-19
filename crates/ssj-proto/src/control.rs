@@ -30,6 +30,8 @@ pub enum Request {
     Stream,
     /// Ends the session as if the terminal had been closed.
     Kill,
+    /// Detaches the connected client: it leaves and the session keeps running.
+    Detach,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +87,7 @@ pub fn format_request(request: &Request) -> String {
         Request::Status => "STATUS\n".to_owned(),
         Request::Stream => "STREAM\n".to_owned(),
         Request::Kill => "KILL\n".to_owned(),
+        Request::Detach => "DETACH\n".to_owned(),
     }
 }
 
@@ -101,6 +104,7 @@ pub fn parse_request(line: &[u8]) -> Result<Request, ControlError> {
         b"STATUS" => Ok(Request::Status),
         b"STREAM" => Ok(Request::Stream),
         b"KILL" => Ok(Request::Kill),
+        b"DETACH" => Ok(Request::Detach),
         _ => {
             let hex = line
                 .strip_prefix(b"ATTACH ")

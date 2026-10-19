@@ -34,6 +34,8 @@ pub enum Mode {
     CheckConfig,
     /// End a running session.
     Kill(Option<String>),
+    /// Make the connected client leave; the session keeps running.
+    Detach(Option<String>),
     /// Carry the stream of a client over stdin and stdout, for hosts that allow only the `ssh`
     /// channel.
     Stdio(Option<String>),
@@ -294,6 +296,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             }
             "--kill" => {
                 out.mode = Mode::Kill(session_id(&mut args).map_err(|e| format!("--kill: {e}"))?)
+            }
+            "--detach" => {
+                out.mode =
+                    Mode::Detach(session_id(&mut args).map_err(|e| format!("--detach: {e}"))?)
             }
             "--stdio" => {
                 out.mode = Mode::Stdio(session_id(&mut args).map_err(|e| format!("--stdio: {e}"))?)

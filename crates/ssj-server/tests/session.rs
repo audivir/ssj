@@ -74,6 +74,7 @@ struct Seen {
     closed: bool,
     pongs: usize,
     gaps: Vec<u64>,
+    detached: bool,
     /// Frames of the agent channels, in the order they came.
     agent: Vec<ServerFrame>,
 }
@@ -161,6 +162,7 @@ impl Client {
                 Some(ServerFrame::Welcome(welcome)) => seen.welcome = Some(welcome),
                 Some(ServerFrame::Pong) => seen.pongs += 1,
                 Some(ServerFrame::Gap(skipped)) => seen.gaps.push(skipped),
+                Some(ServerFrame::Detached) => seen.detached = true,
                 Some(
                     frame @ (ServerFrame::AgentOpen(_)
                     | ServerFrame::Agent(..)
@@ -599,6 +601,46 @@ async fn events_follow_the_state_of_the_client() {
     again.send(ClientFrame::Detach).await;
     // a deliberate detach is its own event and not also a loss
     assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
+}
+
+#[tokio::test]
+async fn the_detach_command_tells_the_client_to_leave_and_the_shell_keeps_running() {
+    let mut cfg = config("cat");
+    cfg.detached_timeout = Some(Duration::from_millis(300));
+    let (commands, commands_rx) = mpsc::unbounded_channel();
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (conns, rx) = mpsc::channel(4);
+    let mut session = tokio::spawn(
+        Session::new(Direct, cfg)
+            .with_commands(commands_rx)
+            .with_events(events_tx)
+            .run(rx),
+    );
+    let harness = Harness {
+        conns,
+        session: tokio::spawn(async { SessionEnd::Closed }),
+    };
+    let mut client = harness.connect().await;
+    client.start().await;
+    assert_eq!(next_event(&mut events).await, SessionEvent::Connected);
+
+    commands.send(SessionCommand::Detach).unwrap();
+    let seen = client.read_until(|s| s.detached).await;
+    assert!(seen.detached);
+    assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
+
+    // on purpose, so the timeout does not apply, and the shell is still there
+    assert!(
+        timeout(Duration::from_millis(1200), &mut session)
+            .await
+            .is_err()
+    );
+    let mut again = harness.connect().await;
+    again
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    let seen = again.read_until(|s| s.welcome.is_some()).await;
+    assert!(seen.welcome.is_some());
 }
 
 #[tokio::test]
