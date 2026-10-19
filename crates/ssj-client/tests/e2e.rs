@@ -333,6 +333,19 @@ fn short_dir() -> PathBuf {
 }
 
 /// Runs `ssj` with the given words and stdin, against the server in the same runtime directory.
+/// Every session of these tests ends by itself after a minute, so that a test that fails before
+/// it kills its session does not leave a server process behind for hours.
+const LEAK_GUARD: [&str; 8] = [
+    "--server-arg",
+    "--max-detached",
+    "--server-arg",
+    "60",
+    "--server-arg",
+    "--detached-timeout",
+    "--server-arg",
+    "60",
+];
+
 fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_RUNTIME_DIR", runtime)
@@ -340,6 +353,7 @@ fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--udp-host", "127.0.0.1"])
+        .args(LEAK_GUARD)
         .args(words)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -377,6 +391,7 @@ fn ssj_typing(runtime: &Path, ssh: &Path, words: &[&str], steps: &[(&str, &str)]
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--udp-host", "127.0.0.1"])
+        .args(LEAK_GUARD)
         .args(words)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -630,6 +645,7 @@ impl Host {
                 "--udp-host",
                 "127.0.0.1",
             ])
+            .args(LEAK_GUARD)
             .args(words)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
