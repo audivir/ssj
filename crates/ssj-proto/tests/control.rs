@@ -230,6 +230,9 @@ fn a_carriage_return_is_refused_in_every_line() {
     for line in [
         format!("ATTACH {HEX}\r\n"),
         format!("ATTACH {HEX}\r"),
+        format!("ATTACH {HEX}\n\n"),
+        format!("ATTACH {HEX}\r\n\n"),
+        "STATUS\n\n".to_owned(),
         "STATUS\r\n".to_owned(),
         "KILL\r".to_owned(),
     ] {
