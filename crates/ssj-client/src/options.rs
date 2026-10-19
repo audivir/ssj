@@ -43,8 +43,8 @@ pub fn command() -> clap::Command {
     name = "ssj",
     version,
     about = "A roaming remote shell that survives jumps",
-    override_usage = "ssj [OPTIONS] [COMMAND] DESTINATION [ID]",
-    after_help = "Commands: list, attach DESTINATION [ID], kill DESTINATION [ID], install. A word is a command only when a \
+    override_usage = "ssj [OPTIONS] [COMMAND] DESTINATION [ID]\n       ssj [OPTIONS] DESTINATION [--] REMOTE-COMMAND...",
+    after_help = "Commands: list, attach DESTINATION [ID], kill DESTINATION [ID], install, edit [DESTINATION]. A word is a command only when a \
                   destination follows it.\n\
                   DESTINATION is [user@]host[:port], ssh://[user@]host[:port], or an IPv6 address."
 )]
@@ -52,6 +52,10 @@ pub struct Options {
     /// Command, session id or name, and destination
     #[arg(value_name = "ARGS")]
     pub words: Vec<String>,
+
+    /// A command to run in the session instead of the shell, after `--`
+    #[arg(last = true, value_name = "REMOTE-COMMAND")]
+    pub command: Vec<String>,
 
     /// Print what is happening: -v for the steps, -vv for details, -vvv for every frame
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]

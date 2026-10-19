@@ -833,6 +833,62 @@ Rules (nobody listens, and `wait` mode):
   slower than the writer. This is a property of that system and happens without `ssj` too, so the
   tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
+### Running a command (`ssj DESTINATION -- COMMAND...`)
+
+The session starts the command and not an interactive shell, and ends with its exit code.
+
+- The client passes `--shell-arg -l --shell-arg -c --shell-arg <command>` to the server, so the
+  login shell of the host (`--shell`, else `$SHELL`) runs `$SHELL -l -c '<command>'`, as `sshd`
+  does for `ssh host command`. The words are joined with spaces and the shell of the host reads
+  the result, so one quoted word is a whole shell command line.
+- The command has a terminal like every session (the output of `ssh -t host command`): the
+  session survives a lost connection, the command can be joined again with `ssj attach`, and the
+  exit status is that of the shell.
+- Where the command starts: after `--`, or without it after the destination, when the first word
+  is not one of the commands of `ssj` (`list`, `attach`, `kill`, `install`, `edit`). With the
+  dashes there must be exactly one word before them, the destination, so a host with the name of
+  a command is `ssj attach -- ls`. Options of `ssj` may stand anywhere before the `--`; an option
+  after the destination without dashes is one of `ssj`, which is why `ssj host ls -l` is refused
+  and `ssj host -- ls -l` works.
+- `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
+  `attach`, since the shell of a session that runs already is not started again.
+
+### Editing the config files (`ssj edit`)
+
+`ssj edit` edits `client.toml`, and `ssj edit [user@]host` edits `server.toml` on the host. The
+word `edit` alone is the command (a host with that name is `user@edit`); with a destination it
+follows the rule of the other commands.
+
+- The editor is `$EDITOR`, else `$VISUAL`, else `vi`, run through `sh -c` so that it may have
+  arguments. Its exit status must be 0.
+- The text is edited in a private temporary file (directory 0700, file 0600, name `edit.toml`),
+  which is removed at the end. A file that does not exist starts as a template with every setting
+  as a comment (`edit::CLIENT_TEMPLATE`, `edit::SERVER_TEMPLATE`; a test checks that every line is
+  valid when it is switched on). A text that is unchanged is not saved.
+- Validation happens at once after the editor ends and before anything is saved. The local file is
+  parsed by the client (`Config::from_text`). The remote file goes to `ssj-server --check-config`
+  on the host, which reads the text on stdin and prints `OK` or the first error with exit code 1,
+  since only that server knows its keys (and the host may run another version than the client
+  expects). An invalid text is shown with its error, and the user can edit again (default) or
+  discard it. A missing server is reported with the hint to run `ssj install`.
+- Saving writes a file next to the target (`.client.toml.<pid>` / `.server.toml.<pid>`, mode
+  0600) and renames it over the target. On the host a small `sh` script does that, with
+  `umask 077`, and the server reads the file when a session starts, so running sessions keep their
+  settings.
+- Reading the current text of `server.toml` on the host is `cat` of
+  `${XDG_CONFIG_HOME:-$HOME/.config}/ssj/server.toml` through `ssh`.
+- Two editors at the same time must not lose each other's work, so a save is a compare and swap.
+  The editor remembers the SHA-256 of the bytes it started from (of nothing, for a file that does
+  not exist), and the file is replaced only if it still has that digest. Comparison and
+  replacement are one step under a lock: a `flock` on `.client.toml.lock` here, and on the host a
+  lock directory `.server.toml.lock` (`mkdir` is atomic; five tries one second apart, then the
+  error names the directory, which can be removed if no editor runs; the script removes it when it
+  ends, also when `ssh` hangs up). The lock is held for the save only, not while the editor is
+  open, so a crashed editor leaves no stale lock, and the digest is what covers the long wait.
+- If the file changed meanwhile, nothing is overwritten. The edited text is written to a private
+  file `ssj-edit-kept-<pid>-<n>.toml` in the temporary directory, whose name the error shows, and
+  the command ends with an error. Merging is by hand.
+
 ### Debug output (`-v`)
 
 `-v`, `-vv`, and `-vvv` (`--verbose`, counted, at most three) switch on `log.rs`, and

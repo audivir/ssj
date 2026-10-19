@@ -7,6 +7,7 @@ pub mod config;
 pub mod debounce;
 pub mod download;
 pub mod echo;
+pub mod edit;
 pub mod escape;
 pub mod install;
 pub mod log;

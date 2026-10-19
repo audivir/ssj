@@ -29,7 +29,6 @@ fn destination_and_options_are_parsed() {
 fn bad_command_lines_are_refused() {
     for bad in [
         vec![],
-        vec!["a", "b"],
         vec!["--bogus", "host"],
         vec!["--ssh-command"],
         vec!["--ssh-command", "  ", "host"],
@@ -183,7 +182,6 @@ fn subcommands_need_a_destination_after_them() {
         vec!["kill", "host", "../../x"],
         vec!["kill", "host", "a b"],
         vec!["attach", "a", "b", "id"],
-        vec!["host", "other"],
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
@@ -460,4 +458,106 @@ fn verbose_counts_up_to_three_and_the_log_file_is_a_path() {
         Some(std::path::Path::new("/tmp/ssj.log"))
     );
     assert!(args(&["--log-file"]).is_err());
+}
+
+#[test]
+fn edit_alone_is_the_local_editor_and_with_a_host_the_remote_one() {
+    use ssj_client::cli::Command;
+    let local = args(&["edit"]).unwrap();
+    assert_eq!(
+        (local.command, local.destination.as_str()),
+        (Command::Edit, "")
+    );
+    let remote = args(&["edit", "me@host:2222"]).unwrap();
+    assert_eq!(remote.command, Command::Edit);
+    assert_eq!(
+        (remote.destination.as_str(), remote.ssh_port),
+        ("me@host", Some(2222))
+    );
+    // a host called edit is reached with a user in front
+    let host = args(&["me@edit"]).unwrap();
+    assert_eq!(
+        (host.command, host.destination.as_str()),
+        (Command::Connect, "me@edit")
+    );
+    assert!(args(&["edit", "a", "b"]).is_err());
+}
+
+#[test]
+fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
+    use ssj_client::cli::Command;
+    let cases: Vec<(Vec<&str>, Command, &str, Option<&str>)> = vec![
+        (vec!["host"], Command::Connect, "host", None),
+        (vec!["host", "ls"], Command::Connect, "host", Some("ls")),
+        (
+            vec!["host", "echo", "hi", "there"],
+            Command::Connect,
+            "host",
+            Some("echo hi there"),
+        ),
+        // options of the command come after `--`, and options of ssj may stay in front or behind
+        (
+            vec!["host", "--", "ls", "-l"],
+            Command::Connect,
+            "host",
+            Some("ls -l"),
+        ),
+        (
+            vec!["--local-echo", "auto", "host", "--", "make", "-j4"],
+            Command::Connect,
+            "host",
+            Some("make -j4"),
+        ),
+        (
+            vec!["me@host:2222", "--", "uptime"],
+            Command::Connect,
+            "me@host",
+            Some("uptime"),
+        ),
+        // a shell command in one word is passed as it is
+        (
+            vec!["host", "--", "cd /tmp && ls | wc -l"],
+            Command::Connect,
+            "host",
+            Some("cd /tmp && ls | wc -l"),
+        ),
+        // hosts that are called like our commands: after `--` the single word is the host
+        (
+            vec!["attach", "--", "ls"],
+            Command::Connect,
+            "attach",
+            Some("ls"),
+        ),
+        (
+            vec!["list", "--", "ls"],
+            Command::Connect,
+            "list",
+            Some("ls"),
+        ),
+        // and without it the command word wins, as always
+        (vec!["attach", "ls"], Command::Attach(None), "ls", None),
+        (vec!["list", "ls"], Command::List, "ls", None),
+    ];
+    for (words, command, destination, remote) in cases {
+        let parsed = args(&words).unwrap_or_else(|e| panic!("{words:?}: {e}"));
+        assert_eq!(parsed.command, command, "{words:?}");
+        assert_eq!(parsed.destination, destination, "{words:?}");
+        assert_eq!(parsed.remote_command.as_deref(), remote, "{words:?}");
+    }
+    for bad in [
+        // no destination, or more than one in front of the command
+        vec!["--", "ls"],
+        vec!["a", "b", "--", "ls"],
+        vec!["list", "host", "--", "ls"],
+        // an empty command
+        vec!["host", "--", ""],
+        vec!["host", "--", " "],
+        // an existing session would not run it
+        vec!["--name", "work", "host", "--", "ls"],
+        vec!["host", "--auto-attach", "--", "ls"],
+        // an option of the command without `--` is an option of ssj
+        vec!["host", "ls", "-l"],
+    ] {
+        assert!(args(&bad).is_err(), "{bad:?}");
+    }
 }

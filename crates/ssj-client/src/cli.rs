@@ -76,6 +76,8 @@ pub enum Command {
     Install,
     /// End a session on the host.
     Kill(Option<String>),
+    /// Edit `client.toml` here, or `server.toml` on the host if there is a destination.
+    Edit,
     /// Print the cached session names of a host, or of all hosts, for tab completion.
     Complete(Option<String>),
 }
@@ -94,6 +96,8 @@ pub struct Args {
     pub server_path: ServerPath,
     /// Extra arguments for `ssj-server`.
     pub server_args: Vec<String>,
+    /// A command to run in the session instead of the shell, as `ssh host command` does.
+    pub remote_command: Option<String>,
     /// Host name or address for the UDP connection when it differs from the destination.
     pub udp_host: Option<String>,
     pub send_env: EnvFilter,
@@ -154,6 +158,7 @@ impl Args {
             ssh_command: vec!["ssh".to_owned()],
             server_path: ServerPath::Default,
             server_args: Vec::new(),
+            remote_command: None,
             udp_host: None,
             send_env: EnvFilter::default_patterns(),
             auto_install: None,
@@ -248,10 +253,39 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     from_options(options)
 }
 
+/// Words that are commands of `ssj` when a destination follows them.
+fn is_command_word(word: &str) -> bool {
+    matches!(word, "list" | "attach" | "kill" | "install" | "edit")
+}
+
 fn from_options(options: Options) -> Result<Args, String> {
-    let Options {
-        words: positionals, ..
-    } = &options;
+    // A command for the session comes after `--`, or, as with `ssh`, after the destination when
+    // that is not one of our own command words (`ssj host make -j4` needs `--` for the `-j4`).
+    let mut words = options.words.clone();
+    let mut remote_command = None;
+    if !options.command.is_empty() {
+        remote_command = Some(options.command.join(" "));
+    } else if words.len() >= 2 && !is_command_word(&words[0]) {
+        remote_command = Some(words.split_off(1).join(" "));
+    }
+    if let Some(command) = &remote_command {
+        if command.trim().is_empty() {
+            return Err("the command is empty".to_owned());
+        }
+        if words.len() != 1 {
+            return Err(
+                "a command to run needs exactly one destination before it (ssj DESTINATION -- COMMAND)"
+                    .to_owned(),
+            );
+        }
+        if options.name.is_some() || options.auto_attach {
+            return Err(
+                "a command cannot be combined with --name or --auto-attach, since a session that runs already would not run it"
+                    .to_owned(),
+            );
+        }
+    }
+    let positionals = &words;
     if let Some(host) = &options.complete {
         return Ok(Args {
             command: Command::Complete((!host.is_empty()).then(|| host.clone())),
@@ -321,8 +355,12 @@ fn from_options(options: Options) -> Result<Args, String> {
         .first()
         .filter(|_| positionals.len() > 1)
         .map(String::as_str);
+    // `ssj edit` alone is the editor for the local file; a host that is called `edit` is reached
+    // as `user@edit`
+    let local_edit = positionals.as_slice() == ["edit"];
     let (command, destination) = match command_word {
-        Some(word @ ("list" | "attach" | "kill" | "install")) => {
+        _ if local_edit => (Command::Edit, String::new()),
+        Some(word @ ("list" | "attach" | "kill" | "install" | "edit")) => {
             let rest = &positionals[1..];
             let (id, destination) = match rest {
                 [destination] => (None, destination.clone()),
@@ -348,6 +386,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             let command = match word {
                 "list" => Command::List,
                 "install" => Command::Install,
+                "edit" => Command::Edit,
                 "attach" => Command::Attach(id),
                 _ => Command::Kill(id),
             };
@@ -359,8 +398,13 @@ fn from_options(options: Options) -> Result<Args, String> {
             _ => return Err("only one destination is allowed".to_owned()),
         },
     };
-    let parsed = ssj_proto::destination::parse(&destination)
-        .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
+    let (target, ssh_port) = if local_edit {
+        (String::new(), None)
+    } else {
+        let parsed = ssj_proto::destination::parse(&destination)
+            .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
+        (parsed.target(), parsed.port)
+    };
     let send_env_set = !options.send_env.is_empty();
     let send_env = if send_env_set {
         EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?
@@ -369,8 +413,8 @@ fn from_options(options: Options) -> Result<Args, String> {
     };
     Ok(Args {
         command,
-        destination: parsed.target(),
-        ssh_port: parsed.port,
+        destination: target,
+        ssh_port,
         name,
         explicit: Explicit {
             ssh_command: options.ssh_command.is_some(),
@@ -386,6 +430,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             .server_path
             .map_or(ServerPath::Default, ServerPath::Custom),
         server_args,
+        remote_command,
         udp_host: options.udp_host,
         send_env,
         auto_install,
