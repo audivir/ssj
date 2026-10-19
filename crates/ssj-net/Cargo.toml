@@ -8,6 +8,8 @@ license.workspace = true
 
 [dependencies]
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# for the type of the round-trip estimate that a congestion controller is given
+quinn-proto = { version = "0.11.19", default-features = false }
 rcgen = "0.14.10"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 sha2 = "0.11.1"

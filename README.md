@@ -204,7 +204,7 @@ transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
 auto_attach = false                   # `ssj host` joins the only session without a client
 local_echo = "off"                    # "off" or "auto": show typed characters at once
 compress = "off"                      # "off" or "auto": compress while the link is the limit
-congestion = "bbr"                    # "bbr" or "cubic": how fast to send (see below)
+congestion = "auto"                   # "auto", "bbr", or "cubic": how fast to send (see below)
 forward_agent = false                 # let programs on the host use your ssh agent (-A)
 ```
 
@@ -217,7 +217,7 @@ max_detached = "none"                 # limit even after a deliberate detach
 replay_capacity = 4194304             # bytes of output kept for a client that is away
 slow_client = "drop"                  # "drop": the job never waits for the link; "wait": like ssh
 compress = "off"                      # "off" or "auto": compress output when the link is the limit
-congestion = "bbr"                    # "bbr" or "cubic"
+congestion = "auto"                   # "auto", "bbr", or "cubic"
 live_backlog = 1048576                # bytes that may wait for a connected client (drop)
 away_after = 10                       # seconds a silent client may block the output (wait)
 shell = "/bin/zsh"                    # default: $SHELL
@@ -226,11 +226,13 @@ accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
 
 ### Congestion control
 
-`ssj` sends with BBR by default, which keeps its speed on a link that loses packets for other
-reasons than congestion (Wi-Fi, mobile). On a link with 1 % loss it was many times faster than
-Cubic. On a clean gigabit link it is about 15 % slower, and on the loopback of one machine much
-slower, so `congestion = "cubic"` (or `--congestion cubic`) is there for a wired network. The
-client passes its choice to the server it starts, and each side sends with its own.
+`ssj` chooses by itself (`congestion = "auto"`). It sends like CUBIC, which is fastest on a clean
+link (wired, a LAN, the loopback), and moves to BBR when packets are lost although no queue has
+built up in front of the loss, as on Wi-Fi, mobile, and long paths with random loss. There CUBIC
+slows down at every loss (0.3 MB/s at 80 ms and 1 % loss against 7 MB/s with BBR). After 30
+seconds without loss it goes back. `congestion = "bbr"` or `"cubic"` (or `--congestion`) forces
+one of them. The client passes its choice to the server it starts, and each side sends with its
+own.
 
 ### Agent forwarding
 

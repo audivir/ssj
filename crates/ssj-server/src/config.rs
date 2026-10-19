@@ -8,7 +8,7 @@
 //! away_after = 10                     # seconds a silent client may block the output (wait only)
 //! slow_client = "drop"                # "drop" (default): the job never waits for the link
 //! live_backlog = 1048576              # bytes that may wait for a connected client (drop only)
-//! congestion = "bbr"                  # "bbr" (default) or "cubic"
+//! congestion = "auto"                 # "auto" (default), "bbr", or "cubic"
 //! compress = "off"                    # "off" (default), or "auto": compress output when the link is the limit
 //! shell = "/bin/zsh"                  # default: $SHELL
 //! accept_env = ["TERM", "LANG", "LC_*"]

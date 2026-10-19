@@ -93,7 +93,7 @@ pub struct Options {
     #[arg(long, value_name = "WHEN", overrides_with = "local_echo")]
     pub local_echo: Option<String>,
 
-    /// How fast to send: bbr (default) or cubic
+    /// How fast to send: auto (default), bbr, or cubic
     #[arg(long, value_name = "WAY", overrides_with = "congestion")]
     pub congestion: Option<String>,
 

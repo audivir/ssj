@@ -167,12 +167,20 @@ fn the_job_does_not_wait_for_a_slow_client_unless_asked() {
 }
 
 #[test]
-fn congestion_control_is_bbr_unless_cubic_is_asked_for() {
+fn congestion_control_is_adaptive_unless_a_way_is_asked_for() {
     use ssj_net::Congestion;
-    assert_eq!(args(&[]).unwrap().congestion, Congestion::Bbr);
+    assert_eq!(args(&[]).unwrap().congestion, Congestion::Auto);
     assert_eq!(
         args(&["--congestion", "cubic"]).unwrap().congestion,
         Congestion::Cubic
+    );
+    assert_eq!(
+        args(&["--congestion", "bbr"]).unwrap().congestion,
+        Congestion::Bbr
+    );
+    assert_eq!(
+        args(&["--congestion", "auto"]).unwrap().congestion,
+        Congestion::Auto
     );
     assert!(args(&["--congestion", "reno"]).is_err());
     assert!(args(&["--congestion"]).is_err());

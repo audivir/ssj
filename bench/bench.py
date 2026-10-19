@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import pty
+import random
 import select
 import statistics
 import subprocess
@@ -151,7 +152,7 @@ def bulk(argv, megabytes, raw=False, text=False):
     return {"megabytes_per_second": round(megabytes / seconds, 1), "seconds": round(seconds, 2)}
 
 
-def latency(argv, samples):
+def latency(argv, samples, jitter_ms=0):
     terminal = session(argv)
     terminal.send("stty raw -echo; cat\n")
     time.sleep(0.5)
@@ -167,7 +168,8 @@ def latency(argv, samples):
                 raise TimeoutError("no echo")
         times.append((time.monotonic() - start) * 1000)
         terminal.buffer = b""
-        time.sleep(0.01)
+        # a gap that varies, so that keystrokes meet the pings and acknowledgements at random
+        time.sleep(0.01 + random.random() * jitter_ms / 1000)
     os.write(terminal.fd, b"\x04")
     terminal.close()
     times.sort()
@@ -175,6 +177,8 @@ def latency(argv, samples):
         "median_ms": round(statistics.median(times), 2),
         "p95_ms": round(times[int(len(times) * 0.95) - 1], 2),
         "max_ms": round(times[-1], 2),
+        # echoes that took more than 10 ms over the median: a stall and not a slow link
+        "stalls": sum(1 for t in times if t > statistics.median(times) + 10),
     }
 
 
@@ -235,6 +239,7 @@ def main():
     parser.add_argument("--raw-bulk", action="store_true", help="bulk output without tr")
     parser.add_argument("--paste-mb", type=int, default=8)
     parser.add_argument("--samples", type=int, default=300)
+    parser.add_argument("--jitter-ms", type=int, default=0, help="random extra gap between keystrokes")
     parser.add_argument("--rounds", type=int, default=3, help="the best bulk and paste round counts")
     parser.add_argument("--startup", type=int, metavar="RUNS", help="only time the start and the end, RUNS times")
     parser.add_argument("--netem", help='for example "delay 40ms loss 1%%" (Linux, root)')
@@ -257,7 +262,7 @@ def main():
             pastes = [paste(argv, args.paste_mb, args.text_bulk) for _ in range(args.rounds)]
             results[name] = {
                 "bulk": max(rounds, key=lambda r: r["megabytes_per_second"]),
-                "latency": latency(argv, args.samples),
+                "latency": latency(argv, args.samples, args.jitter_ms),
                 "paste": max(pastes, key=lambda r: r["megabytes_per_second"]),
             }
     finally:
@@ -270,11 +275,12 @@ def main():
         for name, r in results.items():
             print(f"{name:6} {r['ready_s']:>8} {r['exit_s']:>8}")
         return
-    print(f"{'':6} {'bulk MB/s':>10} {'median ms':>10} {'p95 ms':>8} {'max ms':>8} {'paste s':>8}")
+    print(f"{'':6} {'bulk MB/s':>10} {'median ms':>10} {'p95 ms':>8} {'max ms':>8} {'stalls':>7} {'paste s':>8}")
     for name, r in results.items():
         print(
             f"{name:6} {r['bulk']['megabytes_per_second']:>10} {r['latency']['median_ms']:>10}"
-            f" {r['latency']['p95_ms']:>8} {r['latency']['max_ms']:>8} {r['paste']['seconds']:>8}"
+            f" {r['latency']['p95_ms']:>8} {r['latency']['max_ms']:>8} {r['latency']['stalls']:>7}"
+            f" {r['paste']['seconds']:>8}"
         )
 
 

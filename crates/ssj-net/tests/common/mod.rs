@@ -31,6 +31,17 @@ pub struct Proxy {
     blackhole: Arc<AtomicBool>,
     drop_replies: Arc<AtomicBool>,
     delay_ms: Arc<AtomicU64>,
+    loss_permille: Arc<AtomicU64>,
+}
+
+/// A cheap pseudo random number for dropping packets: xorshift on a shared state.
+fn random(state: &AtomicU64) -> u64 {
+    let mut x = state.load(Ordering::Relaxed) | 1;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    state.store(x, Ordering::Relaxed);
+    x
 }
 
 impl Proxy {
@@ -45,6 +56,9 @@ impl Proxy {
         let dropping_replies = drop_replies.clone();
         let delay_ms = Arc::new(AtomicU64::new(0));
         let delay = delay_ms.clone();
+        let loss_permille = Arc::new(AtomicU64::new(0));
+        let loss = loss_permille.clone();
+        let seed = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
         tokio::spawn(async move {
             let mut client = None;
             let mut from_client = vec![0u8; 65536];
@@ -53,7 +67,8 @@ impl Proxy {
                 tokio::select! {
                     Ok((n, peer)) = front.recv_from(&mut from_client) => {
                         client = Some(peer);
-                        if !dropping.load(Ordering::Relaxed) {
+                        let lost = random(&seed) % 1000 < loss.load(Ordering::Relaxed);
+                        if !dropping.load(Ordering::Relaxed) && !lost {
                             let packet = from_client[..n].to_vec();
                             let back = back.clone();
                             let wait = Duration::from_millis(delay.load(Ordering::Relaxed));
@@ -64,7 +79,8 @@ impl Proxy {
                         }
                     }
                     Ok(n) = back.recv(&mut from_server) => {
-                        let dropped = dropping.load(Ordering::Relaxed) || dropping_replies.load(Ordering::Relaxed);
+                        let lost = random(&seed) % 1000 < loss.load(Ordering::Relaxed);
+                        let dropped = lost || dropping.load(Ordering::Relaxed) || dropping_replies.load(Ordering::Relaxed);
                         if let (Some(peer), false) = (client, dropped) {
                             let packet = from_server[..n].to_vec();
                             let front = front.clone();
@@ -83,6 +99,7 @@ impl Proxy {
             blackhole,
             drop_replies,
             delay_ms,
+            loss_permille,
         }
     }
 
@@ -94,6 +111,11 @@ impl Proxy {
     pub fn set_delay(&self, delay: Duration) {
         self.delay_ms
             .store(delay.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Drops this many of every thousand packets, in both directions, at random.
+    pub fn set_loss_permille(&self, permille: u64) {
+        self.loss_permille.store(permille, Ordering::Relaxed);
     }
 
     /// Drops only the packets from the server to the client.

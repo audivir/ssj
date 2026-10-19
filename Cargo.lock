@@ -945,6 +945,7 @@ name = "ssj-net"
 version = "0.1.0-rc5"
 dependencies = [
  "quinn",
+ "quinn-proto",
  "rcgen",
  "rustls",
  "sha2",

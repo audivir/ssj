@@ -433,8 +433,13 @@ Nothing is gated yet.
 
 #### Congestion control (`congestion`)
 
-The default is BBR (`quinn::congestion::BbrConfig`, initial window 256 KiB), and
-`congestion = "cubic"` in either config file, or `--congestion cubic`, selects Cubic. The client
+The default is `auto` (`ssj_net::adaptive`): a controller that holds a CUBIC and a BBR of
+`quinn` (initial window 256 KiB each), feeds both with every event, and lets one send. It starts
+with CUBIC. A loss (not an ECN mark) counts as random when the smoothed round-trip time is at most
+15 percent above the smallest one plus 2 ms, so no queue has built up in front of it; four of them
+within 10 seconds move the connection to BBR, and 30 seconds without any loss move it back (a
+loss caused by a queue never moves it, since CUBIC is the fair one there). `congestion = "bbr"`
+or `"cubic"` in either config file, or `--congestion`, forces one. The client
 passes its value to the server it starts (`--congestion`), and each side uses it for what it sends
 (output for the server, input for the client). `bench/bench.py --congestion` and
 `SCENARIOS="lossy slow clean fast"` measured both in a Linux container with `tc netem` (MB/s of

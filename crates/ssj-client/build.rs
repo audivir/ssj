@@ -44,8 +44,8 @@ Join the only session without a client.
 \fBforward_agent\fR = true | false
 Let programs on the host use the ssh agent of this machine (\fB\-A\fR). Off by default.
 .TP
-\fBcongestion\fR = "bbr" | "cubic"
-How fast to send. BBR (default) keeps its speed on a link with random loss; Cubic is a little faster on a clean gigabit link.
+\fBcongestion\fR = "auto" | "bbr" | "cubic"
+How fast to send. Auto (default) starts with Cubic, which is fastest on a clean link, and moves to BBR when packets are lost without a queue (Wi-Fi, mobile, long paths), where Cubic crawls.
 .TP
 \fBcompress\fR = "off" | "auto"
 Compress input and output while the link is the limit. Off by default, since compressing text of an attacker with a secret can leak the secret.
@@ -73,8 +73,8 @@ The output kept for a client that is away.
 \fBcompress\fR = "off" | "auto"
 Compress output while the link is the limit (default off).
 .TP
-\fBcongestion\fR = "bbr" | "cubic"
-How fast the server sends output (default bbr).
+\fBcongestion\fR = "auto" | "bbr" | "cubic"
+How fast the server sends output (default auto).
 .TP
 \fBslow_client\fR = "drop" | "wait"
 What the server does with output that a connected client is too slow to take: "drop" (default) never lets the job wait for the link and skips the oldest output, with a notice; "wait" slows the job down, as ssh does.

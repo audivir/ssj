@@ -1,5 +1,6 @@
 //! QUIC transport of `ssj`: pinned mutual TLS, address validation, and transport limits.
 
+pub mod adaptive;
 pub mod channels;
 
 use std::sync::Arc;
@@ -243,8 +244,11 @@ pub enum Congestion {
     Cubic,
     /// Estimates the bandwidth and the round trip time and paces to them, so random loss (Wi-Fi,
     /// mobile) does not slow it down.
-    #[default]
     Bbr,
+    /// Starts with CUBIC and moves to BBR when packets are lost without a queue in front of the
+    /// loss, and back after a long time without loss.
+    #[default]
+    Auto,
 }
 
 impl Congestion {
@@ -252,7 +256,8 @@ impl Congestion {
         match text {
             "cubic" => Ok(Self::Cubic),
             "bbr" => Ok(Self::Bbr),
-            _ => Err("expected bbr or cubic".to_owned()),
+            "auto" => Ok(Self::Auto),
+            _ => Err("expected auto, bbr, or cubic".to_owned()),
         }
     }
 
@@ -260,11 +265,12 @@ impl Congestion {
         match self {
             Self::Cubic => "cubic",
             Self::Bbr => "bbr",
+            Self::Auto => "auto",
         }
     }
 }
 
-static CONGESTION: AtomicU8 = AtomicU8::new(Congestion::Bbr as u8);
+static CONGESTION: AtomicU8 = AtomicU8::new(Congestion::Auto as u8);
 
 /// Chooses the congestion controller of the connections made after this call (the process makes
 /// them all with the same one).
@@ -273,10 +279,10 @@ pub fn set_congestion(choice: Congestion) {
 }
 
 fn congestion() -> Congestion {
-    if CONGESTION.load(Ordering::Relaxed) == Congestion::Cubic as u8 {
-        Congestion::Cubic
-    } else {
-        Congestion::Bbr
+    match CONGESTION.load(Ordering::Relaxed) {
+        x if x == Congestion::Cubic as u8 => Congestion::Cubic,
+        x if x == Congestion::Bbr as u8 => Congestion::Bbr,
+        _ => Congestion::Auto,
     }
 }
 
@@ -297,6 +303,11 @@ fn base_transport() -> quinn::TransportConfig {
             let mut bbr = quinn::congestion::BbrConfig::default();
             bbr.initial_window(INITIAL_CONGESTION_WINDOW);
             transport.congestion_controller_factory(Arc::new(bbr));
+        }
+        Congestion::Auto => {
+            transport.congestion_controller_factory(Arc::new(adaptive::AdaptiveConfig {
+                initial_window: INITIAL_CONGESTION_WINDOW,
+            }));
         }
     }
     // Bulk output is acknowledged every few packets and not every second one, which halves the

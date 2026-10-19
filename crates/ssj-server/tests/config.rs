@@ -104,7 +104,10 @@ fn mistakes_are_errors_that_name_the_problem() {
         ),
         ("live_backlog = 10", "live_backlog: must be between"),
         ("compress = \"zlib\"", "compress: expected auto or off"),
-        ("congestion = \"reno\"", "congestion: expected bbr or cubic"),
+        (
+            "congestion = \"reno\"",
+            "congestion: expected auto, bbr, or cubic",
+        ),
         ("shell = \"zsh\"", "absolute path"),
         ("accept_env = [\"A B\"]", "accept_env: InvalidCharacter"),
         ("accept_env = \"TERM\"", "line 1: accept_env must be a list"),
