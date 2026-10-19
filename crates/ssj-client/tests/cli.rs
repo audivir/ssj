@@ -461,3 +461,26 @@ fn verbose_counts_up_to_three_and_the_log_file_is_a_path() {
     );
     assert!(args(&["--log-file"]).is_err());
 }
+
+#[test]
+fn edit_alone_is_the_local_editor_and_with_a_host_the_remote_one() {
+    use ssj_client::cli::Command;
+    let local = args(&["edit"]).unwrap();
+    assert_eq!(
+        (local.command, local.destination.as_str()),
+        (Command::Edit, "")
+    );
+    let remote = args(&["edit", "me@host:2222"]).unwrap();
+    assert_eq!(remote.command, Command::Edit);
+    assert_eq!(
+        (remote.destination.as_str(), remote.ssh_port),
+        ("me@host", Some(2222))
+    );
+    // a host called edit is reached with a user in front
+    let host = args(&["me@edit"]).unwrap();
+    assert_eq!(
+        (host.command, host.destination.as_str()),
+        (Command::Connect, "me@edit")
+    );
+    assert!(args(&["edit", "a", "b"]).is_err());
+}

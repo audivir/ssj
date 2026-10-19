@@ -76,6 +76,8 @@ pub enum Command {
     Install,
     /// End a session on the host.
     Kill(Option<String>),
+    /// Edit `client.toml` here, or `server.toml` on the host if there is a destination.
+    Edit,
     /// Print the cached session names of a host, or of all hosts, for tab completion.
     Complete(Option<String>),
 }
@@ -321,8 +323,12 @@ fn from_options(options: Options) -> Result<Args, String> {
         .first()
         .filter(|_| positionals.len() > 1)
         .map(String::as_str);
+    // `ssj edit` alone is the editor for the local file; a host that is called `edit` is reached
+    // as `user@edit`
+    let local_edit = positionals.as_slice() == ["edit"];
     let (command, destination) = match command_word {
-        Some(word @ ("list" | "attach" | "kill" | "install")) => {
+        _ if local_edit => (Command::Edit, String::new()),
+        Some(word @ ("list" | "attach" | "kill" | "install" | "edit")) => {
             let rest = &positionals[1..];
             let (id, destination) = match rest {
                 [destination] => (None, destination.clone()),
@@ -348,6 +354,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             let command = match word {
                 "list" => Command::List,
                 "install" => Command::Install,
+                "edit" => Command::Edit,
                 "attach" => Command::Attach(id),
                 _ => Command::Kill(id),
             };
@@ -359,8 +366,13 @@ fn from_options(options: Options) -> Result<Args, String> {
             _ => return Err("only one destination is allowed".to_owned()),
         },
     };
-    let parsed = ssj_proto::destination::parse(&destination)
-        .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
+    let (target, ssh_port) = if local_edit {
+        (String::new(), None)
+    } else {
+        let parsed = ssj_proto::destination::parse(&destination)
+            .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
+        (parsed.target(), parsed.port)
+    };
     let send_env_set = !options.send_env.is_empty();
     let send_env = if send_env_set {
         EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?
@@ -369,8 +381,8 @@ fn from_options(options: Options) -> Result<Args, String> {
     };
     Ok(Args {
         command,
-        destination: parsed.target(),
-        ssh_port: parsed.port,
+        destination: target,
+        ssh_port,
         name,
         explicit: Explicit {
             ssh_command: options.ssh_command.is_some(),

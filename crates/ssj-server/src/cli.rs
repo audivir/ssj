@@ -30,6 +30,8 @@ pub enum Mode {
     List,
     /// Print the version and the protocol.
     Version,
+    /// Read a `server.toml` from stdin, print `OK` if it is valid, or the first error.
+    CheckConfig,
     /// End a running session.
     Kill(Option<String>),
     /// Carry the stream of a client over stdin and stdout, for hosts that allow only the `ssh`
@@ -308,6 +310,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--no-tcp" => out.tcp = false,
             "--list" => out.mode = Mode::List,
             "--version" => out.mode = Mode::Version,
+            "--check-config" => out.mode = Mode::CheckConfig,
             "--port-range" => {
                 let value = args.next().ok_or("--port-range needs a value")?;
                 out.port_range = parse_port_range(&value.to_string_lossy())

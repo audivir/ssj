@@ -833,6 +833,32 @@ Rules (nobody listens, and `wait` mode):
   slower than the writer. This is a property of that system and happens without `ssj` too, so the
   tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
+### Editing the config files (`ssj edit`)
+
+`ssj edit` edits `client.toml`, and `ssj edit [user@]host` edits `server.toml` on the host. The
+word `edit` alone is the command (a host with that name is `user@edit`); with a destination it
+follows the rule of the other commands.
+
+- The editor is `$EDITOR`, else `$VISUAL`, else `vi`, run through `sh -c` so that it may have
+  arguments. Its exit status must be 0.
+- The text is edited in a private temporary file (directory 0700, file 0600, name `edit.toml`),
+  which is removed at the end. A file that does not exist starts as a template with every setting
+  as a comment (`edit::CLIENT_TEMPLATE`, `edit::SERVER_TEMPLATE`; a test checks that every line is
+  valid when it is switched on). A text that is unchanged is not saved.
+- Validation happens at once after the editor ends and before anything is saved. The local file is
+  parsed by the client (`Config::from_text`). The remote file goes to `ssj-server --check-config`
+  on the host, which reads the text on stdin and prints `OK` or the first error with exit code 1,
+  since only that server knows its keys (and the host may run another version than the client
+  expects). An invalid text is shown with its error, and the user can edit again (default) or
+  discard it. A missing server is reported with the hint to run `ssj install`.
+- Saving writes a file next to the target (`.client.toml.<pid>` / `.server.toml.<pid>`, mode
+  0600) and renames it over the target. On the host a small `sh` script does that, with
+  `umask 077`, and the server reads the file when a session starts, so running sessions keep their
+  settings.
+- Reading the current text of `server.toml` on the host is `cat` of
+  `${XDG_CONFIG_HOME:-$HOME/.config}/ssj/server.toml` through `ssh`. There is no lock: two
+  editors at the same time overwrite each other.
+
 ### Debug output (`-v`)
 
 `-v`, `-vv`, and `-vvv` (`--verbose`, counted, at most three) switch on `log.rs`, and

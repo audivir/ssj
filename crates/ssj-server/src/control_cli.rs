@@ -125,7 +125,7 @@ pub fn run(args: &Args) -> ExitCode {
             Err(message) => fail(&message),
             Ok(found) => stdio(&found.path),
         },
-        Mode::Serve | Mode::Version => unreachable!("handled by the caller"),
+        Mode::Serve | Mode::Version | Mode::CheckConfig => unreachable!("handled by the caller"),
     }
 }
 

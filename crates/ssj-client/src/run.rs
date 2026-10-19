@@ -289,6 +289,7 @@ async fn session(mut args: Args) -> u8 {
         }
         Command::List => list_sessions(&args).await,
         Command::Kill(id) => kill_session(&args, id).await,
+        Command::Edit => crate::edit::run(&args).await,
         Command::Install => match install(&args).await {
             Ok(path) => {
                 println!("installed {path}");

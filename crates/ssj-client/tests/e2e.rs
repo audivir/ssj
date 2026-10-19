@@ -1537,3 +1537,217 @@ fn local_echo_shows_typed_characters_ahead_and_leaves_the_session_intact() {
     let off = typed_on_a_terminal("off");
     assert!(!off.contains("\x1b[2m"), "{off:?}");
 }
+
+// ---- `ssj edit` ----
+
+/// An editor that runs `body` with the file as `$1`.
+fn editor_script(body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = short_dir();
+    let path = dir.join("editor");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Runs `ssj edit ...` with the editor and with `config` as the config directory.
+fn ssj_edit(config: &Path, editor: &Path, words: &[&str], input: &str) -> Output {
+    let ssh = fake_ssh(FAKE_SSH);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ssj"));
+    command
+        .env("XDG_CONFIG_HOME", config)
+        .env("XDG_CACHE_HOME", config)
+        .env("EDITOR", editor)
+        .env_remove("VISUAL")
+        .args(["--ssh-command", ssh.to_str().unwrap()])
+        .args(["--server-path", server_binary().to_str().unwrap()])
+        .args(words);
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn_locked()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn edit_without_a_host_changes_client_toml_and_saves_it_privately() {
+    use std::os::unix::fs::PermissionsExt;
+    let config = short_dir();
+    let editor = editor_script(r#"echo 'compress = "auto"' >> "$1""#);
+    let output = ssj_edit(&config, &editor, &["edit"], "");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stdout).contains("saved"),
+        "{}",
+        text(&output.stdout)
+    );
+    let file = config.join("ssj/client.toml");
+    let saved = std::fs::read_to_string(&file).unwrap();
+    // the template of a new file is kept, and the edit is at the end
+    assert!(saved.contains("# auto_install"), "{saved}");
+    assert!(saved.ends_with("compress = \"auto\"\n"), "{saved}");
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        ssj_client::config::Config::from_text(&saved)
+            .unwrap()
+            .compress
+            == Some(true)
+    );
+
+    // a second edit starts from the file
+    let again =
+        editor_script(r#"grep -q 'compress = "auto"' "$1" && echo 'local_echo = "auto"' >> "$1""#);
+    let output = ssj_edit(&config, &again, &["edit"], "");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("local_echo")
+    );
+}
+
+#[test]
+fn an_edit_that_changes_nothing_is_not_saved() {
+    let config = short_dir();
+    let editor = editor_script("true");
+    let output = ssj_edit(&config, &editor, &["edit"], "");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("no changes"));
+    assert!(!config.join("ssj/client.toml").exists());
+}
+
+#[test]
+fn an_invalid_file_is_refused_before_it_is_saved_and_can_be_discarded() {
+    let config = short_dir();
+    let editor = editor_script(r#"echo 'compres = "auto"' >> "$1""#);
+    let output = ssj_edit(&config, &editor, &["edit"], "n\n");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("not valid") && text(&output.stderr).contains("compres"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(text(&output.stdout).contains("no changes"));
+    assert!(!config.join("ssj/client.toml").exists());
+}
+
+#[test]
+fn an_invalid_file_can_be_edited_again_and_then_saved() {
+    let config = short_dir();
+    let marker = config.join("second-run");
+    // the first run writes a typo, the second one fixes it
+    let editor = editor_script(&format!(
+        r#"if [ -e '{m}' ]; then sed 's/compres /compress /' "$1" > "$1.new" && mv "$1.new" "$1"; else touch '{m}'; echo 'compres = "auto"' >> "$1"; fi"#,
+        m = marker.display()
+    ));
+    let output = ssj_edit(&config, &editor, &["edit"], "y\n");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("not valid"));
+    let saved = std::fs::read_to_string(config.join("ssj/client.toml")).unwrap();
+    assert!(saved.contains("compress = \"auto\""), "{saved}");
+}
+
+#[test]
+fn edit_with_a_host_changes_server_toml_there_after_the_server_has_checked_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let config = short_dir();
+    let editor = editor_script(r#"echo 'live_backlog = 300000' >> "$1""#);
+    let output = ssj_edit(&config, &editor, &["edit", "user@localhost"], "");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stdout).contains("saved server.toml"),
+        "{}",
+        text(&output.stdout)
+    );
+    let file = config.join("ssj/server.toml");
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        saved.contains("# port_range") && saved.ends_with("live_backlog = 300000\n"),
+        "{saved}"
+    );
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    // no client.toml was made, and no temporary file stays behind
+    assert!(!config.join("ssj/client.toml").exists());
+    let names: Vec<String> = std::fs::read_dir(config.join("ssj"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["server.toml"]);
+
+    // a key that only the client knows is refused by the server, and the file stays as it was
+    let bad = editor_script(r#"echo 'transport = "tcp"' >> "$1""#);
+    let output = ssj_edit(&config, &bad, &["edit", "user@localhost"], "n\n");
+    assert!(
+        text(&output.stderr).contains("unknown key"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
+}
+
+#[test]
+fn edit_is_the_editor_command_only_alone_or_before_a_host() {
+    // `ssj edit a b` has one word too many
+    let config = short_dir();
+    let editor = editor_script("true");
+    let output = ssj_edit(&config, &editor, &["edit", "a", "b"], "");
+    assert!(!output.status.success());
+}
+
+/// The lines of a template with the comment sign taken off the settings.
+fn uncommented(template: &str) -> String {
+    template
+        .lines()
+        .filter_map(|line| line.strip_prefix("# "))
+        .filter(|line| line.split_once(" = ").is_some())
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+#[test]
+fn the_templates_of_the_two_files_hold_valid_settings_only() {
+    use ssj_client::edit::{CLIENT_TEMPLATE, SERVER_TEMPLATE};
+    // as they are, both are empty files
+    assert!(ssj_client::config::Config::from_text(CLIENT_TEMPLATE).is_ok());
+    // with every setting switched on, the client and the server accept every line
+    let client = uncommented(CLIENT_TEMPLATE);
+    assert!(client.lines().count() >= 10, "{client}");
+    ssj_client::config::Config::from_text(&client).unwrap();
+    let server = uncommented(SERVER_TEMPLATE);
+    assert!(server.lines().count() >= 10, "{server}");
+    for text in [SERVER_TEMPLATE, server.as_str()] {
+        let mut child = Command::new(server_binary())
+            .arg("--check-config")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn_locked()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{}", text_of(&output.stderr));
+    }
+}
+
+fn text_of(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}

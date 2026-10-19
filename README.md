@@ -68,6 +68,8 @@ ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
 ssj --transport tcp user@host        # auto (default), udp, tcp (ssh -W), or stdio (the ssh channel)
 ssj install user@host               # upload the server file to the host
+ssj edit                            # edit client.toml in $EDITOR
+ssj edit user@host                  # edit server.toml on the host in $EDITOR
 ssj install --download user@host    # fetch it from the release over HTTPS first
 ssj list --json user@host           # the same list as JSON
 ```
@@ -195,6 +197,17 @@ client passes its choice to the server it starts, and each side sends with its o
 anybody who can use the shell's `SSH_AUTH_SOCK` there can have the agent sign while you are
 connected, so use it only on hosts you trust. Only listing the keys and signing are passed on;
 adding, removing, and locking keys, and keys with destination constraints, do not work.
+
+### Editing the config files
+
+`ssj edit` opens `client.toml` in `$EDITOR` (then `$VISUAL`, then `vi`; a command with arguments
+such as `code -w` works), and `ssj edit user@host` does the same for `server.toml` on the host. A
+new file starts with every setting as a comment. The text is judged as soon as the editor ends:
+the client checks `client.toml` itself, and `ssj-server --check-config` on the host checks
+`server.toml`, so a typo in a key is shown and never saved. You can then edit again or discard the
+change, as with `visudo`. A file is saved by renaming (mode 0600), so a reader never sees half of
+it. Sessions that run keep their settings; new ones use the file. A host that is called `edit` is
+reached as `user@edit`.
 
 ### Debug output
 
