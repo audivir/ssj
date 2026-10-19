@@ -344,15 +344,8 @@ async fn start_or_install(
     if choosing {
         extra.push("--choose".to_owned());
     }
-    let mut first = start_server(args, fingerprint, &extra, prestart).await;
-    // a server of an earlier release does not know the flag: it then starts a session as before
-    if choosing && matches!(&first, Err(StartError::Failed(m)) if m.contains("\"--choose\"")) {
-        vlog!(1, "the server is too old to offer a choice");
-        extra.retain(|word| word != "--choose");
-        first = start_server(args, fingerprint, &extra, prestart).await;
-    }
     let extra = &extra[..];
-    match first {
+    match start_server(args, fingerprint, extra, prestart).await {
         Ok(connect) => Ok(connect),
         Err(StartError::Failed(message)) => Err(message),
         Err(StartError::Choose(sessions)) => {
@@ -478,11 +471,6 @@ async fn run_choosing(
         extra.push("--choose".to_owned());
     }
     let mut remote = run_remote(args, &extra, "").await?;
-    if choosing && remote.error_text().contains("\"--choose\"") {
-        // a server of an earlier release: it asks for a name as before
-        extra.pop();
-        return run_remote(args, &extra, "").await;
-    }
     if choosing && remote.status.code() == Some(i32::from(CHOICE_EXIT_CODE)) {
         let mut sessions: Vec<SessionInfo> = remote
             .stdout

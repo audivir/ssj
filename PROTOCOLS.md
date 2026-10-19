@@ -6,15 +6,9 @@ protocol.
 
 | Release | Protocol |
 | ------- | -------- |
-| 0.1.0-rc1 | 1 |
-| 0.1.0-rc2 | 1 |
-| 0.1.0-rc3 | 1 |
+| 0.1.0-rc4 | 1 |
 | 0.1.0 | 1 |
 
-Protocol 1 includes the `Gap` and `Compressed` frames and the frames of agent forwarding. They were
-added before the first release, so the golden file of protocol 1 was regenerated and no released
-version speaks another format.
-
-The `Detached` frame (`ssj detach`) came after 0.1.0-rc2 and the golden file was regenerated for
-it. A client of 0.1.0-rc1 or 0.1.0-rc2 that is detached by a newer server stops with an error about
-an unknown frame; the session keeps running.
+Protocol 1 includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent
+forwarding. The earlier pre-releases were withdrawn, so no published release speaks another
+format of protocol 1.

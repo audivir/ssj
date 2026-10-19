@@ -265,8 +265,8 @@ protocol between client and server.
   `--auto-attach` the last line starts a new session. It then runs the server again with
   `--attach ID` (or without `--reuse` for a new session), which costs a second `ssh` call.
   `detach` offers only sessions with a client, and joins the only one without asking.
-- A server of an earlier release does not know `--choose` and answers with an unknown argument.
-  The client then runs without it, as before.
+- A server of an earlier release does not know `--choose` and answers with an unknown argument,
+  which the client shows. There is no fallback: install the server of the same release.
 
 ### Command line, completions, and release files
 
