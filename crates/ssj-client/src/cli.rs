@@ -121,6 +121,10 @@ pub struct Args {
     pub congestion: Option<ssj_net::Congestion>,
     /// `list` prints JSON.
     pub json: bool,
+    /// How much to tell (`-v` counted), 0 to 3.
+    pub verbose: u8,
+    /// Where the output of `-v` goes instead of the terminal.
+    pub log_file: Option<PathBuf>,
     /// Never prompt and give up early: for refreshes that nobody waits for.
     pub batch: bool,
     /// Which of `ssh_command`, `escape`, and `send_env` the command line set, since the config
@@ -165,6 +169,8 @@ impl Args {
             compress: None,
             congestion: None,
             json: false,
+            verbose: 0,
+            log_file: None,
             batch: false,
             explicit: Explicit::default(),
         }
@@ -395,6 +401,8 @@ fn from_options(options: Options) -> Result<Args, String> {
         compress,
         congestion,
         json: options.json,
+        verbose: options.verbose.min(3),
+        log_file: options.log_file.map(PathBuf::from),
         batch: options.batch,
     })
 }

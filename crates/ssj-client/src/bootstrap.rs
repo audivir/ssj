@@ -11,6 +11,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::cli::{Args, ServerPath};
+use crate::vlog;
 
 /// Time for the whole bootstrap, which includes typing a passphrase.
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(180);
@@ -96,6 +97,20 @@ pub async fn run_remote_command(
         return Err("the destination must not start with '-'".to_owned());
     }
     let mut ssh = Command::new(&args.ssh_command[0]);
+    vlog!(
+        2,
+        "running: {} -e none -T -- {} <command of {} characters>, {} bytes on stdin",
+        args.ssh_command
+            .iter()
+            .cloned()
+            .chain(args.ssh_port_args())
+            .collect::<Vec<_>>()
+            .join(" "),
+        args.destination,
+        command.len(),
+        stdin.len()
+    );
+    let began = std::time::Instant::now();
     // `-e none`: no escape character, so that a byte of the upload cannot end the command.
     // `-T`: no terminal, so that the output is not altered. `--`: no option injection.
     ssh.args(&args.ssh_command[1..])
@@ -130,6 +145,14 @@ pub async fn run_remote_command(
         child.wait().await
     })
     .await;
+    vlog!(
+        2,
+        "ssh ended after {:?}: {:?}, {} bytes of output, {} bytes of error output",
+        began.elapsed(),
+        finished.as_ref().ok().and_then(|r| r.as_ref().ok()),
+        out.len(),
+        err.len()
+    );
     match finished {
         Ok(Ok(status)) => Ok(Remote {
             stdout: out,

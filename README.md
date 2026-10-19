@@ -192,6 +192,21 @@ anybody who can use the shell's `SSH_AUTH_SOCK` there can have the agent sign wh
 connected, so use it only on hosts you trust. Only listing the keys and signing are passed on;
 adding, removing, and locking keys, and keys with destination constraints, do not work.
 
+### Debug output
+
+`ssj -v host` tells the steps, as `ssh -v` does, each with the time since the start:
+
+- `-v`: the bootstrap through `ssh`, the transports in order, the one tried now and why it
+  failed, a change of the network that was detected, the socket moving to the new network, a lost
+  connection and each attempt to reconnect, forgotten output, and the end of the session.
+- `-vv`: also the `ssh` command line (never the pin), the address lookup, the round trip of the
+  QUIC handshake, the offsets of the welcome, window size changes, compression, and agent channels.
+- `-vvv`: also every frame that is sent or received, by kind and size and never by content.
+
+The lines go to the standard error output. A program such as `vim` draws over them, so
+`--log-file FILE` writes them to a file (mode 0600) instead. Nothing typed or printed in the session
+is logged.
+
 ### Local echo
 
 On a slow link a typed character shows only after the server has echoed it. With

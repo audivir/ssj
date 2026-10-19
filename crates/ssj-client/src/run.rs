@@ -38,6 +38,7 @@ use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
 use crate::terminal::{RawMode, window_size};
 use crate::tracker::Tracker;
 use crate::tunnel::{Kind, SshConfig};
+use crate::vlog;
 
 /// Unacknowledged input the client keeps. Must stay below the input budget of the server.
 const INPUT_BUFFER: usize = 1 << 20;
@@ -175,6 +176,11 @@ pub struct Io {
 }
 
 pub fn run(args: Args) -> ExitCode {
+    if let Err(err) = crate::log::init(args.verbose, args.log_file.as_deref()) {
+        eprintln!("ssj: cannot open the log file: {err}");
+        return ExitCode::from(1);
+    }
+    vlog!(1, "ssj {} starting", env!("CARGO_PKG_VERSION"));
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -299,6 +305,12 @@ async fn start_or_install(
     attach: bool,
     prestart: Option<&Prestart>,
 ) -> Result<Connect, String> {
+    vlog!(
+        1,
+        "starting the server on {} through {}",
+        args.destination,
+        args.ssh_command[0]
+    );
     match start_server(args, fingerprint, extra, prestart).await {
         Ok(connect) => Ok(connect),
         Err(StartError::Failed(message)) => Err(message),
@@ -307,6 +319,7 @@ async fn start_or_install(
             args.destination
         )),
         Err(StartError::Missing) => {
+            vlog!(1, "the server is not installed on the host");
             let policy = args.auto_install.unwrap_or(config.auto_install);
             match decide(policy, &args.destination, interactive(), confirm) {
                 Decision::Skip(message) => Err(message),
@@ -539,8 +552,15 @@ async fn prefetch(args: &Args) -> Prefetched {
         return Prefetched::default();
     }
     let config = crate::tunnel::ssh_config(args).await;
+    vlog!(
+        2,
+        "ssh -G: HostName {:?}, jump host or proxy: {}",
+        config.as_ref().and_then(|c| c.hostname.as_deref()),
+        config.as_ref().is_some_and(|c| c.jump)
+    );
     let host = udp_host(args, config.as_ref());
     let address = resolve(&host, 0).await.ok().map(|addr| addr.ip());
+    vlog!(2, "the address of {host} for UDP: {address:?}");
     Prefetched { config, address }
 }
 
@@ -648,7 +668,19 @@ async fn connect_session(
             prefetch(&args)
         );
         let connect = connect?;
+        vlog!(
+            1,
+            "the server runs: session {}, udp {:?}, tcp {:?}",
+            connect.id.as_str(),
+            connect.udp,
+            connect.tcp
+        );
         let tiers = build_tiers(&args, &identity, &connect, prefetched).await?;
+        vlog!(
+            1,
+            "transports in order: {}",
+            tiers.iter().map(Tier::name).collect::<Vec<_>>().join(", ")
+        );
         Ok::<_, String>((connect, env, tiers, agent))
     }
     .await;
@@ -688,7 +720,11 @@ async fn connect_session(
         size: window_size(),
         resizes,
         status,
-        net: crate::netwatch::start().events,
+        net: {
+            let watch = crate::netwatch::start();
+            vlog!(2, "network change sources: {:?}", watch.active);
+            watch.events
+        },
     };
     let result = run_session(
         Params {
@@ -840,6 +876,7 @@ impl Out {
 async fn write_frames(mut out: Out, mut frames: mpsc::UnboundedReceiver<ClientFrame>) {
     let mut bytes = Vec::new();
     while let Some(frame) = frames.recv().await {
+        vlog!(3, "-> {}", client_frame_name(&frame));
         bytes.clear();
         if frame.encode(&mut bytes).is_err() || !out.write_all(&bytes).await {
             return;
@@ -859,6 +896,52 @@ async fn next_cause(net: &mut Option<mpsc::UnboundedReceiver<Cause>>) -> Option<
     match net {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+/// The kind of a hello, for the debug output.
+fn hello_name(hello: &Hello) -> &'static str {
+    match hello {
+        Hello::Start { .. } => "start",
+        Hello::Resume { .. } => "resume",
+        Hello::Attach { .. } => "attach",
+    }
+}
+
+/// A client frame by kind and size, for the debug output. Never the content.
+fn client_frame_name(frame: &ClientFrame) -> String {
+    match frame {
+        ClientFrame::Hello(hello) => hello_name(hello).to_owned(),
+        ClientFrame::Input(data) => format!("input {} bytes", data.len()),
+        ClientFrame::Compressed(data) => format!("compressed input {} bytes", data.len()),
+        ClientFrame::Resize(size) => format!("resize {}x{}", size.cols(), size.rows()),
+        ClientFrame::OutputAck(offset) => format!("output ack {offset}"),
+        ClientFrame::Close => "close".to_owned(),
+        ClientFrame::Detach => "detach".to_owned(),
+        ClientFrame::Ping => "ping".to_owned(),
+        ClientFrame::AgentOffer => "agent offer".to_owned(),
+        ClientFrame::Agent(id, data) => format!("agent {id} {} bytes", data.len()),
+        ClientFrame::AgentClose(id) => format!("agent close {id}"),
+    }
+}
+
+/// A server frame by kind and size, for the debug output.
+fn server_frame_name(frame: &ServerFrame) -> String {
+    match frame {
+        ServerFrame::Welcome(w) => format!(
+            "welcome, input offset {}, output offset {}",
+            w.input_offset, w.output_offset
+        ),
+        ServerFrame::Output(data) => format!("output {} bytes", data.len()),
+        ServerFrame::Compressed(data) => format!("compressed output {} bytes", data.len()),
+        ServerFrame::InputAck(offset) => format!("input ack {offset}"),
+        ServerFrame::Exit(status) => format!("exit {status:?}"),
+        ServerFrame::Error(code) => format!("error {code:?}"),
+        ServerFrame::Pong => "pong".to_owned(),
+        ServerFrame::Gap(skipped) => format!("gap {skipped} bytes"),
+        ServerFrame::AgentOpen(id) => format!("agent open {id}"),
+        ServerFrame::Agent(id, data) => format!("agent {id} {} bytes", data.len()),
+        ServerFrame::AgentClose(id) => format!("agent close {id}"),
     }
 }
 
@@ -1016,8 +1099,16 @@ impl Client {
             if attempts > 0 && attempts.is_multiple_of(RESOLVE_EVERY) {
                 self.refresh_address().await;
             }
+            vlog!(
+                2,
+                "attempt {}: {} over {}",
+                attempts + 1,
+                hello_name(&hello),
+                self.params.tiers[self.current].name()
+            );
             match self.establish_watched(&hello).await {
                 Attempt::Fatal(message) => {
+                    vlog!(1, "cannot continue: {message}");
                     self.clear_status_at_end().await;
                     return Err(message);
                 }
@@ -1026,6 +1117,11 @@ impl Client {
                     self.failures = 0;
                     self.linked_once = true;
                     self.started = true;
+                    vlog!(
+                        1,
+                        "session running over {}",
+                        self.params.tiers[self.current].name()
+                    );
                     self.clear_status().await;
                     let pumped = self.pump(&mut link).await;
                     // what was shown ahead of the server goes, whatever happens next
@@ -1034,11 +1130,12 @@ impl Client {
                     let _ = self.io.output.flush().await;
                     match pumped? {
                         Pumped::Done(finished) => {
+                            vlog!(1, "session ended: {finished:?}");
                             link.finish().await;
                             self.clear_status_at_end().await;
                             return Ok(finished);
                         }
-                        Pumped::Lost => {}
+                        Pumped::Lost => vlog!(1, "connection lost, reconnecting"),
                     }
                 }
                 // the answer was fine and only the kind of hello was wrong: no pause, no other tier
@@ -1050,6 +1147,13 @@ impl Client {
                 }
             }
             attempts += 1;
+            vlog!(
+                1,
+                "attempt {attempts} failed{}",
+                self.note
+                    .as_ref()
+                    .map_or_else(String::new, |note| format!(": {note}"))
+            );
             let text = match self.note.take() {
                 Some(note) => format!("connection lost, reconnecting (attempt {attempts}, {note})"),
                 None => format!("connection lost, reconnecting (attempt {attempts})"),
@@ -1136,8 +1240,17 @@ impl Client {
         }) else {
             return;
         };
-        if let Ok(socket) = std::net::UdpSocket::bind(wildcard(&addr)) {
-            let _ = endpoint.rebind(socket);
+        match std::net::UdpSocket::bind(wildcard(&addr)) {
+            Ok(socket) => {
+                let local = socket.local_addr().ok();
+                let result = endpoint.rebind(socket);
+                vlog!(
+                    1,
+                    "moved the UDP socket to the current network (local {local:?}): {}",
+                    result.map_or_else(|e| e.to_string(), |()| "ok".to_owned())
+                );
+            }
+            Err(err) => vlog!(1, "cannot open a new UDP socket: {err}"),
         }
     }
 
@@ -1155,6 +1268,10 @@ impl Client {
             return;
         };
         if found != *addr {
+            vlog!(
+                1,
+                "the address of the server changed from {addr} to {found}"
+            );
             let family_changed = found.is_ipv4() != addr.is_ipv4();
             *addr = found;
             if family_changed {
@@ -1176,12 +1293,22 @@ impl Client {
         }
         if !self.linked_once {
             self.current = (self.current + 1) % count;
+            vlog!(
+                1,
+                "next transport: {}",
+                self.params.tiers[self.current].name()
+            );
             return self.current != 0;
         }
         self.failures += 1;
         if self.failures >= TIER_PATIENCE {
             self.failures = 0;
             self.current = (self.current + 1) % count;
+            vlog!(
+                1,
+                "after {TIER_PATIENCE} failures, the next transport: {}",
+                self.params.tiers[self.current].name()
+            );
         }
         false
     }
@@ -1207,6 +1334,13 @@ impl Client {
             Tier::Udp { addr, .. } => Some(*addr),
             Tier::Stream { .. } => None,
         };
+        vlog!(
+            1,
+            "connecting over {}{}",
+            self.params.tiers[self.current].name(),
+            udp.map_or_else(String::new, |addr| format!(" to {addr}"))
+        );
+        let opened = Instant::now();
         if let Some(addr) = udp {
             let endpoint = self.udp_endpoint(addr)?;
             let connecting = endpoint
@@ -1214,12 +1348,20 @@ impl Client {
                 .map_err(|e| format!("udp: {e}"))?;
             let conn = connecting.await.map_err(|e| format!("udp: {e}"))?;
             let (send, recv) = conn.open_bi().await.map_err(|e| format!("udp: {e}"))?;
+            vlog!(
+                2,
+                "QUIC handshake done in {:?}, round trip {:?}, remote {}",
+                opened.elapsed(),
+                conn.rtt(),
+                conn.remote_address()
+            );
             return Ok(Link::new(Some(conn), Out::Quic(send), Box::new(recv), None));
         }
         let Tier::Stream { name, dial } = &mut self.params.tiers[self.current] else {
             unreachable!("not a UDP tier");
         };
         let stream = dial().await.map_err(|e| format!("{name}: {e}"))?;
+        vlog!(2, "{name} stream open after {:?}", opened.elapsed());
         Ok(Link::new(
             None,
             Out::Stream(stream.writer),
@@ -1235,7 +1377,10 @@ impl Client {
             tokio::select! {
                 attempt = self.establish(hello) => break attempt,
                 cause = next_cause(&mut net) => match cause {
-                    Some(_) => self.rebind(),
+                    Some(cause) => {
+                        vlog!(1, "network change detected while connecting ({cause:?})");
+                        self.rebind();
+                    }
                     None => net = None,
                 },
             }
@@ -1255,6 +1400,7 @@ impl Client {
         };
         let attempt = timeout(limit, async {
             let link = self.open_link().await?;
+            vlog!(2, "sending {}", hello_name(hello));
             link.send(ClientFrame::Hello(hello.clone()));
             let mut link = link;
             let reply = link.reader.next().await;
@@ -1264,10 +1410,16 @@ impl Client {
         let (link, reply) = match attempt {
             Ok(Ok(opened)) => opened,
             Ok(Err(note)) => {
+                vlog!(1, "connecting failed: {note}");
                 self.note = Some(sanitize(note.as_bytes(), NOTE_CHARS));
                 return Attempt::Retry;
             }
             Err(_) => {
+                vlog!(
+                    1,
+                    "no answer from {} within {limit:?}",
+                    self.params.tiers[self.current].name()
+                );
                 self.note = Some(format!(
                     "{}: no answer",
                     self.params.tiers[self.current].name()
@@ -1319,6 +1471,12 @@ impl Client {
                 let _ = self.io.output.flush().await;
             }
         }
+        vlog!(
+            2,
+            "welcome: the server has {} bytes of our input and sends output from {}",
+            welcome.input_offset,
+            welcome.output_offset
+        );
         if check_welcome(hello, welcome, self.input.start(), self.input.end()).is_err() {
             return Attempt::Fatal("the server answered with unexpected offsets".to_owned());
         }
@@ -1330,6 +1488,11 @@ impl Client {
         if let Hello::Resume { output_offset, .. } = hello
             && welcome.output_offset > *output_offset
         {
+            vlog!(
+                1,
+                "the server forgot {} bytes of output while the client was away",
+                welcome.output_offset - output_offset
+            );
             self.output_offset = welcome.output_offset;
             self.note_gap(welcome.output_offset - output_offset).await;
         }
@@ -1340,6 +1503,7 @@ impl Client {
                 break;
             }
             offset += chunk.len() as u64;
+            vlog!(2, "sending {} bytes of input again", chunk.len());
             link.send(ClientFrame::Input(chunk));
         }
         if self.params.agent.is_some() {
@@ -1393,6 +1557,12 @@ impl Client {
             && bytes.len() >= COMPRESS_MIN_CHUNK
             && let Some(packed) = self.compressor.compress(bytes)
         {
+            vlog!(
+                2,
+                "compressed {} bytes of input to {}",
+                bytes.len(),
+                packed.len()
+            );
             return ClientFrame::Compressed(packed);
         }
         ClientFrame::Input(bytes.to_vec())
@@ -1472,12 +1642,16 @@ impl Client {
                     }
                 }
                 frame = link.reader.next() => {
-                    let Some(frame) = frame? else { return Ok(Pumped::Lost) };
+                    let Some(frame) = frame? else {
+                        vlog!(1, "the server closed the connection");
+                        return Ok(Pumped::Lost);
+                    };
                     link.last_heard = Instant::now();
                     probe = None;
                     if std::mem::take(&mut stalled) {
                         self.clear_status().await;
                     }
+                    vlog!(3, "<- {}", server_frame_name(&frame));
                     // compressed output is the same as plain output once it is inflated
                     let frame = match frame {
                         ServerFrame::Compressed(packed) => ServerFrame::Output(
@@ -1537,6 +1711,7 @@ impl Client {
                         ServerFrame::Gap(skipped) => {
                             // The server skipped output that this client was too slow to take.
                             // What was shown ahead of the server goes first, then the notice.
+                            vlog!(1, "the server skipped {skipped} bytes of output (slow link)");
                             let taken_back = self.echo.cancel();
                             let _ = self.io.output.write_all(&taken_back).await;
                             self.output_offset += skipped;
@@ -1554,6 +1729,7 @@ impl Client {
                     }
                 }
                 Some(size) = self.io.resizes.recv() => {
+                    vlog!(2, "the terminal is now {}x{}", size.cols(), size.rows());
                     self.size = size;
                     self.echo.resize(size.cols());
                     resizes.push(size, tokio::time::Instant::now());
@@ -1571,6 +1747,7 @@ impl Client {
                 }
                 cause = next_cause(&mut self.net) => match cause {
                     Some(cause) => {
+                        vlog!(1, "network change detected: {cause:?}");
                         let strongest = change.map_or(cause, |(old, _)| old.max(cause));
                         change = Some((strongest, tokio::time::Instant::now() + CHANGE_QUIET));
                     }
@@ -1578,6 +1755,7 @@ impl Client {
                 },
                 _ = async { tokio::time::sleep_until(change_at.expect("guarded")).await }, if change_at.is_some() => {
                     let (cause, _) = change.take().expect("guarded");
+                    vlog!(1, "the network settled ({cause:?}): moving the socket and probing the server");
                     self.rebind();
                     link.send(ClientFrame::Ping);
                     let wait = if cause == Cause::Woke { PROBE_AFTER_WAKE } else { PROBE_AFTER_CHANGE };
@@ -1585,6 +1763,7 @@ impl Client {
                 }
                 _ = async { tokio::time::sleep_until(probe.expect("guarded")).await }, if probe.is_some() => {
                     // the new path did not bring an answer, so the old connection is not worth keeping
+                    vlog!(1, "no answer on the new path: giving up the connection");
                     return Ok(Pumped::Lost);
                 }
                 _ = ping.tick() => {
@@ -1599,6 +1778,7 @@ impl Client {
                     // stream has no way to notice that its path is gone, and the `ssh` behind it
                     // would hang, so a long silence ends it and a new one is made.
                     if link.quic.is_none() && silent > self.params.stream_dead_after {
+                        vlog!(1, "nothing heard for {silent:?} on a stream: giving it up");
                         return Ok(Pumped::Lost);
                     }
                     if silent > stall_after {

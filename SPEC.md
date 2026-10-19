@@ -825,6 +825,15 @@ Rules (nobody listens, and `wait` mode):
   slower than the writer. This is a property of that system and happens without `ssj` too, so the
   tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
+### Debug output (`-v`)
+
+`-v`, `-vv`, and `-vvv` (`--verbose`, counted, at most three) switch on `log.rs`, and
+`--log-file FILE` sends the lines to a file (append, mode 0600) instead of the standard error
+output. A line is `[ssj <seconds since the start>s] <text>`; on a terminal it ends in `\r\n`, since
+the terminal is in raw mode during a session. The `vlog!(level, ...)` macro does not format when
+the level is off. The levels are described in the README. The pin and the content of the session
+never appear in the output: frames are named by kind and size. The server writes no log.
+
 ### Local echo (`local_echo`)
 
 Optional and off by default (`--local-echo auto`, or `local_echo = "auto"` in `client.toml`). It

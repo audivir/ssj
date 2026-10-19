@@ -434,3 +434,19 @@ fn the_help_shows_a_flag_and_its_counterpart_on_one_line() {
     );
     assert!(args(&["--install", "h"]).is_ok() && args(&["--no-install", "h"]).is_ok());
 }
+
+#[test]
+fn verbose_counts_up_to_three_and_the_log_file_is_a_path() {
+    assert_eq!(args(&["h"]).unwrap().verbose, 0);
+    assert_eq!(args(&["-v", "h"]).unwrap().verbose, 1);
+    assert_eq!(args(&["-vv", "h"]).unwrap().verbose, 2);
+    assert_eq!(args(&["-v", "-v", "-v", "h"]).unwrap().verbose, 3);
+    assert_eq!(args(&["-vvvvv", "h"]).unwrap().verbose, 3);
+    assert_eq!(args(&["--verbose", "h"]).unwrap().verbose, 1);
+    let with_file = args(&["--log-file", "/tmp/ssj.log", "h"]).unwrap();
+    assert_eq!(
+        with_file.log_file.as_deref(),
+        Some(std::path::Path::new("/tmp/ssj.log"))
+    );
+    assert!(args(&["--log-file"]).is_err());
+}

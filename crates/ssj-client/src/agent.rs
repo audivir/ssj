@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ssj_net::channels::{Channels, Piece};
+
+use crate::vlog;
 use ssj_proto::ClientFrame;
 use ssj_proto::frame::MAX_DATA_LEN;
 use tokio::net::UnixStream;
@@ -104,8 +106,14 @@ impl Forward {
             _ => false,
         };
         if opened {
+            vlog!(2, "agent channel {id} opened");
             self.filters.insert(id, Filter::default());
         } else {
+            vlog!(
+                1,
+                "cannot open agent channel {id} to {}",
+                self.socket.display()
+            );
             let _ = self.out.send(ClientFrame::AgentClose(id));
         }
     }
@@ -116,6 +124,12 @@ impl Forward {
             return;
         };
         let filtered = filter.feed(data);
+        if !filtered.reply.is_empty() {
+            vlog!(
+                1,
+                "agent channel {id}: a request other than listing and signing was refused"
+            );
+        }
         for chunk in filtered.reply.chunks(MAX_DATA_LEN) {
             let _ = self.out.send(ClientFrame::Agent(id, chunk.to_vec()));
         }

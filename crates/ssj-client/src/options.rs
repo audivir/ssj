@@ -53,6 +53,14 @@ pub struct Options {
     #[arg(value_name = "ARGS")]
     pub words: Vec<String>,
 
+    /// Print what is happening: -v for the steps, -vv for details, -vvv for every frame
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Write the -v output to this file and not to the terminal
+    #[arg(long, value_name = "FILE", overrides_with = "log_file")]
+    pub log_file: Option<String>,
+
     /// Join the session of this name, or start it
     #[arg(long, value_name = "NAME", overrides_with = "name")]
     pub name: Option<String>,

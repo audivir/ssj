@@ -1130,6 +1130,49 @@ fn assert_session(output: &Output) {
 const ASK: [&str; 2] = ["-c", "read x; echo got:$x; exit 3"];
 
 #[test]
+fn verbose_output_goes_to_the_log_file_and_names_the_steps() {
+    let ssh = transport_ssh("", "");
+    let log = std::env::temp_dir().join(format!("ssj-e2e-log-{}", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let output = run_client_with(
+        &ssh,
+        &ASK,
+        "xyz\n",
+        &[
+            "-vvv",
+            "--transport",
+            "udp",
+            "--log-file",
+            log.to_str().unwrap(),
+        ],
+    );
+    assert_session(&output);
+    // nothing of the log is on the terminal
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("[ssj "));
+    let text = std::fs::read_to_string(&log).unwrap();
+    for step in [
+        "starting the server on",
+        "the server runs: session",
+        "transports in order: udp",
+        "QUIC handshake done",
+        "welcome: the server has 0 bytes",
+        "session running over udp",
+        "-> input 4 bytes",
+        "<- exit",
+        "session ended",
+    ] {
+        assert!(text.contains(step), "{step}\n{text}");
+    }
+    // the content of the session is never logged
+    assert!(!text.contains("xyz"));
+    let _ = std::fs::remove_file(&log);
+
+    // without -v nothing is written
+    let quiet = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "udp"]);
+    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("[ssj "));
+}
+
+#[test]
 fn tcp_through_ssh_w_carries_a_session() {
     let ssh = transport_ssh("", "");
     let output = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "tcp"]);

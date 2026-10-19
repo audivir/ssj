@@ -9,6 +9,7 @@ use ssj_proto::bootstrap::sanitize;
 use crate::bootstrap::{run_remote_command, sh_command};
 use crate::cli::Args;
 use crate::config::AutoInstall;
+use crate::vlog;
 
 /// Largest server file the client uploads.
 pub const MAX_BINARY: u64 = 64 * 1024 * 1024;
@@ -139,6 +140,7 @@ pub async fn install(args: &Args) -> Result<String, String> {
         crate::download::base_url(args)?;
     }
     let target = detect_target(args).await?;
+    vlog!(1, "the host runs {}", target.triple());
     let binary = if args.download {
         crate::download::server_file(args, target).await?
     } else {
@@ -156,6 +158,11 @@ pub async fn install(args: &Args) -> Result<String, String> {
     };
 
     let digest = sha256_hex(&binary);
+    vlog!(
+        1,
+        "uploading {} bytes of the server (SHA-256 {digest})",
+        binary.len()
+    );
 
     let mut stdin = format!("{digest}\n").into_bytes();
     stdin.extend_from_slice(&binary);

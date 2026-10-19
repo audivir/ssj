@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::cli::Args;
 use crate::install::{MAX_BINARY, Target, sha256_hex};
+use crate::vlog;
 
 /// Time for a whole download.
 const TIMEOUT: Duration = Duration::from_secs(180);
@@ -73,6 +74,7 @@ pub async fn server_file(args: &Args, target: Target) -> Result<Vec<u8>, String>
     let name = format!("ssj-server-{}", target.triple());
     let (file_url, sums_url) = (format!("{base}/{name}"), format!("{base}/{SUMS_FILE}"));
     eprintln!("ssj: downloading {file_url}");
+    vlog!(1, "checksums from {sums_url}");
     let (binary, sums) = tokio::task::spawn_blocking(move || {
         let sums = fetch(&sums_url, MAX_SUMS)?;
         let binary = fetch(&file_url, MAX_BINARY)?;
