@@ -263,6 +263,8 @@ struct Terminal {
     /// Sends a change of the network to the client.
     net: mpsc::UnboundedSender<Cause>,
     resizes: mpsc::UnboundedSender<WindowSize>,
+    /// The terminal was closed.
+    hangup: mpsc::UnboundedSender<()>,
 }
 
 fn start_client(server: &Server, identity: Identity) -> Terminal {
@@ -369,6 +371,7 @@ fn start_client_inner(
     let (resizes_tx, resizes) = mpsc::unbounded_channel();
     let status = Arc::new(Mutex::new(Vec::new()));
     let (net, net_rx) = mpsc::unbounded_channel();
+    let (hangup, hangups) = mpsc::unbounded_channel();
     let io = Io {
         input: Box::new(typed_rx),
         output: Box::new(shown_tx),
@@ -376,6 +379,7 @@ fn start_client_inner(
         resizes,
         status: Box::new(Recorded(status.clone())),
         net: net_rx,
+        hangups,
     };
     let params = Params {
         identity,
@@ -405,6 +409,7 @@ fn start_client_inner(
         seen: String::new(),
         net,
         resizes: resizes_tx,
+        hangup,
     }
 }
 
@@ -554,6 +559,55 @@ async fn input_typed_while_the_server_is_unreachable_arrives_once_it_returns() {
         .collect();
     // a silent server gives no refusal, so an attempt lasts until its timeout
     assert!(!attempts.is_empty(), "{attempts:?}");
+}
+
+#[tokio::test]
+async fn a_closed_terminal_ends_the_session_and_its_shell() {
+    let client_id = Identity::generate();
+    let mut server = start_server(ECHO_LINES, client_id.fingerprint());
+    let mut terminal = start_client(&server, client_id);
+    terminal.type_line("hello").await;
+    terminal.wait_for("got:hello").await;
+
+    // SIGHUP of the terminal: the server hangs up the shell, and nothing is left running
+    terminal.hangup.send(()).unwrap();
+    let finished = timeout(Duration::from_secs(10), terminal.client)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished, Ok(Finished::HungUp));
+    let end = timeout(Duration::from_secs(10), &mut server.session)
+        .await
+        .expect("the session ends")
+        .unwrap();
+    assert!(matches!(end, SessionEnd::Killed), "{end:?}");
+}
+
+#[tokio::test]
+async fn a_closed_terminal_while_offline_leaves_the_session_for_a_later_return() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let mut terminal = start_client(&server, client_id);
+    terminal.type_line("hello").await;
+    terminal.wait_for("got:hello").await;
+    // the connection is cut and the client waits to reconnect
+    server.endpoint.close(0u8.into(), b"gone");
+    timeout(Duration::from_secs(20), async {
+        while !terminal.status().iter().any(|s| s.contains("reconnecting")) {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the client notices");
+
+    terminal.hangup.send(()).unwrap();
+    let finished = timeout(Duration::from_secs(10), terminal.client)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished, Ok(Finished::HungUp));
+    // nobody could tell the server, so the shell still runs
+    assert!(!server.session.is_finished());
 }
 
 #[tokio::test]

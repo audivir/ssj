@@ -143,6 +143,7 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
         resizes,
         status: Box::new(Quiet),
         net,
+        hangups: mpsc::unbounded_channel().1,
     };
     let params = Params {
         connect: Connect {

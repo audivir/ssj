@@ -35,13 +35,18 @@ bench="python3 bench/bench.py --host localhost --ssj /target/release/ssj --serve
 [ -n "$CONGESTION" ] && bench="$bench --congestion $CONGESTION"
 [ -n "$ONLY" ] && bench="$bench --only $ONLY"
 
-# SCENARIOS picks some of them (zeros text slow lossy clean fast start), for example SCENARIOS="slow lossy"
+# SCENARIOS picks some of them (zeros text slow lossy clean fast start cleanup), for example SCENARIOS="slow lossy"
 scenarios=${SCENARIOS:-"zeros text slow lossy"}
 want() { case " $scenarios " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
+if want cleanup; then
+    echo "== which ways of leaving a session leave the server behind"
+    python3 bench/cleanup.py --host localhost --ssj /target/release/ssj --server /target/release/ssj-server
+fi
+
 if want zeros; then
     echo "== loopback, zeros (the transport itself)"
-    $bench --raw-bulk --bulk-mb ${BULK_MB:-256} --samples 150 --rounds ${ROUNDS:-3}
+    $bench --raw-bulk --bulk-mb "${BULK_MB:-256}" --samples 150 --rounds "${ROUNDS:-3}"
 fi
 
 if want text; then

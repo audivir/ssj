@@ -56,11 +56,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Install zig and cargo-zigbuild
+      - name: Install zig
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+      - name: Install cargo-zigbuild
         if: matrix.zig
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zigbuild,zig
+          tool: cargo-zigbuild
       - name: Build with cargo-zigbuild
         if: matrix.zig
         run: cargo zigbuild --release -p ssj-client -p ssj-server --target ${{ matrix.target }}

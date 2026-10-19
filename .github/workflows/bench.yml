@@ -18,10 +18,12 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
-      - name: Install zig and cargo-zigbuild
+      - name: Install zig
+        uses: mlugg/setup-zig@v2
+      - name: Install cargo-zigbuild
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zigbuild,zig
+          tool: cargo-zigbuild
       - name: Build the client, and the server for glibc and musl
         run: |
           cargo build --release -p ssj-client -p ssj-server

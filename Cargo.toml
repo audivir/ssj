@@ -6,8 +6,8 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 description = "Session survives jumps: a roaming remote shell over QUIC"
-license = "MIT"
 repository = "https://github.com/audivir/ssj"
+license = "MIT"
 
 [workspace.dependencies]
 ssj-config = { path = "crates/ssj-config", version = "0.1.0" }

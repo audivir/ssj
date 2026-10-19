@@ -108,6 +108,10 @@ pub enum ClientFrame {
     Close,
     /// The client leaves on purpose and the session keeps running without a timeout.
     Detach,
+    /// The terminal of the client was closed, or `ssj` was told to end: the server hangs up the
+    /// terminal of the shell, as `ssh` would, and the session ends. Losing the connection is not
+    /// this, since it may come back.
+    Hangup,
     /// Asks the server to answer with `Pong`, which shows that the path works.
     Ping,
     /// Input that is compressed (see [`crate::compress`]). It holds the same as an `Input` frame
@@ -154,6 +158,7 @@ const CLOSE: u8 = 0x05;
 const DETACH: u8 = 0x06;
 const PING: u8 = 0x07;
 const CLIENT_COMPRESSED: u8 = 0x08;
+const HANGUP: u8 = 0x0c;
 const AGENT_OFFER: u8 = 0x09;
 const CLIENT_AGENT: u8 = 0x0a;
 const CLIENT_AGENT_CLOSE: u8 = 0x0b;
@@ -340,6 +345,10 @@ impl ClientFrame {
                 out.push(AGENT_OFFER);
                 Ok(())
             }
+            Self::Hangup => {
+                out.push(HANGUP);
+                Ok(())
+            }
             Self::Agent(id, data) => put_channel(out, CLIENT_AGENT, *id, data),
             Self::AgentClose(id) => put_id(out, CLIENT_AGENT_CLOSE, *id),
         };
@@ -392,6 +401,7 @@ impl ClientFrame {
             DETACH => Self::Detach,
             PING => Self::Ping,
             AGENT_OFFER => Self::AgentOffer,
+            HANGUP => Self::Hangup,
             CLIENT_AGENT => {
                 let id = body.u32()?;
                 Self::Agent(id, body.data()?)

@@ -1479,3 +1479,36 @@ async fn the_first_client_timeout_stops_counting_once_a_client_has_joined() {
     tokio::time::sleep(Duration::from_millis(900)).await;
     assert!(!harness.session.is_finished());
 }
+
+#[tokio::test]
+async fn a_shell_that_leaves_a_background_program_on_the_terminal_still_ends_the_session() {
+    // the program keeps the terminal open, so the output never reaches its end
+    let harness = start(config("sleep 30 & echo before; exit 3"));
+    let mut client = harness.connect().await;
+    client.start().await;
+    let seen = client.read_until(|s| s.exit.is_some()).await;
+    assert!(contains(&seen.output, "before"));
+    assert_eq!(seen.exit, Some(ExitStatus::Code(3)));
+    client.send(ClientFrame::Close).await;
+    assert!(matches!(harness.end().await, SessionEnd::ShellExited(_)));
+}
+
+#[tokio::test]
+async fn a_hangup_ends_the_session_and_hangs_up_the_shell() {
+    let marker = std::env::temp_dir().join(format!("ssj-hangup-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    // the shell notes the SIGHUP that closing its terminal sends
+    let script = format!(
+        "trap 'echo hup > {}; exit 0' HUP; echo ready; while :; do sleep 0.05; done",
+        marker.display()
+    );
+    let harness = start(config(&script));
+    let mut client = harness.connect().await;
+    client.start().await;
+    client.read_until(|s| contains(&s.output, "ready")).await;
+    client.send(ClientFrame::Hangup).await;
+    assert!(matches!(harness.end().await, SessionEnd::Killed));
+    // the end of the session waited for the shell, which has run its trap
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "hup");
+    let _ = std::fs::remove_file(&marker);
+}

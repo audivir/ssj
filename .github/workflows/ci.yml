@@ -31,6 +31,11 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
           components: clippy
+      # zstd is C code, and the cc crate looks for <arch>-linux-musl-gcc, which musl-tools calls musl-gcc
+      - name: Install a C compiler for musl
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
   clippy-musl-arm:
@@ -41,6 +46,11 @@ jobs:
         with:
           targets: aarch64-unknown-linux-musl
           components: clippy
+      # zstd is C code, and the cc crate looks for <arch>-linux-musl-gcc, which musl-tools calls musl-gcc
+      - name: Install a C compiler for musl
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          echo "CC_aarch64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features --target aarch64-unknown-linux-musl -- -D warnings
   clippy-macos:
@@ -80,14 +90,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Install zig and cargo-zigbuild
+      - name: Install zig
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+      - name: Install cargo-zigbuild
         if: matrix.zig
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zigbuild,zig
-      - name: Install musl-tools
+          tool: cargo-zigbuild
+      # zstd is C code, and the cc crate looks for <arch>-linux-musl-gcc, which musl-tools calls musl-gcc
+      - name: Install a C compiler for musl
         if: endsWith(matrix.target, '-musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          echo "CC_$(echo '${{ matrix.target }}' | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:

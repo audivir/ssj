@@ -96,6 +96,9 @@ pub enum Finished {
     Exited(u8),
     /// The user left on purpose and the session keeps running.
     Detached,
+    /// The terminal was closed or `ssj` was told to end, and the server was asked to end the
+    /// session (it could not be, if the connection was down).
+    HungUp,
 }
 
 /// Looks up the address of the server again.
@@ -173,6 +176,9 @@ pub struct Io {
     pub status: Box<dyn Status>,
     /// Changes of the network and wakes from sleep. A channel that never sends is fine.
     pub net: mpsc::UnboundedReceiver<Cause>,
+    /// The terminal was closed (SIGHUP) or `ssj` was told to end (SIGTERM). A channel that never
+    /// sends is fine.
+    pub hangups: mpsc::UnboundedReceiver<()>,
 }
 
 pub fn run(args: Args) -> ExitCode {
@@ -535,6 +541,25 @@ async fn kill_session(args: &Args, id: Option<String>) -> u8 {
     }
 }
 
+/// Reports SIGHUP (the terminal went away) and SIGTERM (`kill`): `ssj` then ends the session, as
+/// `ssh` would end its shell. Losing the connection is a different thing and keeps the session.
+fn hangup_signals() -> mpsc::UnboundedReceiver<()> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    for kind in [SignalKind::hangup(), SignalKind::terminate()] {
+        if let Ok(mut signal) = signal(kind) {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                while signal.recv().await.is_some() {
+                    if tx.send(()).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    }
+    rx
+}
+
 /// The ways to reach the server, in the order to try them, from the choice of the user and what
 /// the server offers.
 /// What the client finds out while the `ssh` of the bootstrap is still busy, so that the start
@@ -720,6 +745,7 @@ async fn connect_session(
         size: window_size(),
         resizes,
         status,
+        hangups: hangup_signals(),
         net: {
             let watch = crate::netwatch::start();
             vlog!(2, "network change sources: {:?}", watch.active);
@@ -748,6 +774,7 @@ async fn connect_session(
 
     match result {
         Ok(Finished::Exited(code)) => code,
+        Ok(Finished::HungUp) => 129,
         Ok(Finished::Detached) => {
             eprintln!("[detached from session; it keeps running]");
             0
@@ -918,6 +945,7 @@ fn client_frame_name(frame: &ClientFrame) -> String {
         ClientFrame::OutputAck(offset) => format!("output ack {offset}"),
         ClientFrame::Close => "close".to_owned(),
         ClientFrame::Detach => "detach".to_owned(),
+        ClientFrame::Hangup => "hangup".to_owned(),
         ClientFrame::Ping => "ping".to_owned(),
         ClientFrame::AgentOffer => "agent offer".to_owned(),
         ClientFrame::Agent(id, data) => format!("agent {id} {} bytes", data.len()),
@@ -1536,6 +1564,10 @@ impl Client {
                     }
                 }
                 Some(size) = self.io.resizes.recv() => self.size = size,
+                Some(()) = self.io.hangups.recv() => {
+                    vlog!(1, "told to end while the connection is down: the session keeps running");
+                    return Ok(Some(Finished::HungUp));
+                }
                 cause = next_cause(&mut self.net) => match cause {
                     // the network is different now, so waiting longer makes no sense
                     Some(_) => {
@@ -1727,6 +1759,11 @@ impl Client {
                         // turned into output above
                         ServerFrame::Compressed(_) => unreachable!("inflated above"),
                     }
+                }
+                Some(()) = self.io.hangups.recv() => {
+                    vlog!(1, "the terminal was closed or ssj was told to end: ending the session");
+                    link.send(ClientFrame::Hangup);
+                    return Ok(Pumped::Done(Finished::HungUp));
                 }
                 Some(size) = self.io.resizes.recv() => {
                     vlog!(2, "the terminal is now {}x{}", size.cols(), size.rows());

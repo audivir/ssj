@@ -110,8 +110,12 @@ Any other character after `~` is sent as typed. Set another escape character wit
 
 ### Timeouts and detached sessions
 
-- After an involuntary disconnect, the server waits for the client and ends the session after the
-  detached timeout (off by default, `detached_timeout` in `server.toml`).
+- Ending the shell (`exit`, Ctrl+D), closing the terminal window, and `kill ssj` (SIGHUP or
+  SIGTERM) all end the session and its shell, as they would with `ssh`. Only `~.` leaves it
+  running on purpose.
+- After a lost connection (a network change, a sleeping laptop, a client killed with SIGKILL), the
+  server waits for the client and ends the session after the detached timeout (off by default,
+  `detached_timeout` in `server.toml`). `ssj list` shows what is left, and `ssj kill` ends it.
 - After `~.` there is no timeout. The shell runs until you attach again, or until you end it with
   `ssj kill`. The server closes its UDP port on detach, so a detached session listens on nothing.
   Attaching again goes through `ssh` and opens a new port.

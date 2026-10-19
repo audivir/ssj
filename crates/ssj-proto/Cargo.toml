@@ -3,8 +3,8 @@ name = "ssj-proto"
 version.workspace = true
 edition.workspace = true
 description.workspace = true
-license.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [dependencies]
 zstd = { version = "0.14.3", default-features = false }

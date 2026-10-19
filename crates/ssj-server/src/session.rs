@@ -165,6 +165,7 @@ enum Control {
     OutputAck(u64),
     Close,
     Detach,
+    Hangup,
     Ping,
     AgentOffer,
     Agent(u32, Vec<u8>),
@@ -428,23 +429,7 @@ impl<B: Backend> Session<B> {
             match event {
                 Event::Command(None) => commands = None,
                 Event::Command(Some(SessionCommand::Kill)) => {
-                    if let Some(Running {
-                        reader,
-                        writer,
-                        exit,
-                        ..
-                    }) = shell.take()
-                    {
-                        // closing the terminal makes the kernel send SIGHUP to the shell
-                        drop(reader);
-                        drop(writer);
-                        if let Some(exit) = exit {
-                            let _ = tokio::time::timeout(Duration::from_secs(5), exit).await;
-                        }
-                    }
-                    if let Some(a) = active.as_ref().filter(|a| a.hello_done) {
-                        let _ = a.out.try_send(ServerFrame::Exit(WireExit::Signal(1)));
-                    }
+                    hang_up(shell.take(), active.as_ref()).await;
                     return SessionEnd::Killed;
                 }
                 Event::Connection(None) => return SessionEnd::Closed,
@@ -592,6 +577,10 @@ impl<B: Backend> Session<B> {
                             if let Some(channels) = active.as_mut().and_then(|a| a.agent.as_mut()) {
                                 channels.close(id);
                             }
+                        }
+                        Control::Hangup => {
+                            hang_up(shell.take(), None).await;
+                            return SessionEnd::Killed;
                         }
                         Control::Detach => {
                             active = None;
@@ -847,6 +836,28 @@ fn tell_channel_closed(out: &mpsc::Sender<ServerFrame>, id: u32) {
     });
 }
 
+/// Hangs up the terminal of the shell, as closing a terminal window would, and tells the connected
+/// client that the shell is gone.
+async fn hang_up<S: Shell>(shell: Option<Running<S>>, client: Option<&Active>) {
+    if let Some(Running {
+        reader,
+        writer,
+        exit,
+        ..
+    }) = shell
+    {
+        // closing the terminal makes the kernel send SIGHUP to the shell
+        drop(reader);
+        drop(writer);
+        if let Some(exit) = exit {
+            let _ = tokio::time::timeout(Duration::from_secs(5), exit).await;
+        }
+    }
+    if let Some(a) = client.filter(|a| a.hello_done) {
+        let _ = a.out.try_send(ServerFrame::Exit(WireExit::Signal(1)));
+    }
+}
+
 /// Starts the shell, and the socket for the agent of the client when it is asked for.
 async fn start_shell<B: Backend>(
     backend: &B,
@@ -1016,6 +1027,7 @@ async fn read_connection(
                 (ClientFrame::OutputAck(offset), true) => send(Control::OutputAck(offset)).await,
                 (ClientFrame::Close, true) => return send(Control::Close).await,
                 (ClientFrame::Detach, true) => return send(Control::Detach).await,
+                (ClientFrame::Hangup, true) => return send(Control::Hangup).await,
                 (ClientFrame::Ping, true) => send(Control::Ping).await,
                 (ClientFrame::AgentOffer, true) => send(Control::AgentOffer).await,
                 (ClientFrame::Agent(id, data), true) => send(Control::Agent(id, data)).await,

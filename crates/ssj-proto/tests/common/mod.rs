@@ -39,6 +39,7 @@ pub fn client_frames() -> Vec<ClientFrame> {
         ClientFrame::Detach,
         ClientFrame::Ping,
         ClientFrame::AgentOffer,
+        ClientFrame::Hangup,
         ClientFrame::Agent(7, b"\0\0\0\x01\x0b".to_vec()),
         ClientFrame::Agent(u32::MAX, vec![1; MAX_DATA_LEN]),
         ClientFrame::AgentClose(7),

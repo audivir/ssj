@@ -624,14 +624,20 @@ Ending (the session is over):
 - `ssj kill [ID] user@host` ends a session from another terminal. The server sends `SIGHUP` to the
   process group of the shell, as a closing terminal would, and ends after the shell has exited.
 - `SIGTERM` or `SIGINT` to the server process does the same as `ssj kill`.
+- Closing the terminal window, or `SIGHUP` or `SIGTERM` to the client (`kill ssj`): the client
+  sends `Hangup` and exits with code 129. The server hangs up the terminal of the shell, as a
+  closing terminal would for `ssh`, and ends after the shell has exited. Without a connection
+  (while the client is reconnecting) nothing can be told, and the session stays. The server
+  never takes the loss of a connection for this, since it may come back.
 - `SIGHUP` to the server process is ignored, because it is sent when the `ssh` channel of the
   bootstrap closes.
 
 Leaving (the shell keeps running):
 
-- Closing the terminal, or `SIGHUP`, `SIGTERM`, or `SIGINT` to the client, is an accidental or
-  involuntary disconnect. The client just ends, and the session survives, because surviving
-  is the purpose of the tool. The detached timeout applies.
+- A connection that is lost (a network change, a sleeping laptop, a client that is killed with
+  `SIGKILL` or crashes) is an involuntary disconnect. The session survives, because surviving is
+  the purpose of the tool, and the detached timeout applies. The server cannot tell these from a
+  client that never returns, so `ssj list` and `ssj kill` clean up after a client that did.
 - An escape key sequence detaches on purpose. As in `ssh`, the escape character `~` counts only
   at the start of a line (right after a newline or at the start of the session). Then:
   - `~.` detaches: the client sends `Detach`, prints `[detached from <ID>]`, and exits with code 0.
