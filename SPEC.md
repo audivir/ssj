@@ -872,7 +872,7 @@ follows the rule of the other commands.
   expects). An invalid text is shown with its error, and the user can edit again (default) or
   discard it. A missing server is reported with the hint to run `ssj install`.
 - Saving writes a file next to the target (`.client.toml.<pid>` / `.server.toml.<pid>`, mode
-  0600) and renames it over the target. On the host a small `sh` script does that, with
+  0600\) and renames it over the target. On the host a small `sh` script does that, with
   `umask 077`, and the server reads the file when a session starts, so running sessions keep their
   settings.
 - Reading the current text of `server.toml` on the host is `cat` of
