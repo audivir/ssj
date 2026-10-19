@@ -1419,9 +1419,12 @@ impl Client {
 
     /// Connects, sends the hello, and resends the input that the server has not consumed.
     async fn establish(&mut self, hello: &Hello) -> Attempt {
-        // the first tier gets little time in the first connection, so that a blocked UDP port is
-        // found out quickly
-        let limit = if !self.linked_once && self.current == 0 && self.params.tiers.len() > 1 {
+        // The first tier gets little time in the first connection, so that a blocked UDP port is
+        // found out quickly. A stream needs a whole `ssh` handshake, which takes seconds on a
+        // distant host, so it gets the full time.
+        let udp = matches!(self.params.tiers[self.current], Tier::Udp { .. });
+        let limit = if udp && !self.linked_once && self.current == 0 && self.params.tiers.len() > 1
+        {
             self.params.first_attempt_timeout
         } else {
             self.params.attempt_timeout

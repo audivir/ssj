@@ -216,7 +216,8 @@ this order of preference:
 
 The choice is `--transport auto|udp|tcp|stdio` or `transport` in `client.toml`. `auto` tries UDP
 for 1.5 seconds in the first connection, then TCP, then the `ssh` channel, and each failure moves
-on at once. It leaves out UDP when `ssh -G` shows a `proxyjump` or `proxycommand` for the host.
+on at once. Only UDP gets the short time; TCP and the `ssh` channel need a whole `ssh`
+handshake, which takes seconds on a distant host, and get 8 seconds. It leaves out UDP when `ssh -G` shows a `proxyjump` or `proxycommand` for the host.
 After a connection was made, its transport is kept for three failed attempts before the next one
 is tried, since the network is the likelier culprit. The server offers what it is told to
 (`--no-udp`, `--no-tcp`); the `ssh` channel is always there.
