@@ -7,6 +7,7 @@ protocol.
 | Release | Protocol |
 | ------- | -------- |
 | 0.1.0-rc4 | 1 |
+| 0.1.0-rc5 | 1 |
 | 0.1.0 | 1 |
 
 Protocol 1 includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent
