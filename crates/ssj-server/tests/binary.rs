@@ -118,6 +118,30 @@ fn a_broken_start_line_is_ignored_and_the_hello_starts_the_shell() {
     );
 }
 
+/// The daemon shows its session id in its arguments, so that `ps` finds it by the id that the
+/// client prints in its log.
+#[cfg(not(target_env = "musl"))]
+#[test]
+fn the_daemon_shows_the_session_id_in_ps_until_it_ends() {
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    let launched = launch(&runtime, &client, free_range(), "exit 0");
+    let id = launched.connect.id.as_str().to_owned();
+    let listed = || {
+        let out = std::process::Command::new("ps")
+            .args(["-A", "-o", "args="])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|line| line.contains("--daemon-child") && line.contains(&id))
+    };
+    assert!(
+        listed(),
+        "the id {id} is not in the arguments of the daemon"
+    );
+}
+
 #[tokio::test]
 async fn detach_closes_the_endpoint_of_the_daemon() {
     let runtime = runtime_dir();

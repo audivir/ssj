@@ -187,8 +187,13 @@ pub fn run_parent(args: &Args) -> ExitCode {
         Ok(exe) => exe,
         Err(err) => return fail(&format!("cannot find the own executable: {err}"), 1),
     };
+    // the daemon shows the id in `ps`, and the client prints it in its log
+    let mut for_child = args.clone();
+    for_child.session_id = daemon::random_session_id()
+        .ok()
+        .and_then(|id| SessionId::parse(&id));
     let child = Command::new(exe)
-        .args(args.to_child_args())
+        .args(for_child.to_child_args())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -277,9 +282,11 @@ pub fn run_child(mut args: Args) -> ExitCode {
 
 async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -> ExitCode {
     let pin = input.pin;
-    let id = daemon::random_session_id()
-        .ok()
-        .and_then(|id| SessionId::parse(&id));
+    let id = args.session_id.clone().or_else(|| {
+        daemon::random_session_id()
+            .ok()
+            .and_then(|id| SessionId::parse(&id))
+    });
     let Some(id) = id else {
         return fail("cannot create a session id", 1);
     };

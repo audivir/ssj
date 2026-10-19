@@ -207,6 +207,11 @@ adding, removing, and locking keys, and keys with destination constraints, do no
   QUIC handshake, the offsets of the welcome, window size changes, compression, and agent channels.
 - `-vvv`: also every frame that is sent or received, by kind and size and never by content.
 
+The log names the session id, and the server process shows the same id in its arguments, so
+`ps ax | grep <id>` tells whether the server ended after the session did. After a change of the
+network the log says how many notices came, whether a socket was moved, and whether the server
+answered the probe.
+
 The lines go to the standard error output. A program such as `vim` draws over them, so
 `--log-file FILE` writes them to a file (mode 0600) instead. Nothing typed or printed in the session
 is logged.

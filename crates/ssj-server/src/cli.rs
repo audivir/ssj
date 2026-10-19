@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ssj_net::Congestion;
-use ssj_proto::{SessionName, is_selector};
+use ssj_proto::{SessionId, SessionName, is_selector};
 
 use crate::session::SlowClient;
 
@@ -66,6 +66,9 @@ pub struct Args {
     pub tcp: bool,
     /// Set by the bootstrap process when it starts the real server.
     pub daemon_child: bool,
+    /// The id of the session, chosen by the bootstrap process so that it shows in the arguments of
+    /// the daemon (`ps`) and in the log of the client.
+    pub session_id: Option<SessionId>,
     /// Which settings the command line gave, since the config file only fills in the others.
     pub explicit: Explicit,
 }
@@ -104,6 +107,7 @@ impl Default for Args {
             udp: true,
             tcp: true,
             daemon_child: false,
+            session_id: None,
             explicit: Explicit::default(),
         }
     }
@@ -162,6 +166,9 @@ impl Args {
         }
         if let Some(name) = &self.name {
             out.extend(["--name".into(), name.as_str().into()]);
+        }
+        if let Some(id) = &self.session_id {
+            out.extend(["--session-id".into(), id.as_str().into()]);
         }
         if !self.udp {
             out.push("--no-udp".into());
@@ -368,6 +375,13 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 .shell_args
                 .push(args.next().ok_or("--shell-arg needs a value")?),
             "--daemon-child" => out.daemon_child = true,
+            "--session-id" => {
+                let value = args.next().ok_or("--session-id needs a value")?;
+                out.session_id = Some(
+                    SessionId::parse(&value.to_string_lossy())
+                        .ok_or("--session-id: not a session id")?,
+                );
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }

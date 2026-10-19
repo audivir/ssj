@@ -57,6 +57,18 @@ fn child_arguments_keep_any_port() {
     assert_eq!(parse(original.to_child_args()).unwrap().port_range, 0..=0);
 }
 
+#[test]
+fn the_session_id_travels_to_the_daemon_and_is_checked() {
+    let id = "abcdef0123456789";
+    let original = args(&["--session-id", id]).unwrap();
+    assert_eq!(original.session_id.as_ref().map(|i| i.as_str()), Some(id));
+    let child = parse(original.to_child_args()).unwrap();
+    assert_eq!(child.session_id, original.session_id);
+    assert!(args(&["--session-id", "no good"]).is_err());
+    assert!(args(&["--session-id"]).is_err());
+    assert!(args(&[]).unwrap().session_id.is_none());
+}
+
 // The daemon must behave exactly like the bootstrap process that started it.
 #[test]
 fn child_arguments_carry_every_setting() {

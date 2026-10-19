@@ -1158,7 +1158,18 @@ impl Client {
                     let _ = self.io.output.flush().await;
                     match pumped? {
                         Pumped::Done(finished) => {
-                            vlog!(1, "session ended: {finished:?}");
+                            let id = self.params.connect.id.as_str();
+                            match finished {
+                                Finished::Detached => vlog!(
+                                    1,
+                                    "detached: the server process keeps running (ps ax | grep {id})"
+                                ),
+                                _ => vlog!(
+                                    1,
+                                    "session ended ({finished:?}): the server process should be \
+                                     gone soon (ps ax | grep {id} finds nothing)"
+                                ),
+                            }
                             link.finish().await;
                             self.clear_status_at_end().await;
                             return Ok(finished);
@@ -1651,6 +1662,9 @@ impl Client {
         let mut change: Option<(Cause, tokio::time::Instant)> = None;
         // when the server has to have answered after the client moved to a new path
         let mut probe: Option<tokio::time::Instant> = None;
+        // when the probe went out, and how many notices the change brought, for the debug output
+        let mut probed_at: Option<Instant> = None;
+        let mut notices = 0usize;
         let mut resizes = Debounce::new(RESIZE_QUIET);
         // the channels to the agent live as long as the link
         let mut agent = self
@@ -1682,7 +1696,11 @@ impl Client {
                         return Ok(Pumped::Lost);
                     };
                     link.last_heard = Instant::now();
-                    probe = None;
+                    if probe.take().is_some()
+                        && let Some(sent) = probed_at.take()
+                    {
+                        vlog!(1, "the server answered on the new network after {:?}: the connection stays", sent.elapsed());
+                    }
                     if std::mem::take(&mut stalled) {
                         self.clear_status().await;
                     }
@@ -1787,7 +1805,8 @@ impl Client {
                 }
                 cause = next_cause(&mut self.net) => match cause {
                     Some(cause) => {
-                        vlog!(1, "network change detected: {cause:?}");
+                        notices += 1;
+                        vlog!(2, "network change notice {notices}: {cause:?}");
                         let strongest = change.map_or(cause, |(old, _)| old.max(cause));
                         change = Some((strongest, tokio::time::Instant::now() + CHANGE_QUIET));
                     }
@@ -1795,15 +1814,26 @@ impl Client {
                 },
                 _ = async { tokio::time::sleep_until(change_at.expect("guarded")).await }, if change_at.is_some() => {
                     let (cause, _) = change.take().expect("guarded");
-                    vlog!(1, "the network settled ({cause:?}): moving the socket and probing the server");
+                    let transport = self.params.tiers[self.current].name();
+                    vlog!(
+                        1,
+                        "network change ({cause:?}, {notices} notices): {}",
+                        if link.quic.is_some() {
+                            "moving the UDP socket and probing the server".to_owned()
+                        } else {
+                            format!("the {transport} stream has no socket to move, probing the server")
+                        }
+                    );
+                    notices = 0;
                     self.rebind();
                     link.send(ClientFrame::Ping);
+                    probed_at = Some(Instant::now());
                     let wait = if cause == Cause::Woke { PROBE_AFTER_WAKE } else { PROBE_AFTER_CHANGE };
                     probe = Some(tokio::time::Instant::now() + wait);
                 }
                 _ = async { tokio::time::sleep_until(probe.expect("guarded")).await }, if probe.is_some() => {
                     // the new path did not bring an answer, so the old connection is not worth keeping
-                    vlog!(1, "no answer on the new path: giving up the connection");
+                    vlog!(1, "no answer after the network change: giving up the connection and reconnecting");
                     return Ok(Pumped::Lost);
                 }
                 _ = ping.tick() => {
