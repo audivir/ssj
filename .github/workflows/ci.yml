@@ -108,7 +108,17 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: nextest
+      # the tests of the completion scripts run them in bash, zsh, and fish
+      - name: Install zsh and fish
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
+      - name: Install fish
+        if: runner.os == 'macOS'
+        run: brew install fish
       - run: cargo nextest run --profile ci --workspace --all-features --target ${{ matrix.target }}
+        env:
+          # a shell that is missing fails the completion tests instead of skipping them
+          SSJ_REQUIRE_SHELLS: "1"
       - name: Check release build with cargo-zigbuild
         if: matrix.zig
         run: cargo zigbuild --release --workspace --target ${{ matrix.target }}
