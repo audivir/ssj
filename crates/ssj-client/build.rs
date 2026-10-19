@@ -99,26 +99,32 @@ fn main() {
     // where the tests and the release workflow find the files
     println!("cargo:rustc-env=SSJ_ASSETS={}", out.display());
     // the generators list hidden options too, so they are left out here
-    let full = options::Options::command();
-    let visible: Vec<clap::Arg> = full
-        .get_arguments()
-        .filter(|arg| !arg.is_hide_set() && !matches!(arg.get_id().as_str(), "help" | "version"))
-        .cloned()
-        .collect();
-    let mut command = clap::Command::new("ssj")
-        .version(env!("CARGO_PKG_VERSION"))
-        .args(visible);
-    if let Some(about) = full.get_about() {
-        command = command.about(about.clone());
-    }
-    if let Some(usage) = full.get_overridden_usage() {
-        command = command.override_usage(usage.clone());
-    }
-    if let Some(help) = full.get_after_help() {
-        command = command.after_help(help.clone());
-    }
+    let build = |full: clap::Command| {
+        let visible: Vec<clap::Arg> = full
+            .get_arguments()
+            .filter(|arg| {
+                !arg.is_hide_set() && !matches!(arg.get_id().as_str(), "help" | "version")
+            })
+            .cloned()
+            .collect();
+        let mut command = clap::Command::new("ssj")
+            .version(env!("CARGO_PKG_VERSION"))
+            .args(visible);
+        if let Some(about) = full.get_about() {
+            command = command.about(about.clone());
+        }
+        if let Some(usage) = full.get_overridden_usage() {
+            command = command.override_usage(usage.clone());
+        }
+        if let Some(help) = full.get_after_help() {
+            command = command.after_help(help.clone());
+        }
+        command
+    };
+    // the completions offer the real flag names, the man page shows a pair on one line
+    let mut command = build(options::Options::command());
     let mut page = Vec::new();
-    clap_mangen::Man::new(command.clone())
+    clap_mangen::Man::new(options::command().version(env!("CARGO_PKG_VERSION")))
         .render(&mut page)
         .expect("render the man page");
     page.extend_from_slice(FILES.as_bytes());

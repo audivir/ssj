@@ -523,9 +523,10 @@ How the upload works:
 1. The client asks the host for its system (`uname -sm`, in a line of its own that must appear
    exactly once) and maps it to a build: Linux x86_64 and aarch64 get the static `musl` build,
    macOS arm64 gets the native one. Anything else is refused with a clear message.
-1. The client takes the file `ssj-server-<build>` from `--server-dir` (default: the directory of
-   the client itself, where a release archive puts it), or the file named by `--server-binary`.
-   With `--download` the client fetches `ssj-server-<build>` and `SHA256SUMS` over HTTPS from
+1. The client takes the file `ssj-server-<build>` named by `--server-binary`, or found in
+   `--server-dir` (a missing file there is an error), or in the directory of the client itself,
+   where a release archive puts it. If nothing is named and that directory has no file, or with
+   `--download`, the client fetches `ssj-server-<build>` and `SHA256SUMS` over HTTPS from
    `--download-url` instead (default: `<repository>/releases/download/v<version>` with the
    repository named in `Cargo.toml`). It uses `ureq` with `rustls`
    and `ring` and the root certificates of `webpki-roots`. Only `https://` addresses are taken,

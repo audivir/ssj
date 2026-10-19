@@ -65,11 +65,12 @@ pub async fn detect_target(args: &Args) -> Result<Target, String> {
     parse_target(&remote.stdout)
 }
 
-/// The server file for `target`: the explicit one, or `ssj-server-<build>` in the server
-/// directory, which defaults to the directory of the client.
-pub fn find_server_binary(args: &Args, target: Target) -> Result<PathBuf, String> {
+/// The local server file for `target`: the explicit one, or `ssj-server-<build>` in the server
+/// directory. `None` means that nothing was named and the directory of the client, the default,
+/// has no file, so the release is the place to look.
+pub fn find_server_binary(args: &Args, target: Target) -> Result<Option<PathBuf>, String> {
     if let Some(file) = &args.server_binary {
-        return Ok(file.clone());
+        return Ok(Some(file.clone()));
     }
     let dir = match &args.server_dir {
         Some(dir) => dir.clone(),
@@ -80,16 +81,15 @@ pub fn find_server_binary(args: &Args, target: Target) -> Result<PathBuf, String
     };
     let path = dir.join(format!("ssj-server-{}", target.triple()));
     if path.is_file() {
-        Ok(path)
-    } else {
+        Ok(Some(path))
+    } else if args.server_dir.is_some() {
         Err(format!(
-            "there is no server build for this host at {}; put the file {} from the release there, \
-             or point to it with --server-dir or --server-binary, or use --download",
-            path.display(),
-            path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
+            "there is no server build for this host at {} (--server-dir); \
+             drop --server-dir to download it from the release",
+            path.display()
         ))
+    } else {
+        Ok(None)
     }
 }
 
@@ -136,15 +136,18 @@ echo "SSJ INSTALLED $dir/ssj-server-p__PROTOCOL__""#;
 /// Uploads the server file for the host and returns the path it was installed at.
 pub async fn install(args: &Args) -> Result<String, String> {
     // a wrong address is found before the host is asked for anything
-    if args.download {
+    if args.download || args.download_url.is_some() {
         crate::download::base_url(args)?;
     }
     let target = detect_target(args).await?;
     vlog!(1, "the host runs {}", target.triple());
-    let binary = if args.download {
-        crate::download::server_file(args, target).await?
+    // a local file wins; without one the release is the source
+    let local = if args.download {
+        None
     } else {
-        let file = find_server_binary(args, target)?;
+        find_server_binary(args, target)?
+    };
+    let binary = if let Some(file) = local {
         let size = std::fs::metadata(&file)
             .map_err(|e| format!("cannot read {}: {e}", file.display()))?
             .len();
@@ -155,6 +158,9 @@ pub async fn install(args: &Args) -> Result<String, String> {
             ));
         }
         std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?
+    } else {
+        vlog!(1, "no local server file, downloading it from the release");
+        crate::download::server_file(args, target).await?
     };
 
     let digest = sha256_hex(&binary);

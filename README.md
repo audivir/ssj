@@ -2,41 +2,48 @@
 
 Session survives jumps: a remote shell for flaky networks. The session survives roaming, IP
 changes, sleep, and packet loss, and the native scrollback of the local terminal keeps working.
-The server runs without root and the transport is QUIC over UDP.
-
-_Status:_ under development, and not released yet. You can already use it: `ssj` bootstraps the
-server through `ssh`, connects over QUIC (falling back to TLS over TCP and to the `ssh` channel
-when UDP is blocked), passes the terminal through, reconnects after a lost connection or a change
-of network without losing or repeating input, names and manages sessions (`list`, `attach`,
-`kill`), and installs the server on the host. The code has been run on macOS only; the Linux
-builds are compiled and tested by CI, which has not run yet. See `SPEC.md` for the design and the
-threat model.
-
-## Prerequisites
-
-- Rust toolchain (edition 2024)
-- `ssh` access to the remote host, used for the bootstrap
-- A reachable UDP port range on the remote host (default 60000 to 61000, configurable)
+The server runs without root, over QUIC on UDP with fallbacks to TCP and to the `ssh` channel. See
+`SPEC.md` for the design and the threat model.
 
 ## Installation
+
+Download the archive for your system from the [releases](https://github.com/audivir/ssj/releases)
+page, check it against `SHA256SUMS`, and unpack it:
+
+```shell
+curl -LO https://github.com/audivir/ssj/releases/latest/download/ssj-VERSION-TARGET.tar.gz
+tar xzf ssj-VERSION-TARGET.tar.gz
+```
+
+`TARGET` is `aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, or
+the `gnu` build of a Linux system. The archive holds `ssj`, the server files of all builds, the
+man page `ssj.1`, and `completions/` for Bash, Zsh, and Fish. Put `ssj` on your `PATH`, `ssj.1`
+into a `man1` directory, and load the completion of your shell (`source completions/ssj.bash`, a
+copy of `_ssj` in `fpath`, or `completions/ssj.fish` in `~/.config/fish/completions`). Session ids
+and names are completed from a list that `ssj list` keeps in `$XDG_CACHE_HOME/ssj/sessions/`; it is
+refreshed in the background without prompts, and a session that was never listed on a host is not
+offered.
+
+To build from source instead, you need a Rust toolchain (edition 2024):
 
 ```shell
 cargo install --path crates/ssj-client
 cargo install --path crates/ssj-server
 ```
 
-Put the server file for the host next to `ssj` (a release archive does this), then let
-`ssj install user@host` upload it to `~/.local/share/ssj/bin/ssj-server-p1`. No root is needed.
-The upload is checked with SHA-256 on the host, tested by running it, and only then moved into
-place, so a broken transfer never replaces a working server.
-Check the downloaded files against `SHA256SUMS` of the release before you use them.
+### The server on the host
 
-A release archive `ssj-<version>-<target>.tar.gz` holds `ssj`, the server files of all builds, the
-man page `ssj.1`, and `completions/` for Bash, Zsh, and Fish. Put `ssj.1` into a `man1` directory
-and load the completion of your shell (`source completions/ssj.bash`, a copy of `_ssj` in `fpath`,
-or `completions/ssj.fish` in `~/.config/fish/completions`). Session ids and names are completed
-from a list that `ssj list` keeps in `$XDG_CACHE_HOME/ssj/sessions/`; it is refreshed in the
-background without prompts, and a session that was never listed on a host is not offered.
+The only prerequisite is `ssh` access to the host, which is used for the bootstrap. No root, no
+daemon, and no open port are needed: when UDP is blocked, `ssj` falls back to TLS over TCP through
+`ssh -W` and then to the `ssh` channel itself.
+
+`ssj install user@host` puts the server file at `~/.local/share/ssj/bin/ssj-server-p1`. It uses
+the file next to `ssj` (a release archive has it), or `--server-dir` / `--server-binary`; when
+there is none, it downloads the file for the host from the release of the same version over
+HTTPS (`--download` does that even if a local file exists, `--download-url` names another
+place). The download is checked against `SHA256SUMS`, and the upload is checked with SHA-256 on the
+host, tested by running it, and only then moved into place, so a broken transfer never replaces a
+working server.
 
 When the server is missing, `ssj user@host` offers to install it, as set by `auto_install` in
 `$XDG_CONFIG_HOME/ssj/client.toml`:
@@ -67,12 +74,12 @@ ssj --udp-host 203.0.113.7 user@host  # UDP address when it differs from the hos
 ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
 ssj --transport tcp user@host        # auto (default), udp, tcp (ssh -W), or stdio (the ssh channel)
-ssj install user@host               # upload the server file to the host
+ssj install user@host               # put the server file on the host (downloads it if needed)
 ssj user@host -- make -j8           # run a command in a session that survives jumps
 ssj user@host uptime                # the same, when the command has no options of its own
 ssj edit                            # edit client.toml in $EDITOR
 ssj edit user@host                  # edit server.toml on the host in $EDITOR
-ssj install --download user@host    # fetch it from the release over HTTPS first
+ssj install --download user@host    # always fetch the server file from the release
 ssj list --json user@host           # the same list as JSON
 ```
 

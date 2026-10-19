@@ -134,7 +134,7 @@ pub struct Options {
     #[arg(long, overrides_with = "install")]
     pub no_install: bool,
 
-    /// Download the server file from the release instead of using a local one (HTTPS)
+    /// Download the server file from the release even if a local one exists (HTTPS)
     #[arg(long)]
     pub download: bool,
 
