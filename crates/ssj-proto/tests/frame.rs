@@ -83,7 +83,11 @@ fn raw(tag: u8, body: &[u8]) -> Vec<u8> {
 #[test]
 fn malformed_client_frames_are_rejected() {
     let size = [0, 24, 0, 80];
-    let hello = |kind: u8, rest: &[u8]| raw(0x01, &[&[kind][..], &size, rest].concat());
+    // a start has the flag of the agent after the size
+    let hello = |kind: u8, rest: &[u8]| {
+        let agent: &[u8] = if kind == 0 { &[0] } else { &[] };
+        raw(0x01, &[&[kind][..], &size, agent, rest].concat())
+    };
     let cases: Vec<(&str, Vec<u8>, DecodeError)> = vec![
         (
             "unknown type",
@@ -162,6 +166,21 @@ fn malformed_client_frames_are_rejected() {
             "env name with equals",
             hello(0, &[0, 1, 0, 3, b'A', b'=', b'B', 0, 0]),
             DecodeError::Env(EnvError::InvalidName),
+        ),
+        (
+            "agent flag out of range",
+            raw(0x01, &[&[0][..], &size, &[2], &[0, 0]].concat()),
+            DecodeError::InvalidValue,
+        ),
+        (
+            "agent data without bytes",
+            raw(0x0a, &[0, 0, 0, 1]),
+            DecodeError::InvalidValue,
+        ),
+        (
+            "agent close with a body",
+            raw(0x0b, &[0, 0, 0, 1, 0]),
+            DecodeError::TrailingBytes,
         ),
         (
             "env value with NUL",

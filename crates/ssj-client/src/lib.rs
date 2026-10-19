@@ -1,5 +1,6 @@
 //! Client side of `ssj`: bootstrap through `ssh`, terminal handling, and the session loop.
 
+pub mod agent;
 pub mod bootstrap;
 pub mod cli;
 pub mod config;

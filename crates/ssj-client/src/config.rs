@@ -8,6 +8,7 @@
 //! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
 //! compress = "off"                # "off" (default) or "auto": compress while the link is the limit
+//! forward_agent = false           # let programs on the host use the ssh agent of this machine
 //! local_echo = "off"              # "off" (default) or "auto": show typed characters at once
 //! ```
 //!
@@ -40,6 +41,7 @@ pub struct Config {
     pub send_env: EnvFilter,
     pub transport: Transport,
     pub auto_attach: bool,
+    pub forward_agent: bool,
     pub local_echo: LocalEcho,
     /// `None` when the file does not say.
     pub compress: Option<bool>,
@@ -54,6 +56,7 @@ impl Default for Config {
             send_env: EnvFilter::default_patterns(),
             transport: Transport::default(),
             auto_attach: false,
+            forward_agent: false,
             local_echo: LocalEcho::Off,
             compress: None,
         }
@@ -92,6 +95,9 @@ impl Config {
         }
         if let Some(text) = table.take_text("local_echo")? {
             config.local_echo = parse_local_echo(&text).map_err(|e| format!("local_echo: {e}"))?;
+        }
+        if let Some(on) = table.take_bool("forward_agent")? {
+            config.forward_agent = on;
         }
         if let Some(on) = table.take_bool("auto_attach")? {
             config.auto_attach = on;

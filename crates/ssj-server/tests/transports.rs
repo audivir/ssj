@@ -63,6 +63,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
         self.send(ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }))
         .await;
         self.send(ClientFrame::Input(input.to_vec())).await;
@@ -124,6 +125,7 @@ async fn tcp_refuses_a_client_with_another_certificate_and_the_right_one_still_w
         wire.send(ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }))
         .await;
         assert!(wire.next().await.is_none(), "a stranger got an answer");
@@ -243,6 +245,7 @@ async fn a_second_stdio_connection_takes_over_and_the_session_goes_on() {
         .send(ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }))
         .await;
     first.send(ClientFrame::Input(b"one\n".to_vec())).await;

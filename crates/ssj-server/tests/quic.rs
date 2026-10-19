@@ -48,6 +48,7 @@ fn start(script: &str, client_pin: ssj_net::Fingerprint) -> Server {
         exit_grace: Duration::from_secs(60),
         slow_client: ssj_server::session::SlowClient::Wait,
         live_backlog: 1 << 20,
+        agent_socket: None,
         compress: false,
     };
     let (conns, rx) = mpsc::channel(4);
@@ -122,6 +123,7 @@ async fn pinned_client_runs_a_shell_over_quic_and_gets_the_exit_code() {
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
@@ -186,6 +188,7 @@ async fn newer_quic_connection_replaces_the_older_one() {
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;

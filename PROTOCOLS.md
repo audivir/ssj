@@ -8,5 +8,6 @@ protocol.
 | ------- | -------- |
 | 0.1.0 | 1 |
 
-Protocol 1 includes the `Gap` server frame (tag `0x87`). It was added before the first release, so
-the golden file of protocol 1 was regenerated once and no released version speaks another format.
+Protocol 1 includes the `Gap` and `Compressed` frames and the frames of agent forwarding. They were
+added before the first release, so the golden file of protocol 1 was regenerated and no released
+version speaks another format.

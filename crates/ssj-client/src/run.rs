@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -23,6 +24,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
+use crate::agent::Forward;
 use crate::bootstrap::{StartError, run_remote, start_server};
 use crate::cli::{Args, Command, LocalEcho, Transport};
 use crate::config::Config;
@@ -156,6 +158,8 @@ pub struct Params {
     pub local_echo: bool,
     /// Compress input while the link is the limit (the server decides for its output).
     pub compress: bool,
+    /// The socket of the local ssh agent, to offer it to the session.
+    pub agent: Option<PathBuf>,
 }
 
 /// The terminal side of a session, so that tests can stand in for it.
@@ -189,6 +193,17 @@ pub fn run(args: Args) -> ExitCode {
 }
 
 /// Selected variables of the local environment.
+/// The agent socket to forward, if the user asked for it.
+fn agent_socket(args: &Args) -> Result<Option<PathBuf>, String> {
+    if !args.forward_agent {
+        return Ok(None);
+    }
+    match std::env::var_os("SSH_AUTH_SOCK").map(PathBuf::from) {
+        Some(path) if path.is_absolute() => Ok(Some(path)),
+        _ => Err("agent forwarding needs SSH_AUTH_SOCK, and there is no agent running".to_owned()),
+    }
+}
+
 fn local_env(args: &Args) -> Result<Env, String> {
     let vars = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
@@ -578,10 +593,11 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
             start_or_install(&args, config, &identity.fingerprint(), extra, attach).await?;
         let env = local_env(&args)?;
         let tiers = build_tiers(&args, &identity, &connect).await?;
-        Ok::<_, String>((connect, env, tiers))
+        let agent = agent_socket(&args)?;
+        Ok::<_, String>((connect, env, tiers, agent))
     }
     .await;
-    let (connect, env, tiers) = match prepared {
+    let (connect, env, tiers, agent) = match prepared {
         Ok(prepared) => prepared,
         Err(message) => {
             eprintln!("ssj: {message}");
@@ -632,6 +648,7 @@ async fn connect_session(args: Args, config: &Config, extra: &[String], attach: 
             attach,
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
             compress: args.compress == Some(true),
+            agent,
         },
         io,
     )
@@ -938,6 +955,7 @@ impl Client {
                 Hello::Start {
                     size: self.size,
                     env: self.params.env.clone(),
+                    agent: self.params.agent.is_some(),
                 }
             };
             if attempts > 0 && attempts.is_multiple_of(RESOLVE_EVERY) {
@@ -1269,6 +1287,9 @@ impl Client {
             offset += chunk.len() as u64;
             link.send(ClientFrame::Input(chunk));
         }
+        if self.params.agent.is_some() {
+            link.send(ClientFrame::AgentOffer);
+        }
         Attempt::Linked(link)
     }
 
@@ -1371,6 +1392,12 @@ impl Client {
         // when the server has to have answered after the client moved to a new path
         let mut probe: Option<tokio::time::Instant> = None;
         let mut resizes = Debounce::new(RESIZE_QUIET);
+        // the channels to the agent live as long as the link
+        let mut agent = self
+            .params
+            .agent
+            .clone()
+            .map(|socket| Forward::new(socket, link.out.clone()));
         loop {
             // two bytes of reserve: the escape can turn one typed byte into two
             let room = self.input.free().saturating_sub(2).min(self.chunk.len());
@@ -1437,6 +1464,21 @@ impl Client {
                                 .map_err(|_| "the server acknowledged input that was never sent".to_owned())?;
                         }
                         ServerFrame::Pong => {}
+                        ServerFrame::AgentOpen(id) => match agent.as_mut() {
+                            Some(agent) => agent.open(id).await,
+                            // nothing was offered, so a server that opens a channel is wrong
+                            None => link.send(ClientFrame::AgentClose(id)),
+                        },
+                        ServerFrame::Agent(id, data) => {
+                            if let Some(agent) = agent.as_mut() {
+                                agent.data(id, &data);
+                            }
+                        }
+                        ServerFrame::AgentClose(id) => {
+                            if let Some(agent) = agent.as_mut() {
+                                agent.close(id);
+                            }
+                        }
                         ServerFrame::Gap(skipped) => {
                             // The server skipped output that this client was too slow to take.
                             // What was shown ahead of the server goes first, then the notice.

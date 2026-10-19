@@ -31,6 +31,14 @@ pub struct Options {
     #[arg(long, overrides_with = "auto_attach")]
     pub no_auto_attach: bool,
 
+    /// Let programs on the host use your ssh agent (SSH_AUTH_SOCK) for signing
+    #[arg(short = 'A', long, overrides_with = "no_forward_agent")]
+    pub forward_agent: bool,
+
+    /// Do not forward the agent (the default)
+    #[arg(long, overrides_with = "forward_agent")]
+    pub no_forward_agent: bool,
+
     /// How to reach the server: auto, udp, tcp, or stdio
     #[arg(long, value_name = "WAY", overrides_with = "transport")]
     pub transport: Option<String>,

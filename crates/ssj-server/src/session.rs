@@ -7,10 +7,11 @@
 use std::ffi::OsString;
 use std::future::pending;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
+use ssj_net::channels::{Channels, Piece};
 use ssj_proto::compress::{Compressor, inflate};
 use ssj_proto::frame::{MAX_DATA_LEN, MAX_FRAME_LEN};
 use ssj_proto::resume::{Action, ServerView, negotiate};
@@ -20,12 +21,14 @@ use ssj_proto::{
 };
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{UnixListener, UnixStream};
 
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, sleep_until, timeout, timeout_at};
+use tokio::time::{Instant, sleep, sleep_until, timeout, timeout_at};
 
 use crate::backend::{Backend, Shell, ShellWriter, SpawnSpec};
+use crate::control_socket::SocketFile;
 
 /// Bytes of the shell output read at once.
 const READ_CHUNK: usize = 64 * 1024;
@@ -85,6 +88,9 @@ pub struct SessionConfig {
     /// With [`SlowClient::Drop`]: the most output that may wait to be sent to a connected client.
     /// What the shell wrote before the client connected (the replay) does not count.
     pub live_backlog: usize,
+    /// Where the socket for the agent of the client is made when the client asks for it.
+    /// `None` refuses agent forwarding.
+    pub agent_socket: Option<PathBuf>,
     /// How long a connected client may leave the output buffer full without acknowledging
     /// anything before the server treats it as away (a connection that died without telling).
     pub away_after: Duration,
@@ -152,6 +158,9 @@ enum Control {
     Close,
     Detach,
     Ping,
+    AgentOffer,
+    Agent(u32, Vec<u8>),
+    AgentClose(u32),
     Lost,
     Violation(ErrorCode),
 }
@@ -188,6 +197,8 @@ struct Active {
     replay_end: u64,
     /// Bytes of output skipped and not announced to the client yet.
     gap: u64,
+    /// The channels to the agent of the client, if this connection serves it.
+    agent: Option<Channels>,
     _reader: AbortOnDrop,
     writer: Option<JoinHandle<()>>,
 }
@@ -267,6 +278,9 @@ impl<B: Backend> Session<B> {
         let mut full_since: Option<Instant> = None;
         let mut buf = vec![0u8; READ_CHUNK];
         let mut compressor = Compressor::new();
+        // the socket of the forwarded agent, once the client has asked for it
+        let mut agent_listener: Option<(UnixListener, SocketFile)> = None;
+        let mut next_channel = 0u32;
 
         loop {
             enum Event {
@@ -281,6 +295,7 @@ impl<B: Backend> Session<B> {
                 ExitGrace,
                 AwayTimer,
                 Command(Option<SessionCommand>),
+                AgentConnected(io::Result<UnixStream>),
             }
 
             // Backpressure holds only while somebody is there to acknowledge the output. With
@@ -374,6 +389,7 @@ impl<B: Backend> Session<B> {
                     _ = async { match deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::DetachedTimeout,
                     _ = async { match grace_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::ExitGrace,
                     _ = async { match away_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::AwayTimer,
+                    stream = async { match agent_listener.as_ref() { Some((l, _)) => l.accept().await.map(|(s, _)| s), None => pending().await } } => Event::AgentConnected(stream),
                 }
             };
 
@@ -439,8 +455,16 @@ impl<B: Backend> Session<B> {
                                 }
                                 Ok((welcome, action)) => {
                                     match action {
-                                        Action::Spawn { size, env } => {
-                                            match spawn_shell(&backend, &config, size, &env).await {
+                                        Action::Spawn { size, env, agent } => {
+                                            if agent && let Some(path) = &config.agent_socket {
+                                                agent_listener = listen_for_agent(path);
+                                            }
+                                            let socket = agent_listener
+                                                .as_ref()
+                                                .and(config.agent_socket.as_deref());
+                                            match spawn_shell(&backend, &config, size, &env, socket)
+                                                .await
+                                            {
                                                 Ok(running) => shell = Some(running),
                                                 Err(err) => {
                                                     let _ = a.out.try_send(ServerFrame::Error(
@@ -498,6 +522,27 @@ impl<B: Backend> Session<B> {
                                 a.pong_due = a.hello_done;
                             }
                         }
+                        Control::AgentOffer => {
+                            if let Some(a) = active.as_mut().filter(|a| a.hello_done)
+                                && agent_listener.is_some()
+                            {
+                                a.agent = Some(Channels::new());
+                            }
+                        }
+                        Control::Agent(id, data) => {
+                            if let Some(a) = active.as_mut()
+                                && let Some(channels) = a.agent.as_mut()
+                                && channels.is_open(id)
+                                && !channels.send(id, data)
+                            {
+                                tell_channel_closed(&a.out, id);
+                            }
+                        }
+                        Control::AgentClose(id) => {
+                            if let Some(channels) = active.as_mut().and_then(|a| a.agent.as_mut()) {
+                                channels.close(id);
+                            }
+                        }
                         Control::Detach => {
                             active = None;
                             detached_since = Some(Instant::now());
@@ -510,6 +555,30 @@ impl<B: Backend> Session<B> {
                             violation(&mut active, &events, code);
                             detached_since = Some(Instant::now());
                         }
+                    }
+                }
+                Event::AgentConnected(Err(_)) => {
+                    // for example out of descriptors: do not spin on it
+                    sleep(Duration::from_millis(100)).await;
+                }
+                Event::AgentConnected(Ok(stream)) => {
+                    // without a client that serves the agent, the program sees a closed socket
+                    if let Some(a) = active.as_mut()
+                        && let Some(channels) = a.agent.as_mut()
+                    {
+                        next_channel = next_channel.wrapping_add(1);
+                        let out = a.out.clone();
+                        channels.open(next_channel, stream, move |id, piece| {
+                            let out = out.clone();
+                            async move {
+                                let frame = match piece {
+                                    Piece::Open => ServerFrame::AgentOpen(id),
+                                    Piece::Data(data) => ServerFrame::Agent(id, data),
+                                    Piece::Closed => ServerFrame::AgentClose(id),
+                                };
+                                out.send(frame).await.is_ok()
+                            }
+                        });
                     }
                 }
                 Event::Input(None) => {}
@@ -709,17 +778,41 @@ fn violation(
     lose(active, events);
 }
 
+/// Makes the socket for the agent of the client. Without it the shell has no agent.
+fn listen_for_agent(path: &Path) -> Option<(UnixListener, SocketFile)> {
+    use std::os::unix::fs::PermissionsExt;
+    // a leftover of a server that did not end cleanly
+    let _ = std::fs::remove_file(path);
+    let listener = UnixListener::bind(path).ok()?;
+    let file = SocketFile(path.to_owned());
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok()?;
+    Some((listener, file))
+}
+
+/// Tells the client that channel `id` is closed, without waiting for room in the queue.
+fn tell_channel_closed(out: &mpsc::Sender<ServerFrame>, id: u32) {
+    let out = out.clone();
+    tokio::spawn(async move {
+        let _ = out.send(ServerFrame::AgentClose(id)).await;
+    });
+}
+
 async fn spawn_shell<B: Backend>(
     backend: &B,
     config: &SessionConfig,
     size: WindowSize,
     client_env: &Env,
+    agent_socket: Option<&Path>,
 ) -> io::Result<Running<B::Shell>> {
     let (accepted, _dropped) = config.accept_env.apply(client_env);
     let mut env = config.template.env.clone();
     for (name, value) in accepted.iter() {
         env.retain(|(existing, _)| existing != name);
         env.push((name.into(), value.into()));
+    }
+    if let Some(socket) = agent_socket {
+        env.retain(|(existing, _)| existing != "SSH_AUTH_SOCK");
+        env.push(("SSH_AUTH_SOCK".into(), socket.into()));
     }
     let spec = SpawnSpec {
         program: config.template.program.clone(),
@@ -770,6 +863,7 @@ fn start_connection(
         input_acked: 0,
         replay_end: 0,
         gap: 0,
+        agent: None,
         _reader: AbortOnDrop(reader),
         writer: Some(writer),
     }
@@ -857,6 +951,9 @@ async fn read_connection(
                 (ClientFrame::Close, true) => return send(Control::Close).await,
                 (ClientFrame::Detach, true) => return send(Control::Detach).await,
                 (ClientFrame::Ping, true) => send(Control::Ping).await,
+                (ClientFrame::AgentOffer, true) => send(Control::AgentOffer).await,
+                (ClientFrame::Agent(id, data), true) => send(Control::Agent(id, data)).await,
+                (ClientFrame::AgentClose(id), true) => send(Control::AgentClose(id)).await,
                 // inflated above, and refused before the hello
                 (ClientFrame::Compressed(_), _) => {
                     return send(Control::Violation(ErrorCode::BadHello)).await;

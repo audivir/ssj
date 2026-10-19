@@ -8,7 +8,12 @@ use crate::types::WindowSize;
 /// What the server has to do besides answering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
-    Spawn { size: WindowSize, env: Env },
+    Spawn {
+        size: WindowSize,
+        env: Env,
+        /// The shell gets a socket for the agent of the client.
+        agent: bool,
+    },
     Resize(WindowSize),
 }
 
@@ -23,7 +28,7 @@ pub struct ServerView<'a> {
 /// Decides how the server answers a `Hello`.
 pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action), ErrorCode> {
     match hello {
-        Hello::Start { size, env } => {
+        Hello::Start { size, env, agent } => {
             if view.shell_started {
                 return Err(ErrorCode::AlreadyStarted);
             }
@@ -31,7 +36,7 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
                 input_offset: 0,
                 output_offset: 0,
             };
-            Ok((welcome, Action::Spawn { size, env }))
+            Ok((welcome, Action::Spawn { size, env, agent }))
         }
         Hello::Resume {
             size,

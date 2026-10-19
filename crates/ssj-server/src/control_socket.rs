@@ -18,8 +18,8 @@ pub const IO_TIMEOUT: Duration = Duration::from_secs(5);
 /// Longest path of a socket that is used. The kernel takes 104 bytes on macOS and 108 on Linux,
 /// both with the NUL byte.
 const MAX_SOCKET_PATH: usize = 100;
-/// `/`, a session id of 16 characters, and `.sock`.
-const SOCKET_NAME: usize = 1 + 16 + 5;
+/// `/`, a session id of 16 characters, and `.agent` (the longer of the two endings).
+const SOCKET_NAME: usize = 1 + 16 + 6;
 
 /// Directory of the control sockets for this user on this host.
 pub fn control_dir() -> io::Result<PathBuf> {
@@ -125,6 +125,11 @@ pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
 
 pub fn socket_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.sock"))
+}
+
+/// The socket that carries the agent of the client to the programs of the session.
+pub fn agent_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.agent"))
 }
 
 /// Removes the socket file when dropped.

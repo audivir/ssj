@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use ssj_proto::{
@@ -38,6 +39,7 @@ fn config(script: &str) -> SessionConfig {
         slow_client: ssj_server::session::SlowClient::Wait,
         live_backlog: 1 << 20,
         compress: false,
+        agent_socket: None,
     }
 }
 
@@ -70,6 +72,8 @@ struct Seen {
     closed: bool,
     pongs: usize,
     gaps: Vec<u64>,
+    /// Frames of the agent channels, in the order they came.
+    agent: Vec<ServerFrame>,
 }
 
 impl Harness {
@@ -155,6 +159,11 @@ impl Client {
                 Some(ServerFrame::Welcome(welcome)) => seen.welcome = Some(welcome),
                 Some(ServerFrame::Pong) => seen.pongs += 1,
                 Some(ServerFrame::Gap(skipped)) => seen.gaps.push(skipped),
+                Some(
+                    frame @ (ServerFrame::AgentOpen(_)
+                    | ServerFrame::Agent(..)
+                    | ServerFrame::AgentClose(_)),
+                ) => seen.agent.push(frame),
                 // inflated by `next`
                 Some(ServerFrame::Compressed(_)) => unreachable!("inflated in next"),
             }
@@ -167,8 +176,12 @@ impl Client {
     }
 
     async fn start_with(&mut self, env: Env) -> ssj_proto::Welcome {
-        self.send(ClientFrame::Hello(Hello::Start { size: size(), env }))
-            .await;
+        self.send(ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env,
+            agent: false,
+        }))
+        .await;
         self.read_until(|s| s.welcome.is_some())
             .await
             .welcome
@@ -1245,4 +1258,120 @@ async fn bad_compressed_input_and_compressed_input_before_the_hello_are_refused(
         seen.error == Some(ErrorCode::BadHello) || seen.closed,
         "{seen:?}"
     );
+}
+
+fn agent_config(script: &str, name: &str) -> (SessionConfig, std::path::PathBuf) {
+    let path = std::path::PathBuf::from(format!("/tmp/ssj-t-{}-{name}.agent", std::process::id()));
+    let mut config = config(script);
+    config.agent_socket = Some(path.clone());
+    (config, path)
+}
+
+async fn start_with_agent(client: &mut Client) {
+    client
+        .send(ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env: Env::default(),
+            agent: true,
+        }))
+        .await;
+    client.read_until(|s| s.welcome.is_some()).await;
+    client.send(ClientFrame::AgentOffer).await;
+}
+
+#[tokio::test]
+async fn the_shell_finds_the_agent_socket_and_its_bytes_travel_over_a_channel() {
+    use tokio::net::UnixStream;
+    let (config, path) = agent_config("echo sock=$SSH_AUTH_SOCK; sleep 5", "travel");
+    let harness = start(config);
+    let mut client = harness.connect().await;
+    start_with_agent(&mut client).await;
+    let seen = client
+        .read_until(|s| contains(&s.output, &format!("sock={}", path.display())))
+        .await;
+    assert!(contains(&seen.output, &format!("sock={}", path.display())));
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    let mut program = UnixStream::connect(&path).await.unwrap();
+    let seen = client.read_until(|s| !s.agent.is_empty()).await;
+    let ServerFrame::AgentOpen(id) = seen.agent[0] else {
+        panic!("{seen:?}");
+    };
+
+    program.write_all(b"request").await.unwrap();
+    let seen = client.read_until(|s| !s.agent.is_empty()).await;
+    assert_eq!(seen.agent, [ServerFrame::Agent(id, b"request".to_vec())]);
+
+    client.send(ClientFrame::Agent(id, b"reply".to_vec())).await;
+    let mut got = [0u8; 5];
+    program.read_exact(&mut got).await.unwrap();
+    assert_eq!(&got, b"reply");
+
+    drop(program);
+    let seen = client.read_until(|s| !s.agent.is_empty()).await;
+    assert_eq!(seen.agent, [ServerFrame::AgentClose(id)]);
+    drop(harness);
+}
+
+#[tokio::test]
+async fn a_client_can_close_a_channel() {
+    use tokio::net::UnixStream;
+    let (config, path) = agent_config("sleep 5", "close");
+    let harness = start(config);
+    let mut client = harness.connect().await;
+    start_with_agent(&mut client).await;
+    // the socket appears with the shell
+    let mut program = loop {
+        if let Ok(stream) = UnixStream::connect(&path).await {
+            break stream;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let seen = client.read_until(|s| !s.agent.is_empty()).await;
+    let ServerFrame::AgentOpen(id) = seen.agent[0] else {
+        panic!("{seen:?}");
+    };
+    client.send(ClientFrame::AgentClose(id)).await;
+    assert_eq!(program.read(&mut [0u8; 8]).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn without_an_offer_the_agent_socket_is_closed_at_once() {
+    use tokio::net::UnixStream;
+    let (config, path) = agent_config("sleep 5", "refuse");
+    let harness = start(config);
+    let mut client = harness.connect().await;
+    client
+        .send(ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env: Env::default(),
+            agent: true,
+        }))
+        .await;
+    client.read_until(|s| s.welcome.is_some()).await;
+    let mut program = loop {
+        if let Ok(stream) = UnixStream::connect(&path).await {
+            break stream;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(program.read(&mut [0u8; 8]).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn no_agent_is_set_up_unless_the_client_asks_for_it() {
+    let (config, path) = agent_config("echo sock=[$SSH_AUTH_SOCK]; sleep 5", "none");
+    let harness = start(config);
+    let mut client = harness.connect().await;
+    client.start().await;
+    let seen = client.read_until(|s| contains(&s.output, "sock=[")).await;
+    assert!(
+        contains(&seen.output, "sock=[]"),
+        "{:?}",
+        String::from_utf8_lossy(&seen.output)
+    );
+    assert!(!path.exists());
 }

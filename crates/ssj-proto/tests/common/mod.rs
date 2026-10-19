@@ -15,10 +15,15 @@ pub fn client_frames() -> Vec<ClientFrame> {
     ])
     .unwrap();
     vec![
-        ClientFrame::Hello(Hello::Start { size: size(), env }),
+        ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env,
+            agent: false,
+        }),
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: true,
         }),
         ClientFrame::Hello(Hello::Resume {
             size: size(),
@@ -33,6 +38,10 @@ pub fn client_frames() -> Vec<ClientFrame> {
         ClientFrame::Close,
         ClientFrame::Detach,
         ClientFrame::Ping,
+        ClientFrame::AgentOffer,
+        ClientFrame::Agent(7, b"\0\0\0\x01\x0b".to_vec()),
+        ClientFrame::Agent(u32::MAX, vec![1; MAX_DATA_LEN]),
+        ClientFrame::AgentClose(7),
     ]
 }
 
@@ -51,5 +60,8 @@ pub fn server_frames() -> Vec<ServerFrame> {
         ServerFrame::Pong,
         ServerFrame::Gap(1 << 40),
         ServerFrame::Compressed(vec![0x4b, 0x4c, 0x4a, 0x06, 0x00]),
+        ServerFrame::AgentOpen(7),
+        ServerFrame::Agent(7, b"\0\0\0\x05\x0c\0\0\0\0".to_vec()),
+        ServerFrame::AgentClose(u32::MAX),
     ]
 }

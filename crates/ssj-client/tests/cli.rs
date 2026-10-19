@@ -297,6 +297,23 @@ fn a_name_and_auto_attach_are_settings_with_flags_and_a_file_key() {
 }
 
 #[test]
+fn agent_forwarding_is_off_unless_the_flag_or_the_file_turns_it_on() {
+    use ssj_client::config::Config;
+
+    assert!(!args(&["host"]).unwrap().forward_agent);
+    assert!(args(&["-A", "host"]).unwrap().forward_agent);
+    assert!(args(&["--forward-agent", "host"]).unwrap().forward_agent);
+    let config = Config::from_text("forward_agent = true\n").unwrap();
+    let mut from_file = args(&["host"]).unwrap();
+    from_file.apply_config(&config);
+    assert!(from_file.forward_agent);
+    let mut off = args(&["--no-forward-agent", "host"]).unwrap();
+    off.apply_config(&config);
+    assert!(!off.forward_agent);
+    assert!(Config::from_text("forward_agent = \"yes\"\n").is_err());
+}
+
+#[test]
 fn the_flags_of_the_listing_and_the_completion() {
     use ssj_client::cli::Command;
 
@@ -339,6 +356,7 @@ fn the_man_page_and_the_completions_are_built() {
         "server.toml",
         "port_range",
         "auto_attach",
+        "forward_agent",
     ] {
         assert!(page.contains(word), "{word}");
     }

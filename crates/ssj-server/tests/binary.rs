@@ -38,6 +38,7 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
@@ -64,6 +65,7 @@ async fn detach_closes_the_endpoint_of_the_daemon() {
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
@@ -245,7 +247,11 @@ async fn accept_env_of_the_file_decides_which_client_variables_reach_the_shell()
     .unwrap();
     send(
         &mut tx,
-        ClientFrame::Hello(Hello::Start { size: size(), env }),
+        ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env,
+            agent: false,
+        }),
     )
     .await;
     let (shown, _) = read_until(&mut rx, |_| false).await;

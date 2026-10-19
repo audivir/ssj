@@ -589,6 +589,34 @@ Frames: `Detach` is a client frame of its own. `Close` means that the client is 
 example after it received the exit status, and a `Close` before the exit is treated as a lost
 connection.
 
+### Agent forwarding (`-A`)
+
+Opt-in: `-A` / `--forward-agent` on the command line, or `forward_agent = true` in `client.toml`
+(`--no-forward-agent` overrides the file). Without it nothing of the agent is offered, and the
+server makes no socket. The client needs `SSH_AUTH_SOCK` and stops with a message if it is not set.
+
+- `Hello::Start` carries a flag `agent`. When set, the server makes a socket
+  `<control dir>/<session id>.agent` (mode 0600, in the private control directory) before it starts
+  the shell and sets `SSH_AUTH_SOCK` for the shell to its path. The socket is removed when the
+  session ends.
+- A client that serves its agent sends the frame `AgentOffer` after each `Hello` (also `Resume` and
+  `Attach`, which carry no flag). Only then does the server open channels. A program that connects
+  while no connection offers the agent sees the socket closed at once.
+- A connection of a program to the socket becomes a channel with a number chosen by the server:
+  `AgentOpen(id)`, then `Agent(id, bytes)` in both directions, and `AgentClose(id)` from whoever
+  sees its side end. The client connects to its agent on `AgentOpen`. Channel frames are not part of
+  the offsets: they are not replayed, and all channels end with the connection. A program in the
+  middle of a request gets an error and asks again after the reconnect.
+- At most 32 channels are open at once, and each has a short queue, so a program that floods the
+  socket loses its channel and nothing else.
+- The client passes on only `REQUEST_IDENTITIES` and `SIGN_REQUEST`. Every other request (adding,
+  removing, or locking keys, extensions) gets `SSH_AGENT_FAILURE` without reaching the agent. A
+  stream that is not made of valid messages closes the channel. Keys that need an extension such
+  as `session-bind@openssh.com` (destination constraints) do not work through the forwarding.
+- The host never sees a private key, but anyone who can use the socket there (the user, and root)
+  can have the agent sign while the session is connected, as with `ssh -A`. Keys added with
+  `ssh-add -c` ask the user for each use.
+
 ### Surviving a server process restart (optional, later)
 
 By default the shell is a child of `ssj-server` and ends with it. Two optional backends keep it
@@ -912,7 +940,7 @@ UDP phase:
 
 ## Out of scope for v1
 
-- Port forwarding, agent forwarding, and X11 forwarding.
+- Port forwarding and X11 forwarding.
 - `sftp` or `scp` replacements.
 - Local echo prediction.
 - Windows client and server.

@@ -27,6 +27,7 @@ fn start_creates_the_shell_only_once() {
     let hello = Hello::Start {
         size: size(),
         env: Env::default(),
+        agent: false,
     };
 
     let (welcome, action) = negotiate(hello.clone(), &view(false, &out, 0)).unwrap();
@@ -41,7 +42,8 @@ fn start_creates_the_shell_only_once() {
         action,
         Action::Spawn {
             size: size(),
-            env: Env::default()
+            env: Env::default(),
+            agent: false,
         }
     );
 
@@ -176,6 +178,7 @@ fn client_refuses_a_welcome_that_contradicts_its_own_state() {
     let start = Hello::Start {
         size: size(),
         env: Env::default(),
+        agent: false,
     };
     assert!(check_welcome(&start, welcome(0, 0), 0, 0).is_ok());
     assert!(check_welcome(&start, welcome(1, 0), 0, 0).is_err());

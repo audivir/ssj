@@ -37,6 +37,9 @@ How to reach the server.
 \fBauto_attach\fR = true | false
 Join the only session without a client.
 .TP
+\fBforward_agent\fR = true | false
+Let programs on the host use the ssh agent of this machine (\fB\-A\fR). Off by default.
+.TP
 \fBcompress\fR = "off" | "auto"
 Compress input and output while the link is the limit. Off by default, since compressing text of an attacker with a secret can leak the secret.
 .TP

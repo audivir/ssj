@@ -155,6 +155,7 @@ transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
 auto_attach = false                   # `ssj host` joins the only session without a client
 local_echo = "off"                    # "off" or "auto": show typed characters at once
 compress = "off"                      # "off" or "auto": compress while the link is the limit
+forward_agent = false                 # let programs on the host use your ssh agent (-A)
 ```
 
 `$XDG_CONFIG_HOME/ssj/server.toml` on the host:
@@ -171,6 +172,14 @@ away_after = 10                       # seconds a silent client may block the ou
 shell = "/bin/zsh"                    # default: $SHELL
 accept_env = ["TERM", "LANG", "LC_*"] # variables of the client the shell gets
 ```
+
+### Agent forwarding
+
+`ssj -A host` (or `forward_agent = true` in `client.toml`) lets programs on the host, such as
+`git` or a second `ssh`, use the ssh agent of your machine. The host never gets the keys, but
+anybody who can use the shell's `SSH_AUTH_SOCK` there can have the agent sign while you are
+connected, so use it only on hosts you trust. Only listing the keys and signing are passed on;
+adding, removing, and locking keys, and keys with destination constraints, do not work.
 
 ### Local echo
 

@@ -100,6 +100,7 @@ fn start_server_full(
         slow_client,
         live_backlog,
         compress,
+        agent_socket: None,
     };
     let (conns, conns_rx) = mpsc::channel(4);
     let (observer, connections) = mpsc::unbounded_channel();
@@ -390,6 +391,7 @@ fn start_client_inner(
         escape: Some(b'~'),
         local_echo: false,
         compress: false,
+        agent: None,
         attach,
     };
     let client = tokio::spawn(run_session(params, io));

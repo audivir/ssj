@@ -108,6 +108,8 @@ pub struct Args {
     pub transport: Transport,
     /// Join the only session without a client instead of starting another one.
     pub auto_attach: bool,
+    /// Programs on the host may use the ssh agent of this machine.
+    pub forward_agent: bool,
     pub local_echo: LocalEcho,
     /// Compression of input and output; `None` leaves it to the files.
     pub compress: Option<bool>,
@@ -127,6 +129,7 @@ pub struct Explicit {
     pub send_env: bool,
     pub transport: bool,
     pub auto_attach: bool,
+    pub forward_agent: bool,
     pub local_echo: bool,
 }
 
@@ -149,6 +152,7 @@ impl Args {
             escape: Some(b'~'),
             transport: Transport::Auto,
             auto_attach: false,
+            forward_agent: false,
             local_echo: LocalEcho::Off,
             compress: None,
             json: false,
@@ -167,6 +171,9 @@ impl Args {
         }
         if !self.explicit.auto_attach {
             self.auto_attach = config.auto_attach;
+        }
+        if !self.explicit.forward_agent {
+            self.forward_agent = config.forward_agent;
         }
         if self.compress.is_none() {
             self.compress = config.compress;
@@ -281,6 +288,8 @@ fn from_options(options: Options) -> Result<Args, String> {
         .transpose()?;
     let auto_attach =
         (options.auto_attach || options.no_auto_attach).then_some(options.auto_attach);
+    let forward_agent =
+        (options.forward_agent || options.no_forward_agent).then_some(options.forward_agent);
     // `list`, `attach`, and `kill` are commands only when a destination follows them
     let command_word = positionals
         .first()
@@ -343,6 +352,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             send_env: send_env_set,
             transport: transport.is_some(),
             auto_attach: auto_attach.is_some(),
+            forward_agent: forward_agent.is_some(),
             local_echo: local_echo.is_some(),
         },
         ssh_command,
@@ -358,6 +368,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         escape,
         transport: transport.unwrap_or_default(),
         auto_attach: auto_attach.unwrap_or(false),
+        forward_agent: forward_agent.unwrap_or(false),
         local_echo: local_echo.unwrap_or_default(),
         compress,
         json: options.json,

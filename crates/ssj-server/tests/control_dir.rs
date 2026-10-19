@@ -47,11 +47,11 @@ fn the_host_name_is_one_safe_path_component() {
 
 #[test]
 fn a_path_too_long_for_a_socket_moves_to_tmp_by_user() {
-    // 100 bytes is the limit, and the file name takes 22
-    let fits = format!("/{}", "a".repeat(100 - 22 - "/ssj".len() - 1));
+    // 100 bytes is the limit, and the file name takes 23
+    let fits = format!("/{}", "a".repeat(100 - 23 - "/ssj".len() - 1));
     let dir = dir_for(Some(PathBuf::from(&fits)), None, None, "box", 1000).unwrap();
     assert_eq!(dir, PathBuf::from(&fits).join("ssj"));
-    assert_eq!(dir.as_os_str().len() + 22, 100);
+    assert_eq!(dir.as_os_str().len() + 23, 100);
 
     let too_long = format!("{fits}b");
     let dir = dir_for(Some(PathBuf::from(too_long)), None, None, "box", 1000).unwrap();

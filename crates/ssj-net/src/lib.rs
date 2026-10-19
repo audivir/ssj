@@ -1,5 +1,7 @@
 //! QUIC transport of `ssj`: pinned mutual TLS, address validation, and transport limits.
 
+pub mod channels;
+
 use std::sync::Arc;
 use std::time::Duration;
 

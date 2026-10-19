@@ -72,8 +72,13 @@ pub enum ExitStatus {
 /// First frame of every connection of the client.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Hello {
-    /// Creates the shell of a fresh session.
-    Start { size: WindowSize, env: Env },
+    /// Creates the shell of a fresh session. With `agent` the shell gets a socket for the agent
+    /// of the client (see [`ClientFrame::AgentOffer`]).
+    Start {
+        size: WindowSize,
+        env: Env,
+        agent: bool,
+    },
     /// Continues after a lost connection. `output_offset` counts the output bytes already seen.
     Resume {
         size: WindowSize,
@@ -108,6 +113,12 @@ pub enum ClientFrame {
     /// Input that is compressed (see [`crate::compress`]). It holds the same as an `Input` frame
     /// and counts for the input offset by its uncompressed length.
     Compressed(Vec<u8>),
+    /// This connection serves the agent of the client: the server may open channels to it.
+    AgentOffer,
+    /// Bytes from the agent on channel `id`.
+    Agent(u32, Vec<u8>),
+    /// The agent closed channel `id`, or the client refused it.
+    AgentClose(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +138,12 @@ pub enum ServerFrame {
     /// Output that is compressed (see [`crate::compress`]). It holds the same as an `Output`
     /// frame and counts for the output offset by its uncompressed length.
     Compressed(Vec<u8>),
+    /// A program on the server connected to the agent socket. The server numbers the channels.
+    AgentOpen(u32),
+    /// Bytes from that program on channel `id`.
+    Agent(u32, Vec<u8>),
+    /// The program closed channel `id`.
+    AgentClose(u32),
 }
 
 const HELLO: u8 = 0x01;
@@ -137,6 +154,9 @@ const CLOSE: u8 = 0x05;
 const DETACH: u8 = 0x06;
 const PING: u8 = 0x07;
 const CLIENT_COMPRESSED: u8 = 0x08;
+const AGENT_OFFER: u8 = 0x09;
+const CLIENT_AGENT: u8 = 0x0a;
+const CLIENT_AGENT_CLOSE: u8 = 0x0b;
 
 const WELCOME: u8 = 0x81;
 const OUTPUT: u8 = 0x82;
@@ -146,6 +166,9 @@ const ERROR: u8 = 0x85;
 const PONG: u8 = 0x86;
 const GAP: u8 = 0x87;
 const COMPRESSED: u8 = 0x88;
+const AGENT_OPEN: u8 = 0x89;
+const SERVER_AGENT: u8 = 0x8a;
+const SERVER_AGENT_CLOSE: u8 = 0x8b;
 
 const HELLO_START: u8 = 0;
 const HELLO_RESUME: u8 = 1;
@@ -172,6 +195,10 @@ impl<'a> Reader<'a> {
 
     fn u16(&mut self) -> Result<u16, DecodeError> {
         Ok(u16::from_be_bytes(self.take(2)?.try_into().unwrap()))
+    }
+
+    fn u32(&mut self) -> Result<u32, DecodeError> {
+        Ok(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
     }
 
     fn u64(&mut self) -> Result<u64, DecodeError> {
@@ -227,6 +254,23 @@ fn put_data(out: &mut Vec<u8>, tag: u8, data: &[u8]) -> Result<(), EncodeError> 
     Ok(())
 }
 
+/// A data frame of a channel: the id, then a non-empty chunk.
+fn put_channel(out: &mut Vec<u8>, tag: u8, id: u32, data: &[u8]) -> Result<(), EncodeError> {
+    if data.is_empty() || data.len() > MAX_DATA_LEN {
+        return Err(EncodeError::BadDataLength);
+    }
+    out.push(tag);
+    out.extend_from_slice(&id.to_be_bytes());
+    out.extend_from_slice(data);
+    Ok(())
+}
+
+fn put_id(out: &mut Vec<u8>, tag: u8, id: u32) -> Result<(), EncodeError> {
+    out.push(tag);
+    out.extend_from_slice(&id.to_be_bytes());
+    Ok(())
+}
+
 /// Appends the frame to `out` with its length header.
 fn finish_frame(out: &mut [u8], header_at: usize) {
     let len = (out.len() - header_at - 4) as u32;
@@ -243,9 +287,10 @@ impl ClientFrame {
             Self::Hello(hello) => {
                 out.push(HELLO);
                 match hello {
-                    Hello::Start { size, env } => {
+                    Hello::Start { size, env, agent } => {
                         out.push(HELLO_START);
                         put_size(out, *size);
+                        out.push(u8::from(*agent));
                         out.extend_from_slice(&(env.len() as u16).to_be_bytes());
                         for (name, value) in env.iter() {
                             put_string(out, name);
@@ -291,6 +336,12 @@ impl ClientFrame {
                 out.push(PING);
                 Ok(())
             }
+            Self::AgentOffer => {
+                out.push(AGENT_OFFER);
+                Ok(())
+            }
+            Self::Agent(id, data) => put_channel(out, CLIENT_AGENT, *id, data),
+            Self::AgentClose(id) => put_id(out, CLIENT_AGENT_CLOSE, *id),
         };
         match result {
             Ok(()) => {
@@ -309,6 +360,11 @@ impl ClientFrame {
             HELLO => Self::Hello(match body.u8()? {
                 HELLO_START => {
                     let size = body.size()?;
+                    let agent = match body.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(DecodeError::InvalidValue),
+                    };
                     let count = usize::from(body.u16()?);
                     // a count above the limit is rejected before any allocation
                     if count > Env::MAX_VARS {
@@ -319,7 +375,7 @@ impl ClientFrame {
                         vars.push((body.string()?, body.string()?));
                     }
                     let env = Env::new(vars).map_err(DecodeError::Env)?;
-                    Hello::Start { size, env }
+                    Hello::Start { size, env, agent }
                 }
                 HELLO_RESUME => Hello::Resume {
                     size: body.size()?,
@@ -335,6 +391,12 @@ impl ClientFrame {
             CLOSE => Self::Close,
             DETACH => Self::Detach,
             PING => Self::Ping,
+            AGENT_OFFER => Self::AgentOffer,
+            CLIENT_AGENT => {
+                let id = body.u32()?;
+                Self::Agent(id, body.data()?)
+            }
+            CLIENT_AGENT_CLOSE => Self::AgentClose(body.u32()?),
             other => return Err(DecodeError::UnknownType(other)),
         };
         body.finish()?;
@@ -378,6 +440,9 @@ impl ServerFrame {
                 Ok(())
             }
             Self::Compressed(data) => put_data(out, COMPRESSED, data),
+            Self::AgentOpen(id) => put_id(out, AGENT_OPEN, *id),
+            Self::Agent(id, data) => put_channel(out, SERVER_AGENT, *id, data),
+            Self::AgentClose(id) => put_id(out, SERVER_AGENT_CLOSE, *id),
             Self::Gap(skipped) => {
                 out.push(GAP);
                 out.extend_from_slice(&skipped.to_be_bytes());
@@ -423,6 +488,12 @@ impl ServerFrame {
             }
             ERROR => Self::Error(ErrorCode::from_u8(body.u8()?).ok_or(DecodeError::InvalidValue)?),
             PONG => Self::Pong,
+            AGENT_OPEN => Self::AgentOpen(body.u32()?),
+            SERVER_AGENT => {
+                let id = body.u32()?;
+                Self::Agent(id, body.data()?)
+            }
+            SERVER_AGENT_CLOSE => Self::AgentClose(body.u32()?),
             other => return Err(DecodeError::UnknownType(other)),
         };
         body.finish()?;

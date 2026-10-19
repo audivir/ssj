@@ -24,7 +24,7 @@ use crate::config::Config;
 use crate::control_cli;
 use crate::control_server::{Context, serve_control};
 use crate::control_socket;
-use crate::control_socket::{SocketFile, control_dir, ensure_private_dir, socket_path};
+use crate::control_socket::{SocketFile, agent_path, control_dir, ensure_private_dir, socket_path};
 use crate::daemon;
 use crate::frontend::Frontend;
 use crate::session::{
@@ -259,6 +259,8 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         away_after: args.away_after,
         slow_client: args.slow_client,
         live_backlog: args.live_backlog,
+        // the directory exists: the control socket was made in it
+        agent_socket: control_dir().ok().map(|dir| agent_path(&dir, id.as_str())),
         compress: args.compress,
         detached_timeout: args.detached_timeout,
         max_detached: args.max_detached,

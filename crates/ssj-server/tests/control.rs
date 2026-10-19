@@ -86,6 +86,7 @@ async fn list_follows_the_state_of_the_session() {
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
@@ -109,6 +110,7 @@ async fn new_client_attaches_to_a_detached_session_and_finds_the_shell_as_it_was
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
@@ -215,6 +217,7 @@ async fn kill_ends_the_session_tells_the_client_and_cleans_up() {
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
@@ -412,6 +415,7 @@ async fn reuse_joins_the_only_session_without_a_client_and_otherwise_starts_a_ne
         ClientFrame::Hello(Hello::Start {
             size: size(),
             env: Env::default(),
+            agent: false,
         }),
     )
     .await;
