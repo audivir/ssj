@@ -127,7 +127,15 @@ fn names_and_selectors_are_checked_and_carried_to_the_daemon() {
     );
     assert_eq!(
         args(&["--kill", "abcdef012345"]).unwrap().mode,
-        ssj_server::cli::Mode::Kill(Some("abcdef012345".to_owned()))
+        ssj_server::cli::Mode::Kill(vec!["abcdef012345".to_owned()])
+    );
+    assert_eq!(
+        args(&["--kill", "a1", "work", "--choose"]).unwrap().mode,
+        ssj_server::cli::Mode::Kill(vec!["a1".to_owned(), "work".to_owned()])
+    );
+    assert_eq!(
+        args(&["--kill"]).unwrap().mode,
+        ssj_server::cli::Mode::Kill(Vec::new())
     );
     assert!(args(&["--kill", "a b"]).is_err());
     assert_eq!(

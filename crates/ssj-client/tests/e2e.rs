@@ -704,6 +704,56 @@ fn the_detach_key_leaves_in_the_middle_of_a_line() {
 }
 
 #[test]
+fn kill_ends_several_sessions_in_one_call() {
+    let runtime = short_dir();
+    let ssh = fake_ssh(FAKE_SSH);
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let output = ssj_typing(
+            &runtime,
+            &ssh,
+            &["--detach-key", "ctrl-]", "user@localhost"],
+            &[("x\x1d", "")],
+        );
+        assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    }
+    let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
+    for line in listing.lines() {
+        ids.push(line.split_whitespace().next().unwrap().to_owned());
+    }
+    assert_eq!(ids.len(), 3, "{listing}");
+
+    // two of the three, in one call; a name that does not exist is reported and does not stop it
+    let killed = ssj(
+        &runtime,
+        &ssh,
+        &["kill", "user@localhost", &ids[0], "nosuchsession", &ids[1]],
+        "",
+    );
+    assert_eq!(killed.status.code(), Some(1), "{}", text(&killed.stdout));
+    assert!(
+        text(&killed.stderr).contains("no running session nosuchsession"),
+        "{}",
+        text(&killed.stderr)
+    );
+    let start = Instant::now();
+    loop {
+        let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
+        if listing.lines().count() == 1 && listing.contains(&ids[2]) {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(8),
+            "still listed: {listing}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let rest = ssj(&runtime, &ssh, &["kill", "user@localhost", &ids[2]], "");
+    assert!(rest.status.success(), "{}", text(&rest.stderr));
+}
+
+#[test]
 fn attach_and_kill_without_a_session_say_so() {
     let runtime = short_dir();
     let ssh = fake_ssh(FAKE_SSH);

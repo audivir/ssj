@@ -153,6 +153,7 @@ pub fn ask(path: &Path, request: &Request) -> io::Result<Reply> {
 }
 
 /// A session found in the control directory.
+#[derive(Clone)]
 pub struct Found {
     pub path: PathBuf,
     pub info: ssj_proto::control::SessionInfo,

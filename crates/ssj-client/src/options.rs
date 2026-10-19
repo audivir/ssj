@@ -174,6 +174,10 @@ pub struct Options {
     #[arg(long, value_name = "HOST", num_args = 0..=1, default_missing_value = "", hide = true, overrides_with = "complete")]
     pub complete: Option<String>,
 
+    /// With --complete: only the sessions that have a client
+    #[arg(long, hide = true)]
+    pub connected: bool,
+
     /// Never prompt, give up after 2 seconds (for background refreshes)
     #[arg(long, hide = true)]
     pub batch: bool,

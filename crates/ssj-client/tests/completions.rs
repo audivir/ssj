@@ -22,7 +22,7 @@ fn fake_ssj() -> PathBuf {
         "#!/bin/sh\n\
          if [ \"$1\" = \"--complete\" ]; then\n\
            case \"$2\" in\n\
-             me@box) printf 'work\\nbuild\\n' ;;\n\
+             me@box) if [ \"$3\" = \"--connected\" ]; then printf 'work\\n'; else printf 'work\\nbuild\\n'; fi ;;\n\
              \"\") printf 'work\\nbuild\\nother\\n' ;;\n\
            esac\n\
          fi\n",
@@ -80,6 +80,12 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     // the sessions of that host, filtered by what is typed
     assert_eq!(case("ssj attach me@box w", 3), "work");
     assert_eq!(case("ssj kill me@box ''", 3), "work build");
+    // kill takes more than one, the others do not
+    assert_eq!(case("ssj kill me@box work ''", 4), "work build");
+    assert_eq!(case("ssj attach me@box work ''", 4), "");
+    // detach offers only the sessions that have a client, and more than one
+    assert_eq!(case("ssj detach me@box ''", 3), "work");
+    assert_eq!(case("ssj detach me@box work ''", 4), "work");
     // another host has none
     assert_eq!(case("ssj attach other@host ''", 3), "");
     // --name offers the names of all hosts
@@ -119,6 +125,10 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     // the word after the host of attach and kill is a session of that host
     assert_eq!(case("attach me@box ''", 3), "names: work build");
     assert_eq!(case("kill me@box ''", 3), "names: work build");
+    assert_eq!(case("kill me@box work ''", 4), "names: work build");
+    assert_eq!(case("attach me@box work ''", 4), "");
+    assert_eq!(case("detach me@box ''", 3), "names: work");
+    assert_eq!(case("detach me@box work ''", 4), "names: work");
     assert_eq!(case("attach other@host ''", 3), "names:");
     // list and install take nothing more
     assert_eq!(case("list me@box ''", 3), "");
@@ -144,6 +154,11 @@ fn fish_offers_the_sessions_of_the_host_after_attach_and_kill() {
     };
     assert_eq!(case("ssj attach me@box "), "build work");
     assert_eq!(case("ssj kill me@box w"), "work");
+    // kill takes more than one, the others do not
+    assert_eq!(case("ssj kill me@box work "), "build work");
+    assert_eq!(case("ssj attach me@box work "), "");
+    assert_eq!(case("ssj detach me@box "), "work");
+    assert_eq!(case("ssj detach me@box work "), "work");
     // options in front do not count as words
     assert_eq!(case("ssj -v attach me@box "), "build work");
     // no sessions after the other commands, or for another host, or before the host

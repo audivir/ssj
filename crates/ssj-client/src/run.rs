@@ -286,7 +286,7 @@ async fn session(mut args: Args) -> u8 {
             .extend(["-o", "BatchMode=yes", "-o", "ConnectTimeout=2"].map(str::to_owned));
     }
     match args.command.clone() {
-        Command::Complete(host) => complete(host.as_deref()),
+        Command::Complete { host, connected } => complete(host.as_deref(), connected),
         Command::Connect => {
             // a name or `auto_attach` may mean a session that runs already; the server decides,
             // and the client starts with an attach, which a new session answers with `NotStarted`
@@ -305,8 +305,8 @@ async fn session(mut args: Args) -> u8 {
             connect_session(args, &config, &extra, true, false).await
         }
         Command::List => list_sessions(&args).await,
-        Command::Kill(id) => kill_session(&args, id).await,
-        Command::Detach(id) => detach_session(&args, id).await,
+        Command::Kill(ids) => kill_session(&args, ids).await,
+        Command::Detach(ids) => detach_session(&args, ids).await,
         Command::Edit => crate::edit::run(&args).await,
         Command::Install => match install(&args).await {
             Ok(path) => {
@@ -541,11 +541,16 @@ pub fn sessions_json(infos: &[SessionInfo]) -> String {
 }
 
 /// Prints the cached names for tab completion and refreshes old lists in the background.
-fn complete(host: Option<&str>) -> u8 {
+fn complete(host: Option<&str>, connected: bool) -> u8 {
     let Some(dir) = sessions_cache::dir() else {
         return 0;
     };
-    for name in sessions_cache::names(&dir, host) {
+    let names = if connected {
+        sessions_cache::connected_names(&dir, host)
+    } else {
+        sessions_cache::names(&dir, host)
+    };
+    for name in names {
         println!("{name}");
     }
     let Ok(exe) = std::env::current_exe() else {
@@ -580,10 +585,10 @@ fn complete(host: Option<&str>) -> u8 {
     0
 }
 
-fn remember(origin: &sessions_cache::Origin, names: &[String]) {
+fn remember(origin: &sessions_cache::Origin, entries: &[(String, bool)]) {
     if let Some(dir) = sessions_cache::dir() {
         // a cache that cannot be written only costs the completion
-        let _ = sessions_cache::store(&dir, origin, names);
+        let _ = sessions_cache::store_states(&dir, origin, entries);
     }
 }
 
@@ -643,8 +648,13 @@ async fn list_sessions(args: &Args) -> u8 {
         .collect();
     let mut names = Vec::new();
     for info in &infos {
-        names.extend(info.name.as_ref().map(|name| name.as_str().to_owned()));
-        names.push(info.id.as_str().to_owned());
+        let connected = info.state == SessionState::Connected;
+        names.extend(
+            info.name
+                .as_ref()
+                .map(|name| (name.as_str().to_owned(), connected)),
+        );
+        names.push((info.id.as_str().to_owned(), connected));
     }
     remember(&origin, &names);
     if args.batch {
@@ -670,8 +680,17 @@ async fn list_sessions(args: &Args) -> u8 {
     0
 }
 
-async fn kill_session(args: &Args, id: Option<String>) -> u8 {
-    match run_choosing(args, "--kill", id, "Which one to end?").await {
+async fn kill_session(args: &Args, mut ids: Vec<String>) -> u8 {
+    let count = ids.len().max(1);
+    let result = if ids.len() > 1 {
+        // one call to the host ends them all
+        let mut extra = vec!["--kill".to_owned()];
+        extra.extend(ids);
+        run_remote(args, &extra, "").await
+    } else {
+        run_choosing(args, "--kill", ids.pop(), "Which one to end?").await
+    };
+    match result {
         Ok(remote) if remote.server_missing() => {
             eprintln!(
                 "ssj: no running session (ssj-server is not installed on {})",
@@ -680,7 +699,11 @@ async fn kill_session(args: &Args, id: Option<String>) -> u8 {
             1
         }
         Ok(remote) if remote.status.success() => {
-            println!("session ended");
+            if count > 1 {
+                println!("{count} sessions ended");
+            } else {
+                println!("session ended");
+            }
             0
         }
         Ok(remote) => {
@@ -694,8 +717,17 @@ async fn kill_session(args: &Args, id: Option<String>) -> u8 {
     }
 }
 
-async fn detach_session(args: &Args, id: Option<String>) -> u8 {
-    match run_choosing(args, "--detach", id, "Which one to detach?").await {
+async fn detach_session(args: &Args, mut ids: Vec<String>) -> u8 {
+    let count = ids.len().max(1);
+    let result = if ids.len() > 1 {
+        // one call to the host detaches them all
+        let mut extra = vec!["--detach".to_owned()];
+        extra.extend(ids);
+        run_remote(args, &extra, "").await
+    } else {
+        run_choosing(args, "--detach", ids.pop(), "Which one to detach?").await
+    };
+    match result {
         Ok(remote) if remote.server_missing() => {
             eprintln!(
                 "ssj: no running session (ssj-server is not installed on {})",
@@ -704,7 +736,11 @@ async fn detach_session(args: &Args, id: Option<String>) -> u8 {
             1
         }
         Ok(remote) if remote.status.success() => {
-            println!("client detached; the session keeps running");
+            if count > 1 {
+                println!("{count} clients detached; the sessions keep running");
+            } else {
+                println!("client detached; the session keeps running");
+            }
             0
         }
         Ok(remote) => {

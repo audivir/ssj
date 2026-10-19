@@ -106,13 +106,46 @@ fn several_to_choose(args: &Args, selector: Option<&str>, sessions: &[Found]) ->
     Some(ExitCode::from(CHOICE_EXIT_CODE))
 }
 
+/// Sends the same order to each named session, or to the only one when none is named, and reports
+/// the ones that could not be reached. The exit code is 1 if any failed.
+fn send_order(sessions: &[Found], ids: &[String], order: &Request) -> ExitCode {
+    let selectors: Vec<Option<&str>> = if ids.is_empty() {
+        vec![None]
+    } else {
+        ids.iter().map(|id| Some(id.as_str())).collect()
+    };
+    let mut code = ExitCode::SUCCESS;
+    for selector in selectors {
+        let outcome = match choose(sessions.to_vec(), selector) {
+            Err(message) => Err(message),
+            Ok(found) => match ask(&found.path, order) {
+                Ok(Reply::Ok) => Ok(()),
+                Ok(Reply::Error(text)) => Err(text),
+                Ok(_) => Err("unexpected reply".to_owned()),
+                Err(err) => Err(err.to_string()),
+            },
+        };
+        match outcome {
+            Ok(()) => println!("OK"),
+            Err(message) => code = fail(&message),
+        }
+    }
+    code
+}
+
 pub fn run(args: &Args) -> ExitCode {
     let sessions = match control_dir() {
         Ok(dir) => find_sessions(&dir),
         Err(err) => return fail(&err.to_string()),
     };
-    if let Mode::Kill(id) | Mode::Detach(id) | Mode::Attach(id) = &args.mode
-        && let Some(code) = several_to_choose(args, id.as_deref(), &sessions)
+    let selector = match &args.mode {
+        Mode::Kill(ids) | Mode::Detach(ids) if ids.len() > 1 => None,
+        Mode::Kill(ids) | Mode::Detach(ids) => Some(ids.first().map(String::as_str)),
+        Mode::Attach(id) => Some(id.as_deref()),
+        _ => None,
+    };
+    if let Some(selector) = selector
+        && let Some(code) = several_to_choose(args, selector, &sessions)
     {
         return code;
     }
@@ -124,30 +157,8 @@ pub fn run(args: &Args) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Mode::Kill(id) => match choose(sessions, id.as_deref()) {
-            Err(message) => fail(&message),
-            Ok(found) => match ask(&found.path, &Request::Kill) {
-                Ok(Reply::Ok) => {
-                    println!("OK");
-                    ExitCode::SUCCESS
-                }
-                Ok(Reply::Error(text)) => fail(&text),
-                Ok(_) => fail("unexpected reply"),
-                Err(err) => fail(&err.to_string()),
-            },
-        },
-        Mode::Detach(id) => match choose(sessions, id.as_deref()) {
-            Err(message) => fail(&message),
-            Ok(found) => match ask(&found.path, &Request::Detach) {
-                Ok(Reply::Ok) => {
-                    println!("OK");
-                    ExitCode::SUCCESS
-                }
-                Ok(Reply::Error(text)) => fail(&text),
-                Ok(_) => fail("unexpected reply"),
-                Err(err) => fail(&err.to_string()),
-            },
-        },
+        Mode::Kill(ids) => send_order(&sessions, ids, &Request::Kill),
+        Mode::Detach(ids) => send_order(&sessions, ids, &Request::Detach),
         Mode::Attach(selector) => {
             let pin = match read_pin() {
                 Ok(pin) => pin,

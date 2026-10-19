@@ -64,8 +64,8 @@ auto_install = "ask"   # "ask" (default), "always", or "never"
 ssj user@host                       # start a session
 ssj attach user@host [ID]           # join a running session, for example after a restart
 ssj list user@host                  # sessions with state and age
-ssj kill user@host [ID]             # end a session
-ssj detach user@host [ID]           # make the client of a session leave; the session keeps running
+ssj kill user@host [ID...]          # end one or more sessions
+ssj detach user@host [ID...]        # make the clients of sessions leave; the sessions keep running
 ssj --name work user@host           # join the session `work`, or start it
 ssj attach user@host work           # an id or a name
 ssj user@host:2222                  # port of the ssh server; also ssh://user@host:2222
@@ -91,10 +91,10 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | Action | Effect |
 | --------------------------------------------------- | --------------------------------------------------- |
 | `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
-| `ssj kill user@host [ID]` | Ends the session from another terminal. |
+| `ssj kill user@host [ID...]` | Ends the sessions from another terminal. |
 | `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
 | The detach key, anywhere | The same, also in the middle of a line or a program. |
-| `ssj detach user@host [ID]` | The same, from another terminal, for the client of that session. |
+| `ssj detach user@host [ID...]` | The same, from another terminal, for the clients of those sessions. |
 | Closing the terminal, `SIGHUP`, `SIGTERM` | Ends the session, as with `ssh`. `ssj` exits with 129. |
 | `kill -9` of `ssj`, a lost connection | Leaves it. The shell keeps running. |
 
@@ -114,7 +114,7 @@ Any other character after `~` is sent as typed. Set another escape character wit
 `--detach-key ctrl-]` (or `detach_key = "ctrl-]"` in `client.toml`). The key is a control key,
 `ctrl-A` to `ctrl-Z`, `ctrl-\`, `ctrl-]`, `ctrl-^`, or `ctrl-_`, or `none` (the default, because
 the key is no longer sent to the program). Tab and Enter are refused. From another terminal,
-`ssj detach user@host [ID]` makes the connected client leave and prints that it did; the shell
+`ssj detach user@host [ID...]` makes the connected clients leave and prints that it did; the shell
 keeps running, and `ssj attach` brings you back.
 
 ### Choosing a session

@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use ssj_client::run::sessions_json;
-use ssj_client::sessions_cache::{Origin, Refresh, names, stale_origins, store};
+use ssj_client::sessions_cache::{
+    Origin, Refresh, connected_names, names, stale_origins, store, store_states,
+};
 use ssj_proto::SessionId;
 use ssj_proto::control::{SessionInfo, SessionState};
 
@@ -95,4 +97,30 @@ fn one_refresh_per_host_runs_at_a_time() {
     drop(first);
     assert!(Refresh::acquire(&dir, "me@a").is_some());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_cache_remembers_which_sessions_have_a_client() {
+    let dir = std::env::temp_dir().join(format!("ssj-cache-state-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let origin = Origin {
+        destination: "me@a".to_owned(),
+        port: None,
+    };
+    store_states(
+        &dir,
+        &origin,
+        &[
+            ("work".to_owned(), true),
+            ("abc".to_owned(), true),
+            ("idle".to_owned(), false),
+        ],
+    )
+    .unwrap();
+    assert_eq!(names(&dir, Some("me@a")), ["work", "abc", "idle"]);
+    assert_eq!(connected_names(&dir, Some("me@a")), ["work", "abc"]);
+    // a list written without the information has no session with a client
+    store(&dir, &origin, &["work".to_owned()]).unwrap();
+    assert!(connected_names(&dir, Some("me@a")).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
 }

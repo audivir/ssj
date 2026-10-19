@@ -161,8 +161,10 @@ _ssj_words() {
     elif [[ $words[1] == (list|attach|kill|detach|install) ]]; then
         if (( CURRENT == 2 )); then
             _hosts
-        elif (( CURRENT == 3 )) && [[ $words[1] == (attach|kill|detach) ]]; then
-            local -a s; s=(${(f)"$(ssj --complete $words[2] 2>/dev/null)"}); compadd -a s
+        elif [[ ( $CURRENT -eq 3 && $words[1] == attach ) || ( $CURRENT -ge 3 && $words[1] == (kill|detach) ) ]]; then
+            # `detach` only acts on a session that has a client
+            local -a s extra; [[ $words[1] == detach ]] && extra=(--connected)
+            s=(${(f)"$(ssj --complete $words[2] $extra 2>/dev/null)"}); compadd -a s
         fi
     else
         _hosts
@@ -191,8 +193,11 @@ _ssj_sessions() {
     # ssj attach|kill|detach HOST <name>: the sessions of that host
     case ${COMP_WORDS[1]} in
         attach|kill|detach)
-            if [[ $COMP_CWORD -eq 3 ]]; then
-                COMPREPLY=($(compgen -W "$(ssj --complete "${COMP_WORDS[2]}" 2>/dev/null)" -- "$current"))
+            # `kill` and `detach` take any number of sessions
+            if [[ $COMP_CWORD -eq 3 || ( $COMP_CWORD -gt 3 && ${COMP_WORDS[1]} != attach ) ]]; then
+                # `detach` only acts on a session that has a client
+                local only=; [[ ${COMP_WORDS[1]} == detach ]] && only=--connected
+                COMPREPLY=($(compgen -W "$(ssj --complete "${COMP_WORDS[2]}" $only 2>/dev/null)" -- "$current"))
                 [[ ${#COMPREPLY[@]} -gt 0 ]] && return
             fi
             ;;
@@ -210,7 +215,9 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
         }
         Shell::Fish => {
             r#"
-complete -c ssj -n '__fish_seen_subcommand_from attach kill detach; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
+complete -c ssj -n '__fish_seen_subcommand_from detach; and test (count (commandline -opc | string match -v -- "-*")) -ge 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] --connected 2>/dev/null)'
+complete -c ssj -n '__fish_seen_subcommand_from kill; and test (count (commandline -opc | string match -v -- "-*")) -ge 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
+complete -c ssj -n '__fish_seen_subcommand_from attach; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
 complete -c ssj -l name -x -a '(ssj --complete 2>/dev/null)'
 "#
         }

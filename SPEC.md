@@ -268,6 +268,13 @@ protocol between client and server.
 - A server of an earlier release does not know `--choose` and answers with an unknown argument,
   which the client shows. There is no fallback: install the server of the same release.
 
+- `ssj kill` and `ssj detach` take any number of ids or names after the destination, in one call
+  to the host (`--kill ID ID...`). Each is answered on its own: a session that cannot be reached is
+  reported on stderr, the others are still handled, and the exit code is 1 if any failed.
+- The completion offers further ids for `kill` and `detach`, and `detach` offers only sessions
+  that had a client at the last refresh of the cache (`ssj --complete HOST --connected`). The
+  cache file marks them: a line is `name` or `name connected`.
+
 ### Command line, completions, and release files
 
 - The client parses its command line with `clap` (derive). The definition lives in
@@ -674,8 +681,8 @@ Leaving (the shell keeps running):
   default, since the byte is no longer sent to the program. Tab and Enter (`ctrl-I`, `ctrl-J`,
   `ctrl-M`) are refused, and `ctrl-[` (Escape) is not accepted, since every line and key sequence
   uses them. Typed bytes before the key in the same read are sent first.
-- `ssj detach DESTINATION [ID]` detaches the connected client from another terminal. It runs
-  `ssj-server --detach [ID]`, which sends `DETACH` on the control socket. The server answers
+- `ssj detach DESTINATION [ID...]` detaches the connected client from another terminal. It runs
+  `ssj-server --detach [ID...]`, which sends `DETACH` on the control socket. The server answers
   `ERR no client is connected` when the state is not connected. Otherwise the session sends the
   frame `Detached` (0x8c) to the client, waits 300 ms so that the frame can leave before the
   endpoint is closed, and then does what `Detach` does. The client leaves with exit code 0 and

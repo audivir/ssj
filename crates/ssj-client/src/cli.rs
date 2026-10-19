@@ -75,13 +75,19 @@ pub enum Command {
     /// Put the server on the host.
     Install,
     /// End a session on the host.
-    Kill(Option<String>),
+    /// The ids or names to end; none means the only session, or a choice from a menu.
+    Kill(Vec<String>),
     /// Make the client of a session on the host leave; the session keeps running.
-    Detach(Option<String>),
+    /// The ids or names to detach; none means the only session, or a choice from a menu.
+    Detach(Vec<String>),
     /// Edit `client.toml` here, or `server.toml` on the host if there is a destination.
     Edit,
     /// Print the cached session names of a host, or of all hosts, for tab completion.
-    Complete(Option<String>),
+    Complete {
+        host: Option<String>,
+        /// Only the sessions that have a client.
+        connected: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -326,7 +332,10 @@ fn from_options(options: Options) -> Result<Args, String> {
     let positionals = &words;
     if let Some(host) = &options.complete {
         return Ok(Args {
-            command: Command::Complete((!host.is_empty()).then(|| host.clone())),
+            command: Command::Complete {
+                host: (!host.is_empty()).then(|| host.clone()),
+                connected: options.connected,
+            },
             ..Args::blank()
         });
     }
@@ -404,23 +413,28 @@ fn from_options(options: Options) -> Result<Args, String> {
         _ if local_edit => (Command::Edit, String::new()),
         Some(word @ ("list" | "attach" | "kill" | "detach" | "install" | "edit")) => {
             let rest = &positionals[1..];
-            let (id, destination) = match rest {
-                [destination] => (None, destination.clone()),
-                [destination, id] if matches!(word, "attach" | "kill" | "detach") => (
-                    Some(
-                        is_selector(id)
-                            .then(|| id.clone())
-                            .ok_or("not a valid session id or name")?,
-                    ),
-                    destination.clone(),
-                ),
+            let (mut ids, destination) = match rest {
+                [destination] => (Vec::new(), destination.clone()),
+                [destination, ids @ ..]
+                    if matches!(word, "kill" | "detach")
+                        || (ids.len() == 1 && word == "attach") =>
+                {
+                    let mut checked = Vec::new();
+                    for id in ids {
+                        if !is_selector(id) {
+                            return Err("not a valid session id or name".to_owned());
+                        }
+                        checked.push(id.clone());
+                    }
+                    (checked, destination.clone())
+                }
                 _ => {
                     return Err(format!(
                         "usage: ssj {word} user@host{}",
-                        if matches!(word, "attach" | "kill" | "detach") {
-                            " [ID]"
-                        } else {
-                            ""
+                        match word {
+                            "kill" | "detach" => " [ID...]",
+                            "attach" => " [ID]",
+                            _ => "",
                         }
                     ));
                 }
@@ -429,9 +443,9 @@ fn from_options(options: Options) -> Result<Args, String> {
                 "list" => Command::List,
                 "install" => Command::Install,
                 "edit" => Command::Edit,
-                "attach" => Command::Attach(id),
-                "detach" => Command::Detach(id),
-                _ => Command::Kill(id),
+                "attach" => Command::Attach(ids.pop()),
+                "detach" => Command::Detach(ids),
+                _ => Command::Kill(ids),
             };
             (command, destination)
         }

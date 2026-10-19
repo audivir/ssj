@@ -33,9 +33,10 @@ pub enum Mode {
     /// Read a `server.toml` from stdin, print `OK` if it is valid, or the first error.
     CheckConfig,
     /// End a running session.
-    Kill(Option<String>),
+    /// End these sessions, or the only one when none is named.
+    Kill(Vec<String>),
     /// Make the connected client leave; the session keeps running.
-    Detach(Option<String>),
+    Detach(Vec<String>),
     /// Carry the stream of a client over stdin and stdout, for hosts that allow only the `ssh`
     /// channel.
     Stdio(Option<String>),
@@ -299,11 +300,18 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                     Mode::Attach(session_id(&mut args).map_err(|e| format!("--attach: {e}"))?)
             }
             "--kill" => {
-                out.mode = Mode::Kill(session_id(&mut args).map_err(|e| format!("--kill: {e}"))?)
+                let mut ids = Vec::new();
+                while let Some(id) = session_id(&mut args).map_err(|e| format!("--kill: {e}"))? {
+                    ids.push(id);
+                }
+                out.mode = Mode::Kill(ids)
             }
             "--detach" => {
-                out.mode =
-                    Mode::Detach(session_id(&mut args).map_err(|e| format!("--detach: {e}"))?)
+                let mut ids = Vec::new();
+                while let Some(id) = session_id(&mut args).map_err(|e| format!("--detach: {e}"))? {
+                    ids.push(id);
+                }
+                out.mode = Mode::Detach(ids)
             }
             "--stdio" => {
                 out.mode = Mode::Stdio(session_id(&mut args).map_err(|e| format!("--stdio: {e}"))?)

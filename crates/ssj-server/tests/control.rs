@@ -512,6 +512,23 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
             "{order}"
         );
     }
+    // several ids in one call: each one is answered, and the failures do not stop the others
+    let both = run_control(
+        &runtime,
+        &[
+            "--detach",
+            first.connect.id.as_str(),
+            second.connect.id.as_str(),
+        ],
+        "",
+    );
+    assert_eq!(both.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&both.stderr)
+            .matches("no client is connected")
+            .count(),
+        2
+    );
     // a name is never a question
     let id = first.connect.id.as_str().to_owned();
     let named = run_control(&runtime, &["--kill", &id, "--choose"], "");

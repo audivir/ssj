@@ -1,4 +1,4 @@
-//! The last known session names of each host, for tab completion. A completion must answer in
+//! The last known session names of each host (and whether a client is connected), for tab completion. A completion must answer in
 //! milliseconds and never prompt, so it reads these files, and a refresh in the background keeps
 //! them current.
 
@@ -56,8 +56,18 @@ pub struct Origin {
     pub port: Option<u16>,
 }
 
-/// Replaces the names of a host. The file appears whole or not at all.
+/// Replaces the names of a host, none of them with a client. The file appears whole or not at all.
 pub fn store(dir: &Path, origin: &Origin, names: &[String]) -> std::io::Result<()> {
+    let entries: Vec<(String, bool)> = names.iter().map(|n| (n.clone(), false)).collect();
+    store_states(dir, origin, &entries)
+}
+
+/// Replaces the names of a host with the information whether a client is connected to each.
+pub fn store_states(
+    dir: &Path,
+    origin: &Origin,
+    entries: &[(String, bool)],
+) -> std::io::Result<()> {
     let host = origin.destination.as_str();
     ensure(dir)?;
     let target = dir.join(file_name(host));
@@ -72,8 +82,12 @@ pub fn store(dir: &Path, origin: &Origin, names: &[String]) -> std::io::Result<(
     if let Some(port) = origin.port {
         writeln!(file, "@port={port}")?;
     }
-    for name in names {
-        writeln!(file, "{name}")?;
+    for (name, connected) in entries {
+        if *connected {
+            writeln!(file, "{name} connected")?;
+        } else {
+            writeln!(file, "{name}")?;
+        }
     }
     file.sync_all()?;
     fs::rename(temp, target)
@@ -81,6 +95,16 @@ pub fn store(dir: &Path, origin: &Origin, names: &[String]) -> std::io::Result<(
 
 /// Names of one host (`[user@]host`), or of all hosts with a list, without repeats.
 pub fn names(dir: &Path, host: Option<&str>) -> Vec<String> {
+    listed(dir, host, false)
+}
+
+/// Like [`names`], and only of the sessions that had a client at the last refresh: the ones that
+/// `ssj detach` can act on.
+pub fn connected_names(dir: &Path, host: Option<&str>) -> Vec<String> {
+    listed(dir, host, true)
+}
+
+fn listed(dir: &Path, host: Option<&str>, connected_only: bool) -> Vec<String> {
     let files: Vec<PathBuf> = match host {
         Some(host) => vec![dir.join(file_name(host))],
         None => fs::read_dir(dir)
@@ -94,9 +118,13 @@ pub fn names(dir: &Path, host: Option<&str>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for file in files {
         for line in fs::read_to_string(file).unwrap_or_default().lines() {
+            let (name, state) = line.split_once(' ').unwrap_or((line, ""));
+            if connected_only && state != "connected" {
+                continue;
+            }
             // the file may have been edited, so only a valid selector is passed on
-            if ssj_proto::is_selector(line) && !out.iter().any(|seen| seen == line) {
-                out.push(line.to_owned());
+            if ssj_proto::is_selector(name) && !out.iter().any(|seen| seen == name) {
+                out.push(name.to_owned());
             }
         }
     }

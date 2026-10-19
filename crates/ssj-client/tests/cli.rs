@@ -149,10 +149,10 @@ fn subcommands_need_a_destination_after_them() {
             Command::Attach(Some(id.clone())),
             "host",
         ),
-        (vec!["kill", "host"], Command::Kill(None), "host"),
+        (vec!["kill", "host"], Command::Kill(Vec::new()), "host"),
         (
             vec!["kill", "host", "abcdef012345"],
-            Command::Kill(Some(id)),
+            Command::Kill(vec![id]),
             "host",
         ),
         // a name works where an id does
@@ -163,13 +163,18 @@ fn subcommands_need_a_destination_after_them() {
         ),
         (
             vec!["kill", "host", "My-Session"],
-            Command::Kill(Some("My-Session".to_owned())),
+            Command::Kill(vec!["My-Session".to_owned()]),
             "host",
         ),
-        (vec!["detach", "host"], Command::Detach(None), "host"),
         (
-            vec!["detach", "host", "work"],
-            Command::Detach(Some("work".to_owned())),
+            vec!["kill", "host", "one", "two", "three"],
+            Command::Kill(vec!["one".to_owned(), "two".to_owned(), "three".to_owned()]),
+            "host",
+        ),
+        (vec!["detach", "host"], Command::Detach(Vec::new()), "host"),
+        (
+            vec!["detach", "host", "work", "other"],
+            Command::Detach(vec!["work".to_owned(), "other".to_owned()]),
             "host",
         ),
         (
@@ -348,11 +353,26 @@ fn the_flags_of_the_listing_and_the_completion() {
     // the completion needs no destination, and takes a host or none
     assert_eq!(
         args(&["--complete"]).unwrap().command,
-        Command::Complete(None)
+        Command::Complete {
+            host: None,
+            connected: false
+        }
     );
     assert_eq!(
         args(&["--complete", "me@host"]).unwrap().command,
-        Command::Complete(Some("me@host".to_owned()))
+        Command::Complete {
+            host: Some("me@host".to_owned()),
+            connected: false
+        }
+    );
+    assert_eq!(
+        args(&["--complete", "me@host", "--connected"])
+            .unwrap()
+            .command,
+        Command::Complete {
+            host: Some("me@host".to_owned()),
+            connected: true
+        }
     );
     assert!(args(&["--batch", "list", "host"]).unwrap().batch);
     // an option given twice: the last one counts, and the lists collect
