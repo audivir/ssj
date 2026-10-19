@@ -250,8 +250,23 @@ otherwise; the client always begins with an attach, and a session without a shel
 `NotStarted`, on which the client sends a start. `ssj attach`, `ssj kill`, and `ssj detach` take an id or a name.
 `auto_attach = true` in `client.toml` (or `--auto-attach`) makes a plain `ssj user@host` join the
 only session that has no client connected, and start a new one when there is none or more than one
-(a session with a client is never taken away). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
+(a session with a client is never taken away). On a terminal, several sessions without a client are not a reason to start another: the client shows a menu (see "Choosing a session"). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
 protocol between client and server.
+
+### Choosing a session
+
+- `--reuse`, a bare `--attach`, `--kill`, and `--detach` of `ssj-server` take `--choose`. With it,
+  and without a name or an id, several sessions of this protocol (for `--reuse` only those
+  without a client) are not an error and not a reason to start another: the server prints their
+  `SSJ SESSION` lines on stdout and exits with code 67 (`CHOICE_EXIT_CODE`). The client sends
+  `--choose` only when stdin and stderr are terminals and it is not a background refresh.
+- The client shows the sessions, the youngest first, in a menu on stderr (`select.rs`): arrows,
+  `j`/`k`, `Ctrl-P`/`Ctrl-N`, a number, Enter, and `q`, Ctrl-C, Ctrl-D, or Escape to cancel. For
+  `--auto-attach` the last line starts a new session. It then runs the server again with
+  `--attach ID` (or without `--reuse` for a new session), which costs a second `ssh` call.
+  `detach` offers only sessions with a client, and joins the only one without asking.
+- A server of an earlier release does not know `--choose` and answers with an unknown argument.
+  The client then runs without it, as before.
 
 ### Command line, completions, and release files
 
@@ -599,8 +614,12 @@ Re-attach:
    can reach the socket.
 1. The server prints the `SSJ CONNECT` line again, with new ports and a new fingerprint. The old connection, if any, is
    closed with reason `replaced`.
-1. After the handshake, the client sends its window size, so that full-screen programs redraw.
-   The server replays the unacknowledged tail of the output buffer.
+1. After the handshake, the client sends its window size. On `Attach` the server makes the
+   program redraw although the size is the same (`Action::Redraw`): it sets the window one column
+   narrower, waits 60 ms so that the program sees that size, and sets the real size, so the
+   program gets two `SIGWINCH`. A client that attaches has no history, since the server forgets
+   output that the last client acknowledged, so without this the screen stays empty until the
+   program prints. The server replays the unacknowledged tail of the output buffer.
 
 If the session has no shell yet, because its first client never connected, `Attach` is answered
 with `NotStarted` and the client sends `Start` instead, which also delivers its environment.

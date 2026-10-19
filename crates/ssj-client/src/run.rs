@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use quinn::Endpoint;
 use ssj_net::{Identity, SERVER_NAME, client_tls, quic_client};
-use ssj_proto::bootstrap::{Connect, Prestart, sanitize};
+use ssj_proto::bootstrap::{CHOICE_EXIT_CODE, Connect, Prestart, sanitize};
 use ssj_proto::compress::{Compressor, inflate};
 use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
 use crate::agent::Forward;
-use crate::bootstrap::{StartError, run_remote, start_server};
+use crate::bootstrap::{Remote, StartError, run_remote, start_server};
 use crate::cli::{Args, Command, LocalEcho, Transport};
 use crate::config::Config;
 use crate::debounce::Debounce;
@@ -33,6 +33,7 @@ use crate::echo::Echo;
 use crate::escape::{Action, EscapeFilter, help};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
+use crate::select::choose;
 use crate::sessions_cache;
 use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
 use crate::terminal::{RawMode, window_size};
@@ -335,9 +336,28 @@ async fn start_or_install(
         args.destination,
         args.ssh_command[0]
     );
-    match start_server(args, fingerprint, extra, prestart).await {
+    // with several sessions to join and a person at the terminal, the server hands the choice back
+    let mut extra = extra.to_vec();
+    // `--reuse` may start a session, and a bare `--attach` cannot name one
+    let reuse = extra.iter().any(|word| word == "--reuse");
+    let choosing = (reuse || extra == ["--attach"]) && interactive() && !args.batch;
+    if choosing {
+        extra.push("--choose".to_owned());
+    }
+    let mut first = start_server(args, fingerprint, &extra, prestart).await;
+    // a server of an earlier release does not know the flag: it then starts a session as before
+    if choosing && matches!(&first, Err(StartError::Failed(m)) if m.contains("\"--choose\"")) {
+        vlog!(1, "the server is too old to offer a choice");
+        extra.retain(|word| word != "--choose");
+        first = start_server(args, fingerprint, &extra, prestart).await;
+    }
+    let extra = &extra[..];
+    match first {
         Ok(connect) => Ok(connect),
         Err(StartError::Failed(message)) => Err(message),
+        Err(StartError::Choose(sessions)) => {
+            choose_and_start(args, fingerprint, prestart, sessions, reuse).await
+        }
         Err(StartError::Missing) if attach => Err(format!(
             "ssj-server is not installed on {}, so no session runs there",
             args.destination
@@ -356,11 +376,140 @@ async fn start_or_install(
                             Err("the server is still missing after the installation".to_owned())
                         }
                         Err(StartError::Failed(message)) => Err(message),
+                        Err(StartError::Choose(_)) => {
+                            Err("the host has no session to choose from".to_owned())
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/// One line of the menu for a session.
+fn session_line(s: &SessionInfo) -> String {
+    format!(
+        "{}  {:<12}  {:>4}  {}",
+        s.id.as_str(),
+        state_word(s.state),
+        format_age(s.age_secs),
+        s.name.as_ref().map_or("", |name| name.as_str())
+    )
+}
+
+/// What the user picked in the menu of sessions.
+enum Picked {
+    Cancelled,
+    /// The line "start a new session".
+    New,
+    Session(String),
+}
+
+/// Shows the sessions, the youngest first (most likely the one that was just left), and asks for
+/// one. With `allow_new` the last line starts a new session.
+async fn pick_session(title: String, mut sessions: Vec<SessionInfo>, allow_new: bool) -> Picked {
+    sessions.sort_by_key(|s| s.age_secs);
+    let mut items: Vec<String> = sessions.iter().map(session_line).collect();
+    if allow_new {
+        items.push("start a new session".to_owned());
+    }
+    let picked = tokio::task::spawn_blocking(move || choose(&title, items))
+        .await
+        .ok()
+        .flatten();
+    match picked {
+        None => Picked::Cancelled,
+        Some(at) if at < sessions.len() => Picked::Session(sessions[at].id.as_str().to_owned()),
+        Some(_) => Picked::New,
+    }
+}
+
+/// Asks which of the sessions to join, or whether to start another, and starts the server for
+/// that answer.
+async fn choose_and_start(
+    args: &Args,
+    fingerprint: &[u8; 32],
+    prestart: Option<&Prestart>,
+    sessions: Vec<SessionInfo>,
+    allow_new: bool,
+) -> Result<Connect, String> {
+    let title = format!(
+        "ssj: {} sessions on {} {}. Which one?",
+        sessions.len(),
+        args.destination,
+        if allow_new {
+            "have no client"
+        } else {
+            "are running"
+        }
+    );
+    let extra = match pick_session(title, sessions, allow_new).await {
+        Picked::Cancelled => return Err("cancelled".to_owned()),
+        Picked::Session(id) => {
+            vlog!(1, "joining the session {id}");
+            vec!["--attach".to_owned(), id]
+        }
+        Picked::New => {
+            vlog!(1, "starting a new session");
+            Vec::new()
+        }
+    };
+    match start_server(args, fingerprint, &extra, prestart).await {
+        Ok(connect) => Ok(connect),
+        Err(StartError::Failed(message)) => Err(message),
+        Err(StartError::Missing | StartError::Choose(_)) => {
+            Err("the session is gone; run the command again".to_owned())
+        }
+    }
+}
+
+/// Runs `--kill` or `--detach` on the host. Without an id, and with a person at the terminal,
+/// several sessions are offered in a menu.
+async fn run_choosing(
+    args: &Args,
+    flag: &str,
+    id: Option<String>,
+    question: &str,
+) -> Result<Remote, String> {
+    let mut extra = vec![flag.to_owned()];
+    extra.extend(id.clone());
+    let choosing = id.is_none() && interactive() && !args.batch;
+    if choosing {
+        extra.push("--choose".to_owned());
+    }
+    let mut remote = run_remote(args, &extra, "").await?;
+    if choosing && remote.error_text().contains("\"--choose\"") {
+        // a server of an earlier release: it asks for a name as before
+        extra.pop();
+        return run_remote(args, &extra, "").await;
+    }
+    if choosing && remote.status.code() == Some(i32::from(CHOICE_EXIT_CODE)) {
+        let mut sessions: Vec<SessionInfo> = remote
+            .stdout
+            .split(|b| *b == b'\n')
+            .filter_map(|line| match parse_reply(line) {
+                Ok(Reply::Info(info)) => Some(info),
+                _ => None,
+            })
+            .collect();
+        if flag == "--detach" {
+            // only a session with a client can be detached
+            sessions.retain(|s| s.state == SessionState::Connected);
+        }
+        let id = match sessions.len() {
+            0 => return Err("no client is connected".to_owned()),
+            1 => sessions[0].id.as_str().to_owned(),
+            n => {
+                let title = format!("ssj: {n} sessions on {}. {question}", args.destination);
+                match pick_session(title, sessions, false).await {
+                    Picked::Session(id) => id,
+                    _ => return Err("cancelled".to_owned()),
+                }
+            }
+        };
+        remote = run_remote(args, &[flag.to_owned(), id], "").await?;
+    }
+    Ok(remote)
 }
 
 /// Text for the age of a session: `5s`, `3m`, `2h`, or `4d`.
@@ -534,9 +683,7 @@ async fn list_sessions(args: &Args) -> u8 {
 }
 
 async fn kill_session(args: &Args, id: Option<String>) -> u8 {
-    let mut extra = vec!["--kill".to_owned()];
-    extra.extend(id);
-    match run_remote(args, &extra, "").await {
+    match run_choosing(args, "--kill", id, "Which one to end?").await {
         Ok(remote) if remote.server_missing() => {
             eprintln!(
                 "ssj: no running session (ssj-server is not installed on {})",
@@ -560,9 +707,7 @@ async fn kill_session(args: &Args, id: Option<String>) -> u8 {
 }
 
 async fn detach_session(args: &Args, id: Option<String>) -> u8 {
-    let mut extra = vec!["--detach".to_owned()];
-    extra.extend(id);
-    match run_remote(args, &extra, "").await {
+    match run_choosing(args, "--detach", id, "Which one to detach?").await {
         Ok(remote) if remote.server_missing() => {
             eprintln!(
                 "ssj: no running session (ssj-server is not installed on {})",

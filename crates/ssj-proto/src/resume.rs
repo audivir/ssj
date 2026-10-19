@@ -15,6 +15,9 @@ pub enum Action {
         agent: bool,
     },
     Resize(WindowSize),
+    /// Resize, and make the program redraw although the size is the same: a client that attaches
+    /// has no history, so the screen is empty until the program draws it again.
+    Redraw(WindowSize),
 }
 
 /// State of the server that the answer to `Hello` depends on.
@@ -67,7 +70,7 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
                 input_offset: view.input_received,
                 output_offset: character_boundary(view.output),
             };
-            Ok((welcome, Action::Resize(size)))
+            Ok((welcome, Action::Redraw(size)))
         }
     }
 }

@@ -530,6 +530,25 @@ impl<B: Backend> Session<B> {
                                                 let _ = s.writer.resize(size);
                                             }
                                         }
+                                        Action::Redraw(size) => {
+                                            // A program redraws when the size changes, so it is
+                                            // made to change and to change back. The pause lets it
+                                            // see the first size before the second.
+                                            let narrower = WindowSize::new(
+                                                size.rows(),
+                                                size.cols().saturating_sub(1).max(1),
+                                            )
+                                            .filter(|n| *n != size);
+                                            if let Some(narrower) = narrower {
+                                                if let Some(s) = shell.as_ref() {
+                                                    let _ = s.writer.resize(narrower);
+                                                }
+                                                sleep(Duration::from_millis(60)).await;
+                                            }
+                                            if let Some(s) = shell.as_ref() {
+                                                let _ = s.writer.resize(size);
+                                            }
+                                        }
                                     }
                                     // the size of the hello is newer than any waiting one
                                     pending_resize = None;

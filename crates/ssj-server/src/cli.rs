@@ -48,6 +48,9 @@ pub struct Args {
     pub name: Option<SessionName>,
     /// Join the only session that has no client, if there is one, instead of starting another.
     pub reuse: bool,
+    /// With `reuse` and several sessions without a client, list them and exit with
+    /// [`ssj_proto::bootstrap::CHOICE_EXIT_CODE`] instead of starting another.
+    pub choose: bool,
     pub port_range: RangeInclusive<u16>,
     /// `None` waits forever.
     pub detached_timeout: Option<Duration>,
@@ -97,6 +100,7 @@ impl Default for Args {
             mode: Mode::Serve,
             name: None,
             reuse: false,
+            choose: false,
             port_range: 60000..=61000,
             detached_timeout: None,
             max_detached: None,
@@ -312,6 +316,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 );
             }
             "--reuse" => out.reuse = true,
+            "--choose" => out.choose = true,
             "--no-udp" => out.udp = false,
             "--no-tcp" => out.tcp = false,
             "--list" => out.mode = Mode::List,

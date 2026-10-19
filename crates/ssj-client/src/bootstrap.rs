@@ -4,8 +4,10 @@ use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use ssj_proto::bootstrap::{
-    Connect, MAX_OUTPUT, Prestart, format_pin, format_start, parse_connect, sanitize,
+    CHOICE_EXIT_CODE, Connect, MAX_OUTPUT, Prestart, format_pin, format_start, parse_connect,
+    sanitize,
 };
+use ssj_proto::control::{Reply, parse_reply};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -179,6 +181,8 @@ pub async fn run_remote(args: &Args, extra: &[String], stdin_text: &str) -> Resu
 pub enum StartError {
     /// The server file of this protocol is not on the host.
     Missing,
+    /// Several sessions have no client and the caller asked to choose among them.
+    Choose(Vec<ssj_proto::control::SessionInfo>),
     Failed(String),
 }
 
@@ -201,6 +205,20 @@ pub async fn start_server(
         .map_err(StartError::Failed)?;
     if remote.server_missing() {
         return Err(StartError::Missing);
+    }
+    if remote.status.code() == Some(i32::from(CHOICE_EXIT_CODE)) {
+        let sessions: Vec<_> = remote
+            .stdout
+            .split(|b| *b == b'\n')
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| match parse_reply(line) {
+                Ok(Reply::Info(info)) => Some(info),
+                _ => None,
+            })
+            .collect();
+        if !sessions.is_empty() {
+            return Err(StartError::Choose(sessions));
+        }
     }
     match parse_connect(&remote.stdout) {
         Ok(Some(connect)) if remote.status.success() => Ok(connect),

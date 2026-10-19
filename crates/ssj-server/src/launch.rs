@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use ssj_proto::bootstrap::{
     MAX_START_LINE, Prestart, format_connect, format_pin, parse_connect, parse_pin, parse_start,
 };
-use ssj_proto::control::SessionState;
+use ssj_proto::control::{Reply, SessionState, format_reply};
 use ssj_proto::{EnvFilter, SessionId};
 use tokio::net::UnixListener;
 use tokio::signal::unix::{SignalKind, signal};
@@ -127,11 +127,21 @@ fn fail(message: &str, code: u8) -> ExitCode {
     ExitCode::from(code)
 }
 
+/// What the arguments ask for among the running sessions.
+enum Existing {
+    /// Start a new session.
+    None,
+    /// Join this one.
+    Join(control_socket::Found),
+    /// Several sessions have no client and the caller wants to choose.
+    Choose(Vec<control_socket::Found>),
+}
+
 /// The running session that the arguments ask for, if there is one: the one with the name, or with
 /// `--reuse` the only session of this protocol that has no client. A name is unique per user.
-fn existing_session(args: &Args) -> Result<Option<control_socket::Found>, String> {
+fn existing_session(args: &Args) -> Result<Existing, String> {
     if args.name.is_none() && !args.reuse {
-        return Ok(None);
+        return Ok(Existing::None);
     }
     let sessions = control_socket::control_dir()
         .map(|dir| control_socket::find_sessions(&dir))
@@ -146,7 +156,8 @@ fn existing_session(args: &Args) -> Result<Option<control_socket::Found>, String
                 name.as_str(),
                 f.info.protocol
             )),
-            found => Ok(found),
+            Some(found) => Ok(Existing::Join(found)),
+            None => Ok(Existing::None),
         };
     }
     let mut free: Vec<_> = sessions
@@ -155,7 +166,12 @@ fn existing_session(args: &Args) -> Result<Option<control_socket::Found>, String
             f.info.protocol == ssj_proto::PROTOCOL && f.info.state != SessionState::Connected
         })
         .collect();
-    Ok(if free.len() == 1 { free.pop() } else { None })
+    Ok(match free.len() {
+        0 => Existing::None,
+        1 => Existing::Join(free.pop().expect("one")),
+        _ if args.choose => Existing::Choose(free),
+        _ => Existing::None,
+    })
 }
 
 /// The process started by `ssh`.
@@ -179,8 +195,15 @@ pub fn run_parent(args: &Args) -> ExitCode {
     // a named session, or the only free one, is joined instead of starting another
     match existing_session(args) {
         Err(message) => return fail(&message, 1),
-        Ok(Some(found)) => return control_cli::attach_session(&found, pin),
-        Ok(None) => {}
+        Ok(Existing::Join(found)) => return control_cli::attach_session(&found, pin),
+        Ok(Existing::Choose(free)) => {
+            let mut out = std::io::stdout();
+            for found in free {
+                let _ = out.write_all(format_reply(&Reply::Info(found.info)).as_bytes());
+            }
+            return ExitCode::from(ssj_proto::bootstrap::CHOICE_EXIT_CODE);
+        }
+        Ok(Existing::None) => {}
     }
 
     let exe = match std::env::current_exe() {

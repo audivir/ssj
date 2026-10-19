@@ -27,6 +27,10 @@ pub fn find_sync(bytes: &[u8]) -> Option<usize> {
         .map(|at| at + SYNC_HEADER.len())
 }
 
+/// Exit code of `ssj-server --reuse --choose` when several sessions have no client: it prints their
+/// `SSJ SESSION` lines instead of picking one or starting another, and the client asks the user.
+pub const CHOICE_EXIT_CODE: u8 = 67;
+
 /// The client stops reading the output of `ssh` after this many bytes.
 pub const MAX_OUTPUT: usize = 64 * 1024;
 

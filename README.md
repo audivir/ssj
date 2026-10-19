@@ -117,6 +117,18 @@ the key is no longer sent to the program). Tab and Enter are refused. From anoth
 `ssj detach user@host [ID]` makes the connected client leave and prints that it did; the shell
 keeps running, and `ssj attach` brings you back.
 
+### Choosing a session
+
+When you leave out the id and several sessions fit, `ssj` asks on a terminal instead of guessing
+or failing: `ssj attach`, `ssj kill`, and `ssj detach` show the sessions of the host (the
+youngest first) as a menu, and `ssj --auto-attach` shows those without a client with a last line
+that starts a new one. Use the arrow keys or `j` and `k`, a number to jump, Enter to choose,
+and `q` or Ctrl-C to cancel. Without a terminal nothing is asked: `--auto-attach` starts a
+session as before and the other commands name the sessions in their error.
+
+Joining a session with `ssj attach` redraws the screen of the program in it, since the new
+client has no history: the shell shows its prompt again, and a full-screen program draws itself.
+
 ### Connection problems
 
 - When the server stops answering, the window title of the terminal shows `no response from the server` after a short time that depends on the speed of your link. When the connection is lost,

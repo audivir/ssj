@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use ssj_proto::PROTOCOL;
-use ssj_proto::bootstrap::parse_pin;
+use ssj_proto::bootstrap::{CHOICE_EXIT_CODE, parse_pin};
 use ssj_proto::control::{Reply, Request, format_reply};
 
 use crate::cli::{Args, Mode};
@@ -86,11 +86,36 @@ pub fn read_pin() -> Result<[u8; 32], String> {
     parse_pin(&line).map_err(|_| "stdin does not hold a valid SSJ PIN line".to_owned())
 }
 
+/// With `--choose` and no selector, several sessions are listed for the caller to choose from,
+/// and the exit code says so, instead of the error that asks for a name.
+fn several_to_choose(args: &Args, selector: Option<&str>, sessions: &[Found]) -> Option<ExitCode> {
+    if !args.choose || selector.is_some() {
+        return None;
+    }
+    let mine: Vec<&Found> = sessions
+        .iter()
+        .filter(|f| f.info.protocol == PROTOCOL)
+        .collect();
+    if mine.len() < 2 {
+        return None;
+    }
+    let mut out = std::io::stdout();
+    for found in mine {
+        let _ = out.write_all(format_reply(&Reply::Info(found.info.clone())).as_bytes());
+    }
+    Some(ExitCode::from(CHOICE_EXIT_CODE))
+}
+
 pub fn run(args: &Args) -> ExitCode {
     let sessions = match control_dir() {
         Ok(dir) => find_sessions(&dir),
         Err(err) => return fail(&err.to_string()),
     };
+    if let Mode::Kill(id) | Mode::Detach(id) | Mode::Attach(id) = &args.mode
+        && let Some(code) = several_to_choose(args, id.as_deref(), &sessions)
+    {
+        return code;
+    }
     match &args.mode {
         Mode::List => {
             let mut out = std::io::stdout();

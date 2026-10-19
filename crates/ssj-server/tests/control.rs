@@ -444,3 +444,76 @@ async fn reuse_joins_the_only_session_without_a_client_and_otherwise_starts_a_ne
     );
     assert_eq!(list(&runtime).len(), 3);
 }
+
+#[test]
+fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
+    use ssj_proto::bootstrap::{CHOICE_EXIT_CODE, format_pin};
+    use ssj_proto::control::{Reply, parse_reply};
+
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    let pin = format_pin(&client.fingerprint());
+    let choose = |runtime: &std::path::Path| {
+        run_bootstrap_with(runtime, &pin, free_range(), "cat", &["--reuse", "--choose"])
+    };
+
+    // nothing runs: a session starts, and one session without a client is joined
+    let first = launch_with(
+        &runtime,
+        &client,
+        free_range(),
+        "cat",
+        &["--reuse", "--choose"],
+    );
+    let (status, ..) = choose(&runtime);
+    assert!(status.success());
+    assert_eq!(list(&runtime).len(), 1);
+
+    // two of them: the caller is asked, and nothing starts
+    let second = launch_with(&runtime, &client, free_range(), "cat", &[]);
+    assert_ne!(first.connect.id, second.connect.id);
+    let (status, out, ..) = choose(&runtime);
+    assert_eq!(status.code(), Some(i32::from(CHOICE_EXIT_CODE)));
+    let mut ids: Vec<_> = String::from_utf8_lossy(&out)
+        .lines()
+        .map(|line| match parse_reply(line.as_bytes()) {
+            Ok(Reply::Info(info)) => info.id.as_str().to_owned(),
+            other => panic!("{line:?}: {other:?}"),
+        })
+        .collect();
+    ids.sort();
+    let mut expected = vec![
+        first.connect.id.as_str().to_owned(),
+        second.connect.id.as_str().to_owned(),
+    ];
+    expected.sort();
+    assert_eq!(ids, expected);
+    assert_eq!(list(&runtime).len(), 2);
+
+    // the same for the orders that name a session: `--choose` hands the choice back, and
+    // without it the error asks for a name
+    for order in ["--kill", "--detach", "--attach"] {
+        let pin_text = if order == "--attach" {
+            pin.as_str()
+        } else {
+            ""
+        };
+        let asked = run_control(&runtime, &[order, "--choose"], pin_text);
+        assert_eq!(
+            asked.status.code(),
+            Some(i32::from(CHOICE_EXIT_CODE)),
+            "{order}"
+        );
+        assert_eq!(stdout_of(&asked).lines().count(), 2, "{order}");
+        let plain = run_control(&runtime, &[order], pin_text);
+        assert_eq!(plain.status.code(), Some(1), "{order}");
+        assert!(
+            String::from_utf8_lossy(&plain.stderr).contains("name one"),
+            "{order}"
+        );
+    }
+    // a name is never a question
+    let id = first.connect.id.as_str().to_owned();
+    let named = run_control(&runtime, &["--kill", &id, "--choose"], "");
+    assert!(named.status.success());
+}
