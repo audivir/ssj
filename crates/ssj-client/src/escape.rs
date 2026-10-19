@@ -96,5 +96,17 @@ impl EscapeFilter {
     }
 }
 
-/// Text for `~?`.
-pub const HELP: &str = "\r\nSupported escape sequences:\r\n  ~.  detach and leave the session running\r\n  ~~  send a single ~\r\n  ~?  this list\r\n(only at the start of a line)\r\n";
+/// Text for `~?`; `detach_key` is added when one is set.
+pub fn help(detach_key: Option<u8>) -> String {
+    let mut text = String::from(
+        "\r\nSupported escape sequences:\r\n  ~.  detach and leave the session running\r\n  ~~  send a single ~\r\n  ~?  this list\r\n(only at the start of a line)\r\n",
+    );
+    if let Some(key) = detach_key {
+        // the key as it is typed: ^] for 0x1d
+        text.push_str(&format!(
+            "  ^{}  detach, anywhere\r\n",
+            char::from(key + b'@')
+        ));
+    }
+    text
+}

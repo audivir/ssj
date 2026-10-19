@@ -30,7 +30,7 @@ use crate::cli::{Args, Command, LocalEcho, Transport};
 use crate::config::Config;
 use crate::debounce::Debounce;
 use crate::echo::Echo;
-use crate::escape::{Action, EscapeFilter, HELP};
+use crate::escape::{Action, EscapeFilter, help};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
 use crate::sessions_cache;
@@ -821,7 +821,11 @@ async fn connect_session(
         Ok(Finished::Exited(code)) => code,
         Ok(Finished::HungUp) => 129,
         Ok(Finished::Detached) => {
-            eprintln!("[detached from session; it keeps running]");
+            let port = args.ssh_port.map(|p| format!(":{p}")).unwrap_or_default();
+            eprintln!(
+                "[detached from session; it keeps running: ssj attach {}{port}]",
+                args.destination
+            );
             0
         }
         Err(message) => {
@@ -1703,7 +1707,11 @@ impl Client {
                     return Ok(Some(Finished::Detached));
                 }
                 Action::Help => {
-                    let _ = self.io.output.write_all(HELP.as_bytes()).await;
+                    let _ = self
+                        .io
+                        .output
+                        .write_all(help(self.params.detach_key).as_bytes())
+                        .await;
                     let _ = self.io.output.flush().await;
                 }
             }

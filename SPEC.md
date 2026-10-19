@@ -643,7 +643,7 @@ Leaving (the shell keeps running):
   client that never returns, so `ssj list` and `ssj kill` clean up after a client that did.
 - An escape key sequence detaches on purpose. As in `ssh`, the escape character `~` counts only
   at the start of a line (right after a newline or at the start of the session). Then:
-  - `~.` detaches: the client sends `Detach`, prints `[detached from <ID>]`, and exits with code 0.
+  - `~.` detaches: the client sends `Detach`, prints `[detached from session; it keeps running: ssj attach <DESTINATION>]`, and exits with code 0.
   - `~~` sends a literal `~`.
   - `~?` prints the list of escape sequences.
   - Any other character after `~` is sent as typed, including the `~`.

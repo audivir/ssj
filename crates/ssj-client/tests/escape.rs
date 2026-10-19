@@ -111,3 +111,10 @@ fn the_detach_key_detaches_anywhere_and_keeps_what_came_before() {
     let mut none = EscapeFilter::new(Some(b'~'));
     assert_eq!(none.feed(b"a\x1db"), vec![send(b"a\x1db")]);
 }
+
+#[test]
+fn the_help_names_the_detach_key_when_there_is_one() {
+    use ssj_client::escape::help;
+    assert!(!help(None).contains("anywhere"));
+    assert!(help(Some(0x1d)).contains("^]  detach, anywhere"));
+}
