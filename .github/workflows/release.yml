@@ -120,6 +120,8 @@ jobs:
       - name: Assemble the archives
         run: |
           version="${GITHUB_REF_NAME#v}"
+          # artifacts lose the executable bit on their way between jobs
+          chmod +x dist/*
           mkdir -p out
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin; do
             name="ssj-${version}-${target}"
