@@ -1158,18 +1158,7 @@ impl Client {
                     let _ = self.io.output.flush().await;
                     match pumped? {
                         Pumped::Done(finished) => {
-                            let id = self.params.connect.id.as_str();
-                            match finished {
-                                Finished::Detached => vlog!(
-                                    1,
-                                    "detached: the server process keeps running (ps ax | grep {id})"
-                                ),
-                                _ => vlog!(
-                                    1,
-                                    "session ended ({finished:?}): the server process should be \
-                                     gone soon (ps ax | grep {id} finds nothing)"
-                                ),
-                            }
+                            vlog!(1, "session ended: {finished:?}");
                             link.finish().await;
                             self.clear_status_at_end().await;
                             return Ok(finished);

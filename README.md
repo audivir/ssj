@@ -208,7 +208,7 @@ adding, removing, and locking keys, and keys with destination constraints, do no
 - `-vvv`: also every frame that is sent or received, by kind and size and never by content.
 
 The log names the session id, and the server process shows the same id in its arguments, so
-`ps ax | grep <id>` tells whether the server ended after the session did. After a change of the
+`ps ax | grep <id>` finds the server process of a session. After a change of the
 network the log says how many notices came, whether a socket was moved, and whether the server
 answered the probe.
 
