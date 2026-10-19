@@ -644,6 +644,39 @@ async fn the_detach_command_tells_the_client_to_leave_and_the_shell_keeps_runnin
 }
 
 #[tokio::test]
+async fn an_attach_makes_the_program_redraw_by_changing_the_size_and_back() {
+    // the shell reports the size at every SIGWINCH
+    let script = "trap 'echo size:$(stty size)' WINCH; echo ready; while true; do sleep 0.05; done";
+    let (conns, rx) = mpsc::channel(4);
+    let session = tokio::spawn(Session::new(Direct, config(script)).run(rx));
+    let harness = Harness {
+        conns,
+        session: tokio::spawn(async { SessionEnd::Closed }),
+    };
+    let mut first = harness.connect().await;
+    first.start().await;
+    first.read_until(|s| contains(&s.output, "ready")).await;
+    first.send(ClientFrame::Detach).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // the same size as before: only the narrower size in between makes the program notice
+    let mut second = harness.connect().await;
+    second
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    let seen = second
+        .read_until(|s| contains(&s.output, "size:24 80"))
+        .await;
+    let text = String::from_utf8_lossy(&seen.output).into_owned();
+    assert!(text.contains("size:24 79"), "{text:?}");
+    assert!(
+        text.find("size:24 79") < text.find("size:24 80"),
+        "{text:?}"
+    );
+    session.abort();
+}
+
+#[tokio::test]
 async fn kill_hangs_up_the_shell_and_tells_the_client() {
     let (commands, commands_rx) = mpsc::unbounded_channel();
     let (conns, rx) = mpsc::channel(4);

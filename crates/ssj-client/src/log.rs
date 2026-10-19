@@ -10,13 +10,14 @@ use std::fmt::Arguments;
 use std::fs::{File, OpenOptions};
 use std::io::{IsTerminal, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 static LEVEL: AtomicU8 = AtomicU8::new(0);
 static START: OnceLock<Instant> = OnceLock::new();
 static FILE: Mutex<Option<File>> = Mutex::new(None);
+static TERMINAL_LINES: AtomicBool = AtomicBool::new(false);
 
 /// Switches the output on. `level` 0 keeps it off.
 pub fn init(level: u8, file: Option<&Path>) -> std::io::Result<()> {
@@ -38,7 +39,7 @@ pub fn enabled(level: u8) -> bool {
 }
 
 /// Writes one line. Use the `vlog!` macro, which skips the formatting when the level is off.
-pub fn emit(args: Arguments<'_>) {
+pub fn emit(level: u8, args: Arguments<'_>) {
     let elapsed = START
         .get()
         .map_or(0.0, |start| start.elapsed().as_secs_f64());
@@ -56,8 +57,18 @@ pub fn emit(args: Arguments<'_>) {
                 "\n"
             };
             let _ = write!(std::io::stderr(), "{line}{end}");
+            // the lines of level 3 are about every frame, and drawing again sends frames
+            if level < 3 {
+                TERMINAL_LINES.store(true, Ordering::Relaxed);
+            }
         }
     }
+}
+
+/// Whether lines were written to the terminal since the last call. They land wherever the cursor
+/// is, over the screen of the program in the session.
+pub fn take_terminal_lines() -> bool {
+    TERMINAL_LINES.swap(false, Ordering::Relaxed)
 }
 
 /// `vlog!(1, "connected over {name}")` writes the line when the level is 1 or more.
@@ -65,7 +76,7 @@ pub fn emit(args: Arguments<'_>) {
 macro_rules! vlog {
     ($level:expr, $($arg:tt)*) => {
         if $crate::log::enabled($level) {
-            $crate::log::emit(format_args!($($arg)*));
+            $crate::log::emit($level, format_args!($($arg)*));
         }
     };
 }

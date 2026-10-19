@@ -164,7 +164,7 @@ Network changes and wakes from sleep:
 - Notifications are collected until they stop for 300 milliseconds, since a change of network
   produces many. Then the client moves its UDP socket to a new one (`Endpoint::rebind`), so QUIC
   probes the new path at once and the server follows the new address, and sends a `Ping`. If
-  nothing comes back within 2 seconds (1 second after a wake), the old connection is dropped and a
+  nothing comes back within 1 second (also after a wake), the old connection is dropped and a
   new one is made with `Resume`.
 - A cause during the pause between attempts ends the pause. A cause during an attempt that hangs
   ends that attempt and starts a new one on the new socket.
@@ -214,12 +214,19 @@ this order of preference:
    No TLS runs inside, since `ssh` already authenticates and encrypts, and the socket allows only
    the same user.
 
-The choice is `--transport auto|udp|tcp|stdio` or `transport` in `client.toml`. `auto` tries UDP
-for 1.5 seconds in the first connection, then TCP, then the `ssh` channel, and each failure moves
-on at once. Only UDP gets the short time; TCP and the `ssh` channel need a whole `ssh`
-handshake, which takes seconds on a distant host, and get 8 seconds. It leaves out UDP when `ssh -G` shows a `proxyjump` or `proxycommand` for the host.
-After a connection was made, its transport is kept for three failed attempts before the next one
-is tried, since the network is the likelier culprit. The server offers what it is told to
+The choice is `--transport auto|udp|tcp|stdio` or `transport` in `client.toml`. `auto` races UDP
+against TCP: QUIC starts first, TCP starts 300 milliseconds later if QUIC has not opened, and the
+first connection that opens carries the session. Before the first connection QUIC is given 1.5
+seconds and TCP, which needs a whole `ssh` handshake that takes seconds on a distant host, gets
+8 seconds. If both fail, the `ssh` channel is the next partner of QUIC, and each failure moves
+on at once. A reconnect races the same way: when the session runs on TCP, TCP starts at once and
+QUIC beside it, so a network where UDP works again is found without a delay and a network where it
+does not costs nothing. A change of the network while the session is on a stream also tries QUIC
+(1.5 seconds) on the new path, without touching the working connection; if it opens, the client
+resumes over it and drops the stream (`Pumped::Switch`). Auto leaves out UDP when `ssh -G` shows a
+`proxyjump` or `proxycommand` for the host. After a connection was made, its transport is kept
+for three failed attempts before the next partner is tried, since the network is the likelier
+culprit. The server offers what it is told to
 (`--no-udp`, `--no-tcp`); the `ssh` channel is always there.
 
 A stream has no keepalive of QUIC: if the path dies without a sign (a firewall, a hung `ssh`),
@@ -252,6 +259,14 @@ otherwise; the client always begins with an attach, and a session without a shel
 only session that has no client connected, and start a new one when there is none or more than one
 (a session with a client is never taken away). On a terminal, several sessions without a client are not a reason to start another: the client shows a menu (see "Choosing a session"). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
 protocol between client and server.
+
+### Debug lines on the screen
+
+`-v` writes its lines to the terminal, over whatever the program in the session has drawn. The
+client therefore makes the program draw again 400 milliseconds after the last such line (level 1
+and 2; level 3 logs every frame, which would never settle), by the same trick as an attach: a
+narrower window for 60 ms, then the real size. `--log-file` keeps the screen intact and needs no
+redraw.
 
 ### Choosing a session
 

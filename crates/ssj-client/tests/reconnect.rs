@@ -291,8 +291,20 @@ fn start_client_tcp(
     via: SocketAddr,
     stream_dead_after: Duration,
 ) -> Terminal {
-    let connector = ssj_net::tls_connector(&identity, server.fingerprint);
-    let dial: Dial = Box::new(move || {
+    let dial = tcp_dial(server, &identity, via);
+    start_client_tiers(
+        server,
+        identity,
+        vec![Tier::Stream { name: "tcp", dial }],
+        Duration::from_secs(8),
+        stream_dead_after,
+    )
+}
+
+/// Opens TLS on TCP to `via`, as the `ssh -W` tier does.
+fn tcp_dial(server: &Server, identity: &Identity, via: SocketAddr) -> Dial {
+    let connector = ssj_net::tls_connector(identity, server.fingerprint);
+    Box::new(move || {
         let connector = connector.clone();
         Box::pin(async move {
             let tcp = tokio::net::TcpStream::connect(via)
@@ -309,14 +321,7 @@ fn start_client_tcp(
                 guard: None,
             })
         })
-    });
-    start_client_tiers(
-        server,
-        identity,
-        vec![Tier::Stream { name: "tcp", dial }],
-        Duration::from_secs(8),
-        stream_dead_after,
-    )
+    })
 }
 
 fn start_client_full(
@@ -1310,5 +1315,105 @@ async fn compressed_output_reaches_the_terminal_intact() {
         "the output differs from what the shell wrote (got {} bytes, expected {})",
         terminal.seen.len(),
         expected.len()
+    );
+}
+
+/// QUIC first and TCP behind it, as `ssj` has them when the host offers both.
+fn start_client_udp_and_tcp(
+    server: &Server,
+    identity: Identity,
+    udp: SocketAddr,
+    tcp: SocketAddr,
+) -> Terminal {
+    let dial = tcp_dial(server, &identity, tcp);
+    start_client_tiers(
+        server,
+        identity,
+        vec![
+            Tier::Udp {
+                addr: udp,
+                resolver: None,
+            },
+            Tier::Stream { name: "tcp", dial },
+        ],
+        Duration::from_secs(8),
+        ssj_client::run::STREAM_DEAD_AFTER,
+    )
+}
+
+// With UDP blocked, the first connection must not wait for QUIC to give up: TCP starts after a
+// short head start, and the first connection that opens wins.
+#[tokio::test]
+async fn tcp_takes_over_at_once_when_udp_gets_no_answer() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_proxy(server.addr).await;
+    proxy.drop_replies.store(true, Ordering::Relaxed);
+    let begun = std::time::Instant::now();
+    let mut terminal = start_client_udp_and_tcp(&server, client_id, proxy.addr, server.tcp_addr);
+    terminal.type_line("one").await;
+    terminal.wait_for("got:one").await;
+    assert!(
+        begun.elapsed() < Duration::from_millis(2500),
+        "the first line took {:?}",
+        begun.elapsed()
+    );
+    terminal.settle().await;
+    assert_eq!(terminal.got_lines(), ["got:one"]);
+}
+
+// After a change of the network that left UDP dead, the new connection must not spend the time
+// of a whole QUIC attempt before TCP is tried.
+#[tokio::test]
+async fn after_a_change_that_kills_udp_tcp_carries_the_session_within_seconds() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_proxy(server.addr).await;
+    let mut terminal = start_client_udp_and_tcp(&server, client_id, proxy.addr, server.tcp_addr);
+    terminal.type_line("one").await;
+    terminal.wait_for("got:one").await;
+
+    // the path is dead for QUIC, and the client is told that the network changed
+    proxy.drop_replies.store(true, Ordering::Relaxed);
+    terminal.type_line("two").await;
+    let changed = std::time::Instant::now();
+    terminal.net.send(Cause::NetworkChanged).unwrap();
+    terminal.wait_for("got:two").await;
+    assert!(
+        changed.elapsed() < Duration::from_millis(4000),
+        "the session needed {:?}",
+        changed.elapsed()
+    );
+    terminal.settle().await;
+    assert_eq!(terminal.got_lines(), ["got:one", "got:two"]);
+}
+
+// A session on TCP moves to QUIC when a change of the network brings a path where QUIC works.
+#[tokio::test]
+async fn a_session_on_tcp_moves_to_quic_when_the_network_changes_and_quic_works() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let udp = start_proxy(server.addr).await;
+    let tcp = start_tcp_proxy(server.tcp_addr).await;
+    udp.drop_replies.store(true, Ordering::Relaxed);
+    let mut terminal = start_client_udp_and_tcp(&server, client_id, udp.addr, tcp.addr);
+    terminal.type_line("one").await;
+    terminal.wait_for("got:one").await;
+
+    // the faster network appears
+    udp.drop_replies.store(false, Ordering::Relaxed);
+    terminal.net.send(Cause::NetworkChanged).unwrap();
+    sleep(Duration::from_millis(2500)).await;
+
+    // a session still on TCP would lose its connection now and say so
+    tcp.kill.send_modify(|generation| *generation += 1);
+    terminal.type_line("two").await;
+    terminal.wait_for("got:two").await;
+    terminal.settle().await;
+    assert_eq!(terminal.got_lines(), ["got:one", "got:two"]);
+    assert!(
+        !terminal.status().iter().any(|s| s.contains("reconnecting")),
+        "{:?}",
+        terminal.status()
     );
 }

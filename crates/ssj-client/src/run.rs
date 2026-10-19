@@ -55,9 +55,17 @@ const BACKOFF: [Duration; 5] = [
     Duration::from_secs(2),
     Duration::from_secs(3),
 ];
+/// Head start of QUIC over the stream transport when both are tried. A QUIC handshake needs one
+/// round trip, so a transport that has not answered by then is likely blocked.
+const RACE_STAGGER: Duration = Duration::from_millis(300);
+/// How long after the last debug line on the terminal the screen is drawn again.
+const REDRAW_AFTER_LOG: Duration = Duration::from_millis(400);
+/// Time QUIC gets to open on a new network while the session runs over a stream transport.
+const UPGRADE_TIMEOUT: Duration = Duration::from_millis(1500);
 /// Failed attempts on a tier that worked before, until the next tier is tried.
 const TIER_PATIENCE: usize = 3;
-/// Time the first tier gets in the first connection when other tiers follow.
+/// Time QUIC gets before the first connection when a stream transport runs beside it.
+/// Later it may be slow to return, and gets the full time.
 pub const FIRST_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(1500);
 /// A stream that stays silent this long is given up. The server answers a ping every second.
 pub const STREAM_DEAD_AFTER: Duration = Duration::from_secs(10);
@@ -87,7 +95,7 @@ const STALL_MAX: Duration = Duration::from_secs(10);
 const CHANGE_QUIET: Duration = Duration::from_millis(300);
 /// Time the server gets to answer after the client moved to a new network path, before the client
 /// starts a new connection. A wake from sleep leaves less hope for the old path.
-const PROBE_AFTER_CHANGE: Duration = Duration::from_secs(2);
+const PROBE_AFTER_CHANGE: Duration = Duration::from_secs(1);
 const PROBE_AFTER_WAKE: Duration = Duration::from_secs(1);
 
 /// How the session ended.
@@ -1239,6 +1247,18 @@ impl Link {
     }
 }
 
+/// Makes the program in the session draw its screen again, by changing the size of the terminal
+/// for a moment: debug lines that were written over the screen are then gone.
+async fn redraw(size: WindowSize, out: &mpsc::UnboundedSender<ClientFrame>) {
+    let narrower =
+        WindowSize::new(size.rows(), size.cols().saturating_sub(1).max(1)).filter(|n| *n != size);
+    if let Some(narrower) = narrower {
+        let _ = out.send(ClientFrame::Resize(narrower));
+        sleep(Duration::from_millis(60)).await;
+    }
+    let _ = out.send(ClientFrame::Resize(size));
+}
+
 enum Attempt {
     Linked(Link),
     /// Try again at once on the same transport.
@@ -1252,7 +1272,16 @@ enum Attempt {
 enum Pumped {
     Done(Finished),
     Lost,
+    /// A better connection opened while this one worked: go on over it, as after a reconnect.
+    Switch(Link, usize),
 }
+
+/// QUIC being tried on a new network, within a time limit.
+type Upgrade =
+    Pin<Box<dyn Future<Output = Result<Result<Link, String>, tokio::time::error::Elapsed>> + Send>>;
+
+/// A connection that is being opened.
+type LinkFuture = Pin<Box<dyn Future<Output = Result<Link, String>> + Send>>;
 
 struct Client {
     /// The UDP socket, made when the first UDP attempt needs it.
@@ -1260,6 +1289,8 @@ struct Client {
     params: Params,
     /// The tier that is tried now.
     current: usize,
+    /// A connection that opened by itself and is to carry the session, with its tier.
+    prepared: Option<(Link, usize)>,
     /// Failed attempts on the current tier since the last success.
     failures: usize,
     /// Whether a connection was ever made, so that the order of the tiers is settled.
@@ -1301,6 +1332,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         endpoint: None,
         params,
         current: 0,
+        prepared: None,
         failures: 0,
         linked_once: false,
         note: None,
@@ -1383,6 +1415,11 @@ impl Client {
                             return Ok(finished);
                         }
                         Pumped::Lost => vlog!(1, "connection lost, reconnecting"),
+                        Pumped::Switch(better, tier) => {
+                            vlog!(1, "switching to {}", self.params.tiers[tier].name());
+                            self.prepared = Some((better, tier));
+                            continue;
+                        }
                     }
                 }
                 // the answer was fine and only the kind of hello was wrong: no pause, no other tier
@@ -1575,46 +1612,128 @@ impl Client {
         Ok(endpoint)
     }
 
-    /// Opens the connection of the current tier.
-    async fn open_link(&mut self) -> Result<Link, String> {
-        let udp = match &self.params.tiers[self.current] {
+    /// Starts opening the connection of tier `idx`. The returned future owns what it needs, so
+    /// that several of them can run side by side.
+    fn prepare_link(&mut self, idx: usize) -> LinkFuture {
+        let udp = match &self.params.tiers[idx] {
             Tier::Udp { addr, .. } => Some(*addr),
             Tier::Stream { .. } => None,
         };
         vlog!(
             1,
             "connecting over {}{}",
-            self.params.tiers[self.current].name(),
+            self.params.tiers[idx].name(),
             udp.map_or_else(String::new, |addr| format!(" to {addr}"))
         );
         let opened = Instant::now();
         if let Some(addr) = udp {
-            let endpoint = self.udp_endpoint(addr)?;
-            let connecting = endpoint
-                .connect(addr, SERVER_NAME)
-                .map_err(|e| format!("udp: {e}"))?;
-            let conn = connecting.await.map_err(|e| format!("udp: {e}"))?;
-            let (send, recv) = conn.open_bi().await.map_err(|e| format!("udp: {e}"))?;
-            vlog!(
-                2,
-                "QUIC handshake done in {:?}, round trip {:?}, remote {}",
-                opened.elapsed(),
-                conn.rtt(),
-                conn.remote_address()
-            );
-            return Ok(Link::new(Some(conn), Out::Quic(send), Box::new(recv), None));
+            let connecting = self.udp_endpoint(addr).and_then(|endpoint| {
+                endpoint
+                    .connect(addr, SERVER_NAME)
+                    .map_err(|e| format!("udp: {e}"))
+            });
+            return Box::pin(async move {
+                let conn = connecting?.await.map_err(|e| format!("udp: {e}"))?;
+                let (send, recv) = conn.open_bi().await.map_err(|e| format!("udp: {e}"))?;
+                vlog!(
+                    2,
+                    "QUIC handshake done in {:?}, round trip {:?}, remote {}",
+                    opened.elapsed(),
+                    conn.rtt(),
+                    conn.remote_address()
+                );
+                Ok(Link::new(Some(conn), Out::Quic(send), Box::new(recv), None))
+            });
         }
-        let Tier::Stream { name, dial } = &mut self.params.tiers[self.current] else {
+        let Tier::Stream { name, dial } = &mut self.params.tiers[idx] else {
             unreachable!("not a UDP tier");
         };
-        let stream = dial().await.map_err(|e| format!("{name}: {e}"))?;
-        vlog!(2, "{name} stream open after {:?}", opened.elapsed());
-        Ok(Link::new(
-            None,
-            Out::Stream(stream.writer),
-            stream.reader,
-            stream.guard,
-        ))
+        let name = *name;
+        let dialing = dial();
+        Box::pin(async move {
+            let stream = dialing.await.map_err(|e| format!("{name}: {e}"))?;
+            vlog!(2, "{name} stream open after {:?}", opened.elapsed());
+            Ok(Link::new(
+                None,
+                Out::Stream(stream.writer),
+                stream.reader,
+                stream.guard,
+            ))
+        })
+    }
+
+    /// Opens a connection and returns it with the tier it belongs to.
+    ///
+    /// With QUIC first and a stream transport behind it, both are tried and the first connection
+    /// that opens wins: QUIC gets a head start of [`RACE_STAGGER`] when it is the transport in use,
+    /// and the stream starts at once when the session is on it already, so that a network where
+    /// UDP does not work costs a fraction of a second and not the whole timeout of QUIC.
+    async fn race(&mut self) -> Result<(Link, usize), String> {
+        let racing =
+            self.params.tiers.len() > 1 && matches!(self.params.tiers[0], Tier::Udp { .. });
+        if !racing {
+            let idx = self.current;
+            return self.prepare_link(idx).await.map(|link| (link, idx));
+        }
+        let (primary, secondary) = (0, self.current.max(1));
+        let stagger = if self.current > 0 {
+            Duration::ZERO
+        } else {
+            RACE_STAGGER
+        };
+        // before the first connection QUIC is given up on quickly; later it may be slow to return
+        let udp_cap = if self.linked_once {
+            self.params.attempt_timeout
+        } else {
+            self.params.first_attempt_timeout
+        };
+        let udp = self.prepare_link(primary);
+        let mut first: Option<LinkFuture> = Some(Box::pin(async move {
+            timeout(udp_cap, udp)
+                .await
+                .unwrap_or_else(|_| Err("udp: no answer".to_owned()))
+        }));
+        let mut second: Option<LinkFuture> = None;
+        let mut second_started = false;
+        let delay = sleep(stagger);
+        tokio::pin!(delay);
+        let mut errors: Vec<String> = Vec::new();
+        loop {
+            // the second one starts at once when the first is out
+            if first.is_none() && !second_started {
+                second = Some(self.prepare_link(secondary));
+                second_started = true;
+            }
+            if first.is_none() && second.is_none() {
+                return Err(errors.join("; "));
+            }
+            tokio::select! {
+                result = async { first.as_mut().expect("guarded").await }, if first.is_some() => {
+                    match result {
+                        Ok(link) => return Ok((link, primary)),
+                        Err(error) => {
+                            vlog!(1, "{error}");
+                            errors.push(error);
+                            first = None;
+                        }
+                    }
+                }
+                result = async { second.as_mut().expect("guarded").await }, if second.is_some() => {
+                    match result {
+                        Ok(link) => return Ok((link, secondary)),
+                        Err(error) => {
+                            vlog!(1, "{error}");
+                            errors.push(error);
+                            second = None;
+                        }
+                    }
+                }
+                () = &mut delay, if !second_started => {
+                    second = Some(self.prepare_link(secondary));
+                    second_started = true;
+                }
+            }
+        }
     }
 
     /// Makes an attempt to connect that a change of the network cuts short and starts again.
@@ -1638,38 +1757,32 @@ impl Client {
 
     /// Connects, sends the hello, and resends the input that the server has not consumed.
     async fn establish(&mut self, hello: &Hello) -> Attempt {
-        // The first tier gets little time in the first connection, so that a blocked UDP port is
-        // found out quickly. A stream needs a whole `ssh` handshake, which takes seconds on a
-        // distant host, so it gets the full time.
-        let udp = matches!(self.params.tiers[self.current], Tier::Udp { .. });
-        let limit = if udp && !self.linked_once && self.current == 0 && self.params.tiers.len() > 1
-        {
-            self.params.first_attempt_timeout
-        } else {
-            self.params.attempt_timeout
-        };
+        let limit = self.params.attempt_timeout;
+        let prepared = self.prepared.take();
         let attempt = timeout(limit, async {
-            let link = self.open_link().await?;
+            let (link, idx) = match prepared {
+                Some(prepared) => prepared,
+                None => self.race().await?,
+            };
             vlog!(2, "sending {}", hello_name(hello));
             link.send(ClientFrame::Hello(hello.clone()));
             let mut link = link;
             let reply = link.reader.next().await;
-            Ok::<_, String>((link, reply))
+            Ok::<_, String>((link, idx, reply))
         })
         .await;
         let (link, reply) = match attempt {
-            Ok(Ok(opened)) => opened,
+            Ok(Ok((link, idx, reply))) => {
+                self.current = idx;
+                (link, reply)
+            }
             Ok(Err(note)) => {
                 vlog!(1, "connecting failed: {note}");
                 self.note = Some(sanitize(note.as_bytes(), NOTE_CHARS));
                 return Attempt::Retry;
             }
             Err(_) => {
-                vlog!(
-                    1,
-                    "no answer from {} within {limit:?}",
-                    self.params.tiers[self.current].name()
-                );
+                vlog!(1, "no answer within {limit:?}");
                 self.note = Some(format!(
                     "{}: no answer",
                     self.params.tiers[self.current].name()
@@ -1900,6 +2013,10 @@ impl Client {
         let mut probed_at: Option<Instant> = None;
         let mut notices = 0usize;
         let mut resizes = Debounce::new(RESIZE_QUIET);
+        // QUIC tried again on a new network while the session runs over a stream
+        let mut upgrade: Option<Upgrade> = None;
+        // when to make the program draw again, after debug lines were written over the screen
+        let mut redraw_at: Option<tokio::time::Instant> = None;
         // the channels to the agent live as long as the link
         let mut agent = self
             .params
@@ -1910,6 +2027,9 @@ impl Client {
             // two bytes of reserve: the escape can turn one typed byte into two
             let room = self.input.free().saturating_sub(2).min(self.chunk.len());
             let change_at = change.map(|(_, at)| at);
+            if crate::log::take_terminal_lines() {
+                redraw_at = Some(tokio::time::Instant::now() + REDRAW_AFTER_LOG);
+            }
             let echo_due = self.echo.due();
             tokio::select! {
                 read = self.io.input.read(&mut self.chunk[..room]), if self.stdin_open && room > 0 => {
@@ -2064,6 +2184,15 @@ impl Client {
                     );
                     notices = 0;
                     self.rebind();
+                    // a faster network may have appeared: QUIC is tried on it while the stream works
+                    if self.current != 0
+                        && upgrade.is_none()
+                        && matches!(self.params.tiers[0], Tier::Udp { .. })
+                    {
+                        vlog!(1, "trying QUIC on the new network");
+                        let attempt = self.prepare_link(0);
+                        upgrade = Some(Box::pin(timeout(UPGRADE_TIMEOUT, attempt)));
+                    }
                     link.send(ClientFrame::Ping);
                     probed_at = Some(Instant::now());
                     let wait = if cause == Cause::Woke { PROBE_AFTER_WAKE } else { PROBE_AFTER_CHANGE };
@@ -2073,6 +2202,25 @@ impl Client {
                     // the new path did not bring an answer, so the old connection is not worth keeping
                     vlog!(1, "no answer after the network change: giving up the connection and reconnecting");
                     return Ok(Pumped::Lost);
+                }
+                result = async { upgrade.as_mut().expect("guarded").await }, if upgrade.is_some() => {
+                    upgrade = None;
+                    match result {
+                        Ok(Ok(better)) => {
+                            vlog!(1, "QUIC works on the new network");
+                            return Ok(Pumped::Switch(better, 0));
+                        }
+                        Ok(Err(error)) => vlog!(1, "QUIC does not work on the new network: {error}"),
+                        Err(_) => vlog!(
+                            1,
+                            "QUIC has no answer on the new network: staying on {}",
+                            self.params.tiers[self.current].name()
+                        ),
+                    }
+                }
+                () = async { tokio::time::sleep_until(redraw_at.expect("guarded")).await }, if redraw_at.is_some() => {
+                    redraw_at = None;
+                    redraw(self.size, &link.out).await;
                 }
                 _ = ping.tick() => {
                     link.send(ClientFrame::Ping);
