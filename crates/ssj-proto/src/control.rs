@@ -91,6 +91,10 @@ pub fn format_request(request: &Request) -> String {
 /// Parses one request line, with or without the final newline.
 pub fn parse_request(line: &[u8]) -> Result<Request, ControlError> {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
+    // the control socket speaks an exact line, and `parse_pin` below would take a carriage return
+    if line.ends_with(b"\r") {
+        return Err(ControlError::Malformed);
+    }
     match line {
         b"STATUS" => Ok(Request::Status),
         b"STREAM" => Ok(Request::Stream),

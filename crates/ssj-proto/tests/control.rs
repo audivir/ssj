@@ -221,3 +221,26 @@ fn names_have_a_small_alphabet_and_no_dot_or_dash_in_front() {
     assert!(ssj_proto::is_selector("work"));
     assert!(!ssj_proto::is_selector("a b"));
 }
+
+/// Lines of the control socket are exact: a carriage return is refused, for the attach request as
+/// for the others. (The fuzzer found that only the attach request took one, by accident, and wrote
+/// it back without it.)
+#[test]
+fn a_carriage_return_is_refused_in_every_line() {
+    for line in [
+        format!("ATTACH {HEX}\r\n"),
+        format!("ATTACH {HEX}\r"),
+        "STATUS\r\n".to_owned(),
+        "KILL\r".to_owned(),
+    ] {
+        assert_eq!(
+            parse_request(line.as_bytes()),
+            Err(ControlError::Malformed),
+            "{line:?}"
+        );
+    }
+    assert_eq!(
+        parse_reply(b"OK\r\n").map(|r| format_reply(&r)),
+        Err(ControlError::Malformed)
+    );
+}
