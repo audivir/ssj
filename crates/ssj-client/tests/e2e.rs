@@ -1172,6 +1172,7 @@ fn verbose_output_goes_to_the_log_file_and_names_the_steps() {
         "transports in order: udp",
         "QUIC handshake done",
         "welcome: the server has 0 bytes",
+        "started the session",
         "session running over udp",
         "-> input 4 bytes",
         "<- exit",

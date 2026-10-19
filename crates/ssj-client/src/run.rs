@@ -1465,6 +1465,7 @@ impl Client {
             Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
                 if matches!(hello, Hello::Attach { .. }) && !self.started =>
             {
+                vlog!(1, "no running session to join: starting a new one");
                 self.params.attach = false;
                 return Attempt::Again;
             }
@@ -1508,6 +1509,27 @@ impl Client {
             welcome.input_offset,
             welcome.output_offset
         );
+        match hello {
+            Hello::Attach { .. } => {
+                vlog!(
+                    1,
+                    "joined the running session {}",
+                    self.params.connect.id.as_str()
+                );
+                vlog!(
+                    2,
+                    "the server replays its output from offset {}",
+                    welcome.output_offset
+                );
+            }
+            Hello::Resume { output_offset, .. } => {
+                vlog!(1, "resumed the session {}", self.params.connect.id.as_str());
+                vlog!(2, "resumed at output offset {output_offset}");
+            }
+            Hello::Start { .. } => {
+                vlog!(1, "started the session {}", self.params.connect.id.as_str())
+            }
+        }
         if check_welcome(hello, welcome, self.input.start(), self.input.end()).is_err() {
             return Attempt::Fatal("the server answered with unexpected offsets".to_owned());
         }
