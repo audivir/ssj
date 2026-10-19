@@ -272,6 +272,8 @@ impl<B: Backend> Session<B> {
         let (control_tx, mut control_rx) = mpsc::channel::<Tagged>(64);
         let mut output = ReplayBuffer::new(config.replay_capacity);
         let mut input_received = 0u64;
+        // since when input has been consumed without an acknowledgement
+        let mut ack_since: Option<Instant> = None;
         let mut pending_input: Vec<u8> = Vec::new();
         let mut pending_offset = 0usize;
         let mut pending_budget: Option<Arc<Semaphore>> = None;
@@ -322,6 +324,7 @@ impl<B: Backend> Session<B> {
                 DetachedTimeout,
                 ExitGrace,
                 AwayTimer,
+                AckTimer,
                 Command(Option<SessionCommand>),
                 AgentConnected(io::Result<UnixStream>),
             }
@@ -360,14 +363,22 @@ impl<B: Backend> Session<B> {
                 (Some(s), Some(a)) => ready_for_exit(s, a, &output),
                 _ => false,
             };
-            let send_due = active.as_ref().is_some_and(|a| {
+            let data_pending = active.as_ref().is_some_and(|a| {
                 a.hello_done
-                    && (a.pong_due
-                        || a.gap > 0
-                        || a.input_acked < input_received
-                        || a.output_sent < output.end()
-                        || exit_due)
+                    && (a.pong_due || a.gap > 0 || a.output_sent < output.end() || exit_due)
             });
+            // An acknowledgement of input waits a moment for output to go with it: the echo of
+            // what was typed follows within milliseconds, and two small packets in a row are
+            // held apart by a hop with Nagle's algorithm until the other side's delayed ACK, which
+            // is 40 ms on Linux.
+            let ack_pending = active
+                .as_ref()
+                .is_some_and(|a| a.hello_done && a.input_acked < input_received);
+            let ack_deadline =
+                ack_pending.then(|| ack_since.map_or_else(Instant::now, |since| since + ACK_DELAY));
+            let ack_due =
+                ack_pending && (data_pending || ack_deadline.is_some_and(|d| d <= Instant::now()));
+            let send_due = data_pending || ack_due;
             let want_input = pending_offset >= pending_input.len();
             // a deliberate detach waits for max_detached, a lost connection for detached_timeout
             let limit = if detached_on_purpose {
@@ -424,6 +435,7 @@ impl<B: Backend> Session<B> {
                     _ = async { match deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::DetachedTimeout,
                     _ = async { match grace_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::ExitGrace,
                     _ = async { match away_deadline { Some(d) => sleep_until(d).await, None => pending().await } } => Event::AwayTimer,
+                    _ = async { match ack_deadline { Some(d) if !ack_due => sleep_until(d).await, _ => pending().await } } => Event::AckTimer,
                     stream = async { match agent_listener.as_ref() { Some((l, _)) => l.accept().await.map(|(s, _)| s), None => pending().await } } => Event::AgentConnected(stream),
                 }
             };
@@ -464,7 +476,7 @@ impl<B: Backend> Session<B> {
                 }
                 Event::DetachedTimeout => return SessionEnd::DetachedTimeout,
                 // the next turn of the loop sees that the client is away now
-                Event::AwayTimer => {}
+                Event::AwayTimer | Event::AckTimer => {}
                 Event::Control(None) => unreachable!("the actor holds a sender"),
                 Event::Control(Some(Tagged {
                     generation: g,
@@ -669,6 +681,7 @@ impl<B: Backend> Session<B> {
                 Event::InputWritten(Ok(n)) => {
                     pending_offset += n;
                     input_received += n as u64;
+                    ack_since.get_or_insert_with(Instant::now);
                     if pending_offset >= pending_input.len() {
                         release_input(&mut pending_input, &mut pending_offset, &mut pending_budget);
                     }
@@ -736,6 +749,7 @@ impl<B: Backend> Session<B> {
                         ServerFrame::Pong
                     } else if a.input_acked < input_received {
                         a.input_acked = input_received;
+                        ack_since = None;
                         ServerFrame::InputAck(input_received)
                     } else if a.gap > 0 {
                         ServerFrame::Gap(std::mem::take(&mut a.gap))
@@ -1080,6 +1094,12 @@ async fn read_connection(
     }
 }
 
+/// How long an acknowledgement of input waits for output to go with it.
+const ACK_DELAY: Duration = Duration::from_millis(30);
+
+/// The most that one write of queued frames takes.
+const COALESCE_MAX: usize = 64 * 1024;
+
 async fn write_connection(
     generation: u64,
     mut writer: Box<dyn AsyncWrite + Send + Unpin>,
@@ -1090,6 +1110,25 @@ async fn write_connection(
     while let Some(frame) = frames.recv().await {
         bytes.clear();
         if frame.encode(&mut bytes).is_err() {
+            break;
+        }
+        // Frames that are queued at the same moment go out in one write: a small acknowledgement
+        // and the data behind it are one packet, not two that a hop with Nagle's algorithm holds
+        // apart. The yield gives the sender the time to queue the second frame.
+        tokio::task::yield_now().await;
+        let mut failed = false;
+        while bytes.len() < COALESCE_MAX {
+            match frames.try_recv() {
+                Ok(next) => {
+                    if next.encode(&mut bytes).is_err() {
+                        failed = true;
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if failed {
             break;
         }
         // no timeout: the stream may legitimately stall while the network is down

@@ -1131,7 +1131,25 @@ async fn write_frames(mut out: Out, mut frames: mpsc::UnboundedReceiver<ClientFr
     while let Some(frame) = frames.recv().await {
         vlog!(3, "-> {}", client_frame_name(&frame));
         bytes.clear();
-        if frame.encode(&mut bytes).is_err() || !out.write_all(&bytes).await {
+        if frame.encode(&mut bytes).is_err() {
+            return;
+        }
+        // Frames that are queued at the same moment go out in one write, so that a hop with
+        // Nagle's algorithm does not hold the second of two small packets back for the delayed
+        // ACK of the first.
+        tokio::task::yield_now().await;
+        while bytes.len() < 64 * 1024 {
+            match frames.try_recv() {
+                Ok(next) => {
+                    vlog!(3, "-> {}", client_frame_name(&next));
+                    if next.encode(&mut bytes).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if !out.write_all(&bytes).await {
             return;
         }
         // a stream with a buffer must not hold a keystroke back
