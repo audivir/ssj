@@ -275,17 +275,20 @@ redraw.
   without a client) are not an error and not a reason to start another: the server prints their
   `SSJ SESSION` lines on stdout and exits with code 67 (`CHOICE_EXIT_CODE`). The client sends
   `--choose` only when stdin and stderr are terminals and it is not a background refresh.
+
 - The client shows the sessions, the youngest first, in a menu on stderr (`select.rs`): arrows,
   `j`/`k`, `Ctrl-P`/`Ctrl-N`, a number, Enter, and `q`, Ctrl-C, Ctrl-D, or Escape to cancel. For
   `--auto-attach` the last line starts a new session. It then runs the server again with
   `--attach ID` (or without `--reuse` for a new session), which costs a second `ssh` call.
   `detach` offers only sessions with a client, and joins the only one without asking.
+
 - A server of an earlier release does not know `--choose` and answers with an unknown argument,
   which the client shows. There is no fallback: install the server of the same release.
 
 - `ssj kill` and `ssj detach` take any number of ids or names after the destination, in one call
   to the host (`--kill ID ID...`). Each is answered on its own: a session that cannot be reached is
   reported on stderr, the others are still handled, and the exit code is 1 if any failed.
+
 - The completion offers further ids for `kill` and `detach`, and `detach` offers only sessions
   that had a client at the last refresh of the cache (`ssj --complete HOST --connected`). The
   cache file marks them: a line is `name` or `name connected`.
