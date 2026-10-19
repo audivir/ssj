@@ -95,7 +95,7 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
 | The detach key, anywhere | The same, also in the middle of a line or a program. |
 | `ssj detach user@host [ID...]` | The same, from another terminal, for the clients of those sessions. |
-| Closing the terminal, `SIGHUP`, `SIGTERM` | Ends the session, as with `ssh`. `ssj` exits with 129. |
+| Closing the terminal, `SIGHUP`, `SIGTERM` | Ends the session, as with `ssh`. `ssj` exits with 129. Inside an `ssh` session it detaches instead. |
 | `kill -9` of `ssj`, a lost connection | Leaves it. The shell keeps running. |
 
 The `~` is the escape character, as in `ssh`. It counts only at the start of a line:
@@ -120,10 +120,11 @@ keeps running, and `ssj attach` brings you back.
 ### Inside an `ssh` session
 
 When you run `ssj` on a machine you reached with `ssh`, `ssh` reads `~.` first and ends its own
-connection. The terminal of `ssj` is then closed, which ends the session. Type `~~.` instead (the
-outer `ssh` turns it into `~.`), or set a detach key, which `ssh` does not see: `detach_key =
-"ctrl-]"` in `client.toml` on that machine. `~?` says so when `ssj` finds that it runs inside an
-`ssh` session (`SSH_TTY` is set).
+connection. The terminal of `ssj` is then closed. Inside an `ssh` session (`SSH_TTY` is set) that
+leaves the session running, since the end of the connection is more likely a loss than a wish; the
+next `ssj attach` brings you back. To detach cleanly, type `~~.` (the outer `ssh` turns it into
+`~.`), or set a detach key, which `ssh` does not see: `detach_key = "ctrl-]"` in `client.toml` on
+that machine. `~?` says so too.
 
 ### Choosing a session
 

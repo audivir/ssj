@@ -339,6 +339,7 @@ fn start_client_full(
         attempt_timeout,
         ssj_client::run::STREAM_DEAD_AFTER,
         attach,
+        false,
     )
 }
 
@@ -356,6 +357,7 @@ fn start_client_tiers(
         attempt_timeout,
         stream_dead_after,
         false,
+        false,
     )
 }
 
@@ -366,6 +368,7 @@ fn start_client_inner(
     attempt_timeout: Duration,
     stream_dead_after: Duration,
     attach: bool,
+    hangup_detaches: bool,
 ) -> Terminal {
     let (typed_tx, typed_rx) = tokio::io::duplex(1 << 20);
     let (shown_tx, shown_rx) = tokio::io::duplex(1 << 20);
@@ -401,6 +404,7 @@ fn start_client_inner(
         env: Env::default(),
         escape: Some(b'~'),
         detach_key: None,
+        hangup_detaches,
         local_echo: false,
         compress: false,
         agent: None,
@@ -587,6 +591,45 @@ async fn a_closed_terminal_ends_the_session_and_its_shell() {
         .expect("the session ends")
         .unwrap();
     assert!(matches!(end, SessionEnd::Killed), "{end:?}");
+}
+
+// Inside an `ssh` session the end of the terminal is more likely a lost connection than a wish.
+#[tokio::test]
+async fn inside_ssh_a_closed_terminal_detaches_and_the_session_keeps_running() {
+    let client_id = Identity::generate();
+    let mut server = start_server(ECHO_LINES, client_id.fingerprint());
+    let mut terminal = start_client_inner(
+        &server,
+        client_id,
+        vec![Tier::Udp {
+            addr: server.addr,
+            resolver: None,
+        }],
+        Duration::from_secs(8),
+        ssj_client::run::STREAM_DEAD_AFTER,
+        false,
+        true,
+    );
+    terminal.type_line("hello").await;
+    terminal.wait_for("got:hello").await;
+
+    terminal.hangup.send(()).unwrap();
+    let finished = timeout(Duration::from_secs(10), terminal.client)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished, Ok(Finished::Detached));
+    // the server saw a deliberate detach, and the shell is still there
+    loop {
+        let event = timeout(Duration::from_secs(10), server.events.recv())
+            .await
+            .expect("an event")
+            .expect("the session runs");
+        if event == SessionEvent::Detached {
+            break;
+        }
+    }
+    assert!(!server.session.is_finished());
 }
 
 #[tokio::test]

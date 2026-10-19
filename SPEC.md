@@ -668,8 +668,10 @@ Ending (the session is over):
 - `ssj kill user@host [ID]` ends a session from another terminal. The server sends `SIGHUP` to the
   process group of the shell, as a closing terminal would, and ends after the shell has exited.
 - `SIGTERM` or `SIGINT` to the server process does the same as `ssj kill`.
-- Closing the terminal window, or `SIGHUP` or `SIGTERM` to the client (`kill ssj`): the client
-  sends `Hangup` and exits with code 129. The server hangs up the terminal of the shell, as a
+- Closing the terminal window, or `SIGHUP` or `SIGTERM` to the client (`kill ssj`): inside an
+  `ssh` session (`SSH_TTY` is set, `Params::hangup_detaches`) the client sends `Detach` and exits
+  as after `~.`, since the end of that connection is more likely a loss than a wish. Otherwise the
+  client sends `Hangup` and exits with code 129. The server hangs up the terminal of the shell, as a
   closing terminal would for `ssh`, and ends after the shell has exited. Without a connection
   (while the client is reconnecting) nothing can be told, and the session stays. The server
   never takes the loss of a connection for this, since it may come back.

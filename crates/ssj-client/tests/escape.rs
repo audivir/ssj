@@ -122,6 +122,6 @@ fn the_help_names_the_detach_key_when_there_is_one() {
 #[test]
 fn inside_ssh_the_help_says_that_ssh_reads_the_escape_first() {
     use ssj_client::escape::help_in;
-    assert!(help_in(None, true).contains("type ~~. instead"));
+    assert!(help_in(None, true).contains("type ~~. to detach"));
     assert!(!help_in(None, false).contains("ssh"));
 }

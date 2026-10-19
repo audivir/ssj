@@ -167,6 +167,9 @@ pub struct Params {
     pub escape: Option<u8>,
     /// A control byte that detaches wherever it is typed.
     pub detach_key: Option<u8>,
+    /// A closed terminal or `SIGHUP` detaches and does not end the session: `ssj` runs inside an
+    /// `ssh` session, whose end is more likely a lost connection than a wish.
+    pub hangup_detaches: bool,
     /// Join a running session instead of starting one.
     pub attach: bool,
     /// Show typed characters before the server echoes them (see [`crate::echo`]).
@@ -980,6 +983,7 @@ async fn connect_session(
             env,
             escape: args.escape,
             detach_key: args.detach_key,
+            hangup_detaches: std::env::var_os("SSH_TTY").is_some(),
             attach,
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
             compress: args.compress == Some(true),
@@ -2136,6 +2140,12 @@ impl Client {
                     }
                 }
                 Some(()) = self.io.hangups.recv() => {
+                    if self.params.hangup_detaches {
+                        // the connection of an `ssh` session ended, which is a loss and not a wish
+                        vlog!(1, "the terminal was closed inside an ssh session: leaving the session running");
+                        link.send(ClientFrame::Detach);
+                        return Ok(Pumped::Done(Finished::Detached));
+                    }
                     vlog!(1, "the terminal was closed or ssj was told to end: ending the session");
                     link.send(ClientFrame::Hangup);
                     return Ok(Pumped::Done(Finished::HungUp));

@@ -116,7 +116,7 @@ pub fn help_in(detach_key: Option<u8>, inside_ssh: bool) -> String {
     }
     if inside_ssh {
         text.push_str(
-            "(inside ssh: it reads ~. first and would end this connection and the session;\r\n type ~~. instead, or set a detach key with --detach-key)\r\n",
+            "(inside ssh: it reads ~. first and ends this connection, so ssj leaves the session\r\n running; type ~~. to detach cleanly, or set a detach key with --detach-key)\r\n",
         );
     }
     text
