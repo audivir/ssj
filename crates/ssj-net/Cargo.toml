@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "QUIC transport of ssj: pinned mutual TLS, address validation, and transport limits"
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }

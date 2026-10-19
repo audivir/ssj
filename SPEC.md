@@ -524,8 +524,8 @@ How the upload works:
 1. The client takes the file `ssj-server-<build>` from `--server-dir` (default: the directory of
    the client itself, where a release archive puts it), or the file named by `--server-binary`.
    With `--download` the client fetches `ssj-server-<build>` and `SHA256SUMS` over HTTPS from
-   `--download-url` instead (default: `<repository>/releases/download/v<version>`, once the
-   package names its repository; a build without one needs the flag). It uses `ureq` with `rustls`
+   `--download-url` instead (default: `<repository>/releases/download/v<version>` with the
+   repository named in `Cargo.toml`). It uses `ureq` with `rustls`
    and `ring` and the root certificates of `webpki-roots`. Only `https://` addresses are taken,
    redirects must stay on HTTPS, a download may not exceed 64 MiB, and the file must match its
    line in `SHA256SUMS`, which the client checks before it uploads anything. The sums come from
