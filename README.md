@@ -92,7 +92,8 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
 | `ssj kill user@host [ID]` | Ends the session from another terminal. |
 | `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
-| Closing the terminal, `SIGHUP`, `SIGTERM`, `SIGINT` | Disconnects. The shell keeps running. |
+| Closing the terminal, `SIGHUP`, `SIGTERM` | Ends the session, as with `ssh`. `ssj` exits with 129. |
+| `kill -9` of `ssj`, a lost connection | Leaves it. The shell keeps running. |
 
 The `~` is the escape character, as in `ssh`. It counts only at the start of a line:
 
