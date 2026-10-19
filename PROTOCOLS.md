@@ -7,6 +7,7 @@ protocol.
 | Release | Protocol |
 | ------- | -------- |
 | 0.1.0-rc1 | 1 |
+| 0.1.0-rc2 | 1 |
 | 0.1.0 | 1 |
 
 Protocol 1 includes the `Gap` and `Compressed` frames and the frames of agent forwarding. They were
