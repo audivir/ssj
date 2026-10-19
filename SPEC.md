@@ -856,8 +856,18 @@ follows the rule of the other commands.
   `umask 077`, and the server reads the file when a session starts, so running sessions keep their
   settings.
 - Reading the current text of `server.toml` on the host is `cat` of
-  `${XDG_CONFIG_HOME:-$HOME/.config}/ssj/server.toml` through `ssh`. There is no lock: two
-  editors at the same time overwrite each other.
+  `${XDG_CONFIG_HOME:-$HOME/.config}/ssj/server.toml` through `ssh`.
+- Two editors at the same time must not lose each other's work, so a save is a compare and swap.
+  The editor remembers the SHA-256 of the bytes it started from (of nothing, for a file that does
+  not exist), and the file is replaced only if it still has that digest. Comparison and
+  replacement are one step under a lock: a `flock` on `.client.toml.lock` here, and on the host a
+  lock directory `.server.toml.lock` (`mkdir` is atomic; five tries one second apart, then the
+  error names the directory, which can be removed if no editor runs; the script removes it when it
+  ends, also when `ssh` hangs up). The lock is held for the save only, not while the editor is
+  open, so a crashed editor leaves no stale lock, and the digest is what covers the long wait.
+- If the file changed meanwhile, nothing is overwritten. The edited text is written to a private
+  file `ssj-edit-kept-<pid>-<n>.toml` in the temporary directory, whose name the error shows, and
+  the command ends with an error. Merging is by hand.
 
 ### Debug output (`-v`)
 

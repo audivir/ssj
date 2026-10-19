@@ -206,7 +206,8 @@ new file starts with every setting as a comment. The text is judged as soon as t
 the client checks `client.toml` itself, and `ssj-server --check-config` on the host checks
 `server.toml`, so a typo in a key is shown and never saved. You can then edit again or discard the
 change, as with `visudo`. A file is saved by renaming (mode 0600), so a reader never sees half of
-it. Sessions that run keep their settings; new ones use the file. A host that is called `edit` is
+it. If the file was changed by somebody else while your editor was open, nothing is overwritten:
+the error names a file with your text. Sessions that run keep their settings; new ones use the file. A host that is called `edit` is
 reached as `user@edit`.
 
 ### Debug output

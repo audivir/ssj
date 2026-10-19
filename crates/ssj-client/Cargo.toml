@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6.7", features = ["derive", "error-context", "help", "std", "usage"] }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustix = { version = "1.1.5", features = ["stdio", "termios"] }
+rustix = { version = "1.1.5", features = ["fs", "stdio", "termios"] }
 sha2 = "0.11.1"
 ssj-config.workspace = true
 ssj-net.workspace = true

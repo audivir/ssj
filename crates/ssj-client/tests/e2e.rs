@@ -1751,3 +1751,75 @@ fn the_templates_of_the_two_files_hold_valid_settings_only() {
 fn text_of(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
+
+#[test]
+fn a_file_that_changed_while_it_was_edited_is_not_overwritten_and_the_text_is_kept() {
+    let config = short_dir();
+    let dir = config.join("ssj");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, words, other_edit) in [
+        ("client.toml", vec!["edit"], r#"compress = "auto""#),
+        (
+            "server.toml",
+            vec!["edit", "user@localhost"],
+            "away_after = 5",
+        ),
+    ] {
+        let file = dir.join(name);
+        std::fs::write(&file, "").unwrap();
+        // the file exists and is empty; another editor saves while this one is open
+        let editor = editor_script(&format!(
+            "echo '{other_edit}' >> '{}'\nsleep 0.2\necho '# my change' >> \"$1\"",
+            file.display()
+        ));
+        let output = ssj_edit(&config, &editor, &words, "");
+        let message = text(&output.stderr);
+        assert!(!output.status.success(), "{name}: {message}");
+        assert!(
+            message.contains("changed while you were editing"),
+            "{name}: {message}"
+        );
+        // the file keeps what the other editor wrote
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("{other_edit}\n"),
+            "{name}"
+        );
+        // and the text of this editor is in the file whose name is shown
+        let kept = message
+            .split_whitespace()
+            .find(|word| word.contains("ssj-edit-kept-"))
+            .unwrap_or_else(|| panic!("{name}: no copy named in {message}"))
+            .trim_end_matches(';')
+            .trim_end_matches('.');
+        let copy = std::fs::read_to_string(kept).unwrap();
+        assert!(copy.contains("# my change"), "{name}: {copy}");
+        let _ = std::fs::remove_file(kept);
+        // no lock or temporary file stays behind
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "client.toml" && n != "server.toml" && n != ".client.toml.lock")
+            .collect();
+        assert!(names.is_empty(), "{name}: {names:?}");
+        std::fs::remove_file(&file).unwrap();
+    }
+}
+
+#[test]
+fn a_lock_that_is_held_on_the_host_stops_the_save_and_is_named() {
+    let config = short_dir();
+    let lock = config.join("ssj/.server.toml.lock");
+    std::fs::create_dir_all(&lock).unwrap();
+    let editor = editor_script(r#"echo 'away_after = 5' >> "$1""#);
+    let output = ssj_edit(&config, &editor, &["edit", "user@localhost"], "");
+    assert!(!output.status.success());
+    let message = text(&output.stderr);
+    assert!(
+        message.contains("holds") && message.contains(".server.toml.lock"),
+        "{message}"
+    );
+    assert!(!config.join("ssj/server.toml").exists());
+    // the lock of somebody else is left alone
+    assert!(lock.is_dir());
+}
