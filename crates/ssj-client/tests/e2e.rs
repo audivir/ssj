@@ -184,6 +184,49 @@ fn shell_command_runs_through_bootstrap_quic_and_pty_and_its_exit_code_is_return
     assert_eq!(output.status.code(), Some(3), "stderr: {stderr:?}");
 }
 
+/// Runs `ssj user@localhost <words>` with a shell of /bin/sh on the host.
+fn run_with_command(ssh: &Path, words: &[&str]) -> Output {
+    let port = free_port();
+    let child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .args(["--ssh-command", ssh.to_str().unwrap()])
+        .args(["--server-path", server_binary().to_str().unwrap()])
+        .args(["--port-range", &format!("{port}:{port}")])
+        .args(["--udp-host", "127.0.0.1"])
+        .args(LEAK_GUARD)
+        .args(["--server-arg", "--shell", "--server-arg", "/bin/sh"])
+        .arg("user@localhost")
+        .args(words)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn_locked()
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn a_command_after_the_destination_runs_in_the_session_and_its_exit_code_is_returned() {
+    // the same way as `ssh host command`: through the shell of the host, so pipes and && work
+    let ssh = fake_ssh(FAKE_SSH);
+    for (words, expected_code, expected_text) in [
+        (vec!["--", "echo one-two | tr o 0; exit 3"], 3, "0ne-tw0"),
+        (vec!["--", "printf", "'%s-%s'", "a", "b"], 0, "a-b"),
+        (vec!["--", "exit", "7"], 7, ""),
+        // without the dashes, when the command has no options of its own
+        (vec!["echo", "plain"], 0, "plain"),
+    ] {
+        let output = run_with_command(&ssh, &words);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(expected_text), "{words:?}: {stdout:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(expected_code),
+            "{words:?}: {stdout:?} {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 #[test]
 fn every_ssh_that_runs_a_command_gets_no_escape_character() {
     let log = fake_ssh("").with_file_name("args.log");

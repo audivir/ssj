@@ -833,6 +833,26 @@ Rules (nobody listens, and `wait` mode):
   slower than the writer. This is a property of that system and happens without `ssj` too, so the
   tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
+### Running a command (`ssj DESTINATION -- COMMAND...`)
+
+The session starts the command and not an interactive shell, and ends with its exit code.
+
+- The client passes `--shell-arg -l --shell-arg -c --shell-arg <command>` to the server, so the
+  login shell of the host (`--shell`, else `$SHELL`) runs `$SHELL -l -c '<command>'`, as `sshd`
+  does for `ssh host command`. The words are joined with spaces and the shell of the host reads
+  the result, so one quoted word is a whole shell command line.
+- The command has a terminal like every session (the output of `ssh -t host command`): the
+  session survives a lost connection, the command can be joined again with `ssj attach`, and the
+  exit status is that of the shell.
+- Where the command starts: after `--`, or without it after the destination, when the first word
+  is not one of the commands of `ssj` (`list`, `attach`, `kill`, `install`, `edit`). With the
+  dashes there must be exactly one word before them, the destination, so a host with the name of
+  a command is `ssj attach -- ls`. Options of `ssj` may stand anywhere before the `--`; an option
+  after the destination without dashes is one of `ssj`, which is why `ssj host ls -l` is refused
+  and `ssj host -- ls -l` works.
+- `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
+  `attach`, since the shell of a session that runs already is not started again.
+
 ### Editing the config files (`ssj edit`)
 
 `ssj edit` edits `client.toml`, and `ssj edit [user@]host` edits `server.toml` on the host. The

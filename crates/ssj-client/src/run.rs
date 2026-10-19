@@ -258,6 +258,20 @@ async fn session(mut args: Args) -> u8 {
             if on { "auto" } else { "off" }.to_owned(),
         ]);
     }
+    if let Some(command) = &args.remote_command {
+        // `ssh host command` runs the command in a shell, and so does this: the login shell of the
+        // host with `-c`
+        for word in [
+            "--shell-arg",
+            "-l",
+            "--shell-arg",
+            "-c",
+            "--shell-arg",
+            command,
+        ] {
+            args.server_args.push(word.to_owned());
+        }
+    }
     if let Some(choice) = args.congestion {
         ssj_net::set_congestion(choice);
         args.server_args

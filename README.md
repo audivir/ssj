@@ -68,6 +68,8 @@ ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
 ssj --transport tcp user@host        # auto (default), udp, tcp (ssh -W), or stdio (the ssh channel)
 ssj install user@host               # upload the server file to the host
+ssj user@host -- make -j8           # run a command in a session that survives jumps
+ssj user@host uptime                # the same, when the command has no options of its own
 ssj edit                            # edit client.toml in $EDITOR
 ssj edit user@host                  # edit server.toml on the host in $EDITOR
 ssj install --download user@host    # fetch it from the release over HTTPS first
@@ -197,6 +199,25 @@ client passes its choice to the server it starts, and each side sends with its o
 anybody who can use the shell's `SSH_AUTH_SOCK` there can have the agent sign while you are
 connected, so use it only on hosts you trust. Only listing the keys and signing are passed on;
 adding, removing, and locking keys, and keys with destination constraints, do not work.
+
+### Running a command
+
+`ssj user@host -- COMMAND...` runs the command in the session instead of the shell, as
+`ssh user@host COMMAND` does, and ends with its exit code. The host's login shell runs it
+(`$SHELL -l -c 'COMMAND'`), so pipes, `&&`, and `cd` work. A long `make` or a `tail -f` then
+survives a network change or a closed laptop like any other session, and you can join it again
+from another terminal (it is a session with a name you find in `ssj list`).
+
+- Options of `ssj` stay where they are (`ssj --local-echo auto host --name x`), so options of the
+  command need the `--`: `ssj host -- ls -l`. Without options of its own, `ssj host uptime` works
+  too.
+- The command has a terminal, as with `ssh -t`: its output has carriage returns, and a program
+  can ask for a terminal size. Standard input goes to it as typed.
+- `--name` and `--auto-attach` are refused with a command, since a session that runs already would
+  not run it.
+- A host with the name of one of our commands (`attach`, `list`, `kill`, `install`, `edit`) is
+  written before the dashes: `ssj attach -- ls` runs `ls` on the host `attach`, and `ssj attach ls`
+  attaches to a session on the host `ls`.
 
 ### Editing the config files
 

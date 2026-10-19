@@ -96,6 +96,8 @@ pub struct Args {
     pub server_path: ServerPath,
     /// Extra arguments for `ssj-server`.
     pub server_args: Vec<String>,
+    /// A command to run in the session instead of the shell, as `ssh host command` does.
+    pub remote_command: Option<String>,
     /// Host name or address for the UDP connection when it differs from the destination.
     pub udp_host: Option<String>,
     pub send_env: EnvFilter,
@@ -156,6 +158,7 @@ impl Args {
             ssh_command: vec!["ssh".to_owned()],
             server_path: ServerPath::Default,
             server_args: Vec::new(),
+            remote_command: None,
             udp_host: None,
             send_env: EnvFilter::default_patterns(),
             auto_install: None,
@@ -250,10 +253,39 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     from_options(options)
 }
 
+/// Words that are commands of `ssj` when a destination follows them.
+fn is_command_word(word: &str) -> bool {
+    matches!(word, "list" | "attach" | "kill" | "install" | "edit")
+}
+
 fn from_options(options: Options) -> Result<Args, String> {
-    let Options {
-        words: positionals, ..
-    } = &options;
+    // A command for the session comes after `--`, or, as with `ssh`, after the destination when
+    // that is not one of our own command words (`ssj host make -j4` needs `--` for the `-j4`).
+    let mut words = options.words.clone();
+    let mut remote_command = None;
+    if !options.command.is_empty() {
+        remote_command = Some(options.command.join(" "));
+    } else if words.len() >= 2 && !is_command_word(&words[0]) {
+        remote_command = Some(words.split_off(1).join(" "));
+    }
+    if let Some(command) = &remote_command {
+        if command.trim().is_empty() {
+            return Err("the command is empty".to_owned());
+        }
+        if words.len() != 1 {
+            return Err(
+                "a command to run needs exactly one destination before it (ssj DESTINATION -- COMMAND)"
+                    .to_owned(),
+            );
+        }
+        if options.name.is_some() || options.auto_attach {
+            return Err(
+                "a command cannot be combined with --name or --auto-attach, since a session that runs already would not run it"
+                    .to_owned(),
+            );
+        }
+    }
+    let positionals = &words;
     if let Some(host) = &options.complete {
         return Ok(Args {
             command: Command::Complete((!host.is_empty()).then(|| host.clone())),
@@ -398,6 +430,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             .server_path
             .map_or(ServerPath::Default, ServerPath::Custom),
         server_args,
+        remote_command,
         udp_host: options.udp_host,
         send_env,
         auto_install,
