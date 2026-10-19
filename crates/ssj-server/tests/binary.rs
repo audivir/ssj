@@ -32,7 +32,7 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
     );
 
     // the parent is gone and its pipes are closed, yet the daemon serves the session
-    let (mut tx, mut rx, _conn) = open(&client, &launched.connect).await.unwrap();
+    let (mut tx, mut rx, conn) = open(&client, &launched.connect).await.unwrap();
     send(
         &mut tx,
         ClientFrame::Hello(Hello::Start {
@@ -50,6 +50,14 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
 
     // after the client confirms, the daemon ends and its port is closed
     send(&mut tx, ClientFrame::Close).await;
+    // the daemon says goodbye before it ends, so the client does not wait for an answer
+    let reason = timeout(Duration::from_secs(1), conn.closed())
+        .await
+        .expect("the daemon closes the connection before it ends");
+    assert!(matches!(
+        reason,
+        quinn::ConnectionError::ApplicationClosed(_)
+    ));
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(!reachable(&client, &launched.connect).await);
 }

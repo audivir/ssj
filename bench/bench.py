@@ -195,6 +195,19 @@ def paste(argv, megabytes, text=False):
     return {"seconds": round(seconds, 2), "megabytes_per_second": round(megabytes / seconds, 1)}
 
 
+def startup(argv, runs):
+    """Seconds from starting the client until the shell answers a command, and until it is gone."""
+    ready, ended = [], []
+    for _ in range(runs):
+        begin = time.monotonic()
+        terminal = session(argv)
+        ready.append(time.monotonic() - begin)
+        begin = time.monotonic()
+        terminal.close()
+        ended.append(time.monotonic() - begin)
+    return {"ready_s": round(statistics.median(ready), 2), "exit_s": round(statistics.median(ended), 2)}
+
+
 def netem(args, action):
     if not args.netem:
         return
@@ -220,6 +233,7 @@ def main():
     parser.add_argument("--paste-mb", type=int, default=8)
     parser.add_argument("--samples", type=int, default=300)
     parser.add_argument("--rounds", type=int, default=3, help="the best bulk and paste round counts")
+    parser.add_argument("--startup", type=int, metavar="RUNS", help="only time the start and the end, RUNS times")
     parser.add_argument("--netem", help='for example "delay 40ms loss 1%%" (Linux, root)')
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -233,6 +247,9 @@ def main():
     try:
         for name, argv in chosen.items():
             print(f"{name} ...", file=sys.stderr)
+            if args.startup:
+                results[name] = startup(argv, args.startup)
+                continue
             rounds = [bulk(argv, args.bulk_mb, args.raw_bulk, args.text_bulk) for _ in range(args.rounds)]
             pastes = [paste(argv, args.paste_mb, args.text_bulk) for _ in range(args.rounds)]
             results[name] = {
@@ -244,6 +261,11 @@ def main():
         netem(args, "del")
     if args.json:
         print(json.dumps(results, indent=2))
+        return
+    if args.startup:
+        print(f"{'':6} {'ready s':>8} {'exit s':>8}")
+        for name, r in results.items():
+            print(f"{name:6} {r['ready_s']:>8} {r['exit_s']:>8}")
         return
     print(f"{'':6} {'bulk MB/s':>10} {'median ms':>10} {'p95 ms':>8} {'max ms':>8} {'paste s':>8}")
     for name, r in results.items():

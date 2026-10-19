@@ -370,6 +370,27 @@ What the measurements changed (each found with `sample`, CPU times from `ps`, an
 
 Nothing is gated yet.
 
+#### Start and end of a session
+
+`bench/bench.py --startup 5 --netem "delay 50ms"` (a round trip of 100 ms, Linux container, `ssh`
+as the base) times the start until the shell answers a command, and the end after `exit`:
+
+| | ready | exit |
+| --- | ---: | ---: |
+| `ssh` | 1.34 s | 0.16 s |
+| `ssj` UDP | 1.80 s | 0.27 s |
+| `ssj` TCP (a second `ssh -W`) | 3.25 s | 0.26 s |
+| `ssj` stdio (a second `ssh`) | 2.83 s | 0.16 s |
+
+- The bootstrap is one `ssh`, and its handshake is most of the time. `ssj` adds a retry and the
+  QUIC handshake (two round trips), then `Hello` and `Welcome` (one more), then the shell starts.
+- The TCP and stdio transports open a second `ssh` connection, which costs as much as the first.
+- Before this was measured, the end of a UDP session took two seconds: the server process ended
+  before its close message left, and the client waited for an answer that never came. The server
+  now waits for the close message to leave (at most one second, after the client has gone).
+- `ssh -G` (which finds the `HostName`) and the lookup of the address run while the bootstrap
+  `ssh` runs, and no longer after it.
+
 ### Compression (`compress`)
 
 Optional and off by default (`compress = "auto"` in `client.toml` or `server.toml`, or

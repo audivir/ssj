@@ -128,6 +128,17 @@ impl Frontend {
         self.conns.clone()
     }
 
+    /// Like [`Frontend::close`], and gives the close message time to reach the peers before the
+    /// process ends. Without it the client of a finished session waits for an answer that never
+    /// comes.
+    pub async fn close_and_flush(&mut self) {
+        self.close_listeners();
+        if let Some(endpoint) = self.current.take() {
+            endpoint.close(0u8.into(), b"closed");
+            let _ = tokio::time::timeout(Duration::from_secs(1), endpoint.wait_idle()).await;
+        }
+    }
+
     /// Stops listening. Nobody can connect until the next [`Frontend::open`].
     pub fn close(&mut self) {
         self.close_listeners();

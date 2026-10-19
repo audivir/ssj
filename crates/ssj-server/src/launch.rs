@@ -321,7 +321,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, pin: [u8; 32]) -> ExitCo
         // the exit status for a connected client is queued, and needs a moment to leave
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    context.frontend.lock().await.close();
+    context.frontend.lock().await.close_and_flush().await;
     match end {
         SessionEnd::Failed(_) => ExitCode::from(1),
         _ => ExitCode::SUCCESS,

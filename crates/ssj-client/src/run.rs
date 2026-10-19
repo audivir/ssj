@@ -1,7 +1,7 @@
 //! The session of the client: connect, pass bytes between terminal and server, and reconnect.
 
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::ExitCode;
@@ -37,7 +37,7 @@ use crate::sessions_cache;
 use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
 use crate::terminal::{RawMode, window_size};
 use crate::tracker::Tracker;
-use crate::tunnel::Kind;
+use crate::tunnel::{Kind, SshConfig};
 
 /// Unacknowledged input the client keeps. Must stay below the input budget of the server.
 const INPUT_BUFFER: usize = 1 << 20;
@@ -518,19 +518,45 @@ async fn kill_session(args: &Args, id: Option<String>) -> u8 {
 
 /// The ways to reach the server, in the order to try them, from the choice of the user and what
 /// the server offers.
+/// What the client finds out while the `ssh` of the bootstrap is still busy, so that the start
+/// does not wait for it afterwards.
+#[derive(Default)]
+struct Prefetched {
+    config: Option<SshConfig>,
+    /// The address for UDP, without the port.
+    address: Option<IpAddr>,
+}
+
+/// Asks `ssh -G` and looks up the address that UDP will use.
+async fn prefetch(args: &Args) -> Prefetched {
+    if !matches!(args.transport, Transport::Auto | Transport::Udp) {
+        return Prefetched::default();
+    }
+    let config = crate::tunnel::ssh_config(args).await;
+    let host = udp_host(args, config.as_ref());
+    let address = resolve(&host, 0).await.ok().map(|addr| addr.ip());
+    Prefetched { config, address }
+}
+
+/// The address of the server: the one given, else the `HostName` of the `ssh` configuration (the
+/// destination may be an alias), else the destination itself.
+fn udp_host(args: &Args, config: Option<&SshConfig>) -> String {
+    args.udp_host
+        .clone()
+        .or_else(|| config.and_then(|c| c.hostname.clone()))
+        .unwrap_or_else(|| args.host().to_owned())
+}
+
 async fn build_tiers(
     args: &Args,
     identity: &Identity,
     connect: &Connect,
+    prefetched: Prefetched,
 ) -> Result<Vec<Tier>, String> {
     let choice = args.transport;
     // UDP does not travel through a jump host, so it is not even tried there
     let udp_possible = matches!(choice, Transport::Auto | Transport::Udp) && connect.udp.is_some();
-    let config = if udp_possible {
-        crate::tunnel::ssh_config(args).await
-    } else {
-        None
-    };
+    let config = prefetched.config.filter(|_| udp_possible);
     let jump = choice == Transport::Auto && config.as_ref().is_some_and(|c| c.jump);
     let order =
         crate::tunnel::tier_order(choice, jump, connect.udp.is_some(), connect.tcp.is_some());
@@ -542,12 +568,12 @@ async fn build_tiers(
                 let port = connect.udp.expect("offered");
                 // the address of the server: the one given, else the `HostName` of the `ssh`
                 // configuration (the destination may be an alias), else the destination itself
-                let host = args
-                    .udp_host
-                    .clone()
-                    .or_else(|| config.as_ref().and_then(|c| c.hostname.clone()))
-                    .unwrap_or_else(|| args.host().to_owned());
-                match resolve(&host, port).await {
+                let host = udp_host(args, config.as_ref());
+                let found = match prefetched.address {
+                    Some(ip) => Ok(SocketAddr::new(ip, port)),
+                    None => resolve(&host, port).await,
+                };
+                match found {
                     Ok(addr) => tiers.push(Tier::Udp {
                         addr,
                         resolver: Some(Box::new(move || {
@@ -589,10 +615,14 @@ async fn build_tiers(
 async fn connect_session(args: Args, config: &Config, extra: &[String], attach: bool) -> u8 {
     let identity = Identity::generate();
     let prepared = async {
-        let connect =
-            start_or_install(&args, config, &identity.fingerprint(), extra, attach).await?;
+        let fingerprint = identity.fingerprint();
+        let (connect, prefetched) = tokio::join!(
+            start_or_install(&args, config, &fingerprint, extra, attach),
+            prefetch(&args)
+        );
+        let connect = connect?;
         let env = local_env(&args)?;
-        let tiers = build_tiers(&args, &identity, &connect).await?;
+        let tiers = build_tiers(&args, &identity, &connect, prefetched).await?;
         let agent = agent_socket(&args)?;
         Ok::<_, String>((connect, env, tiers, agent))
     }
