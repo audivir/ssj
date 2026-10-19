@@ -12,8 +12,7 @@ Order: performance (2), then the release (3).
     agent flag through the `ssh` channel, so that the shell runs its startup files during the
     handshake, and `Hello::Start` only joins it.
   - When UDP does not answer, start the next transport after a short time and keep whichever
-    connects first, instead of waiting 1.5 s and then opening a second `ssh`. The second `ssh`
-    could use a `ControlMaster` connection of the first.
+    connects first, instead of waiting 1.5 s and then opening a second `ssh`.
   - The retry for every new client costs one round trip. Skipping it while few unvalidated
     handshakes are in progress would save that, at the price of an amplification of up to three
     times for a spoofed address, so it needs a decision.
@@ -28,9 +27,6 @@ Order: performance (2), then the release (3).
 - Manual checks that no CI machine can do: the macOS and Linux network watch (switch Wi-Fi, sleep the laptop), listed in `cargo run -p ssj-client --example netwatch`.
 - A tagged release (`v0.1.0`) and a first run of the release workflow. The `PROTOCOLS.md` row and the golden file for protocol 1 exist.
 
-## Later, optional
-
-
 ## Known limits that stay until someone fixes them
 
 - The Linux network watch (netlink) has been compiled but not run.
@@ -41,6 +37,7 @@ Order: performance (2), then the release (3).
 - Offering two protocol versions in the ALPN list: against the decision to keep the code small.
 - Power-state APIs for sleep and wake: they need a run loop or D-Bus for no gain, since waking always brings the interfaces back and fires the network watch.
 - Extra OSCs sent by `ssj` itself (desktop notification, progress indicator, badge): kept out for now.
+- `ControlMaster` for the second `ssh` of the TCP and stdio transports: a stale master socket after a network change hangs new `ssh` calls, which is what `ssj` exists to avoid.
 - A server-side terminal emulator or `smcup` tracking: against the dumb-pipe rule. Full-screen programs are covered by the escape rule above.
 - Hole punching for hosts behind NAT: the TCP tier through `ssh` covers them.
 - A manifest of server digests inside the client: built and removed again as too complex for what the release checksums and attestation already give.
