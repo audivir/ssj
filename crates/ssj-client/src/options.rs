@@ -84,6 +84,14 @@ pub struct Options {
     #[arg(long, overrides_with = "install")]
     pub no_install: bool,
 
+    /// Download the server file from the release instead of using a local one (HTTPS)
+    #[arg(long)]
+    pub download: bool,
+
+    /// Where the release files are, such as https://host/owner/ssj/releases/download/v0.1.0
+    #[arg(long, value_name = "URL", overrides_with = "download_url")]
+    pub download_url: Option<String>,
+
     /// Directory with the server files to upload
     #[arg(long, value_name = "DIR", overrides_with = "server_dir")]
     pub server_dir: Option<String>,

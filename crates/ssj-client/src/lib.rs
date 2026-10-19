@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod cli;
 pub mod config;
 pub mod debounce;
+pub mod download;
 pub mod echo;
 pub mod escape;
 pub mod install;

@@ -479,6 +479,14 @@ How the upload works:
    macOS arm64 gets the native one. Anything else is refused with a clear message.
 1. The client takes the file `ssj-server-<build>` from `--server-dir` (default: the directory of
    the client itself, where a release archive puts it), or the file named by `--server-binary`.
+   With `--download` the client fetches `ssj-server-<build>` and `SHA256SUMS` over HTTPS from
+   `--download-url` instead (default: `<repository>/releases/download/v<version>`, once the
+   package names its repository; a build without one needs the flag). It uses `ureq` with `rustls`
+   and `ring` and the root certificates of `webpki-roots`. Only `https://` addresses are taken,
+   redirects must stay on HTTPS, a download may not exceed 64 MiB, and the file must match its
+   line in `SHA256SUMS`, which the client checks before it uploads anything. The sums come from
+   the same place as the file, so they catch damage and a wrong file and not a hostile server; the
+   attestation of the release covers that.
 1. It sends the SHA-256 digest of the file on the first line of stdin, followed by the file. The
    remote script writes to a temporary file (`umask 077`), computes the digest again with
    `sha256sum` or `shasum -a 256`, and compares. It then makes the file executable and runs

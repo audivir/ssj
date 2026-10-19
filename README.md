@@ -68,6 +68,7 @@ ssj --install user@host              # install the server first if it is missing
 ssj --port-range 62000:62100 user@host
 ssj --transport tcp user@host        # auto (default), udp, tcp (ssh -W), or stdio (the ssh channel)
 ssj install user@host               # upload the server file to the host
+ssj install --download user@host    # fetch it from the release over HTTPS first
 ssj list --json user@host           # the same list as JSON
 ```
 

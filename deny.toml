@@ -12,7 +12,8 @@ all-features = true
 yanked = "deny"
 
 [licenses]
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "ISC", "Unicode-3.0"]
+# CDLA-Permissive-2.0 is the license of the list of root certificates (webpki-roots) for downloads
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "CDLA-Permissive-2.0", "ISC", "Unicode-3.0"]
 confidence-threshold = 0.9
 
 [bans]

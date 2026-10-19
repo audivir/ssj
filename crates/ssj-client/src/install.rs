@@ -11,7 +11,7 @@ use crate::cli::Args;
 use crate::config::AutoInstall;
 
 /// Largest server file the client uploads.
-const MAX_BINARY: u64 = 64 * 1024 * 1024;
+pub const MAX_BINARY: u64 = 64 * 1024 * 1024;
 
 /// Systems that have a server build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +83,7 @@ pub fn find_server_binary(args: &Args, target: Target) -> Result<PathBuf, String
     } else {
         Err(format!(
             "there is no server build for this host at {}; put the file {} from the release there, \
-             or point to it with --server-dir or --server-binary",
+             or point to it with --server-dir or --server-binary, or use --download",
             path.display(),
             path.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -134,19 +134,26 @@ echo "SSJ INSTALLED $dir/ssj-server-p__PROTOCOL__""#;
 
 /// Uploads the server file for the host and returns the path it was installed at.
 pub async fn install(args: &Args) -> Result<String, String> {
-    let target = detect_target(args).await?;
-    let file = find_server_binary(args, target)?;
-    let size = std::fs::metadata(&file)
-        .map_err(|e| format!("cannot read {}: {e}", file.display()))?
-        .len();
-    if size == 0 || size > MAX_BINARY {
-        return Err(format!(
-            "{} has an implausible size of {size} bytes",
-            file.display()
-        ));
+    // a wrong address is found before the host is asked for anything
+    if args.download {
+        crate::download::base_url(args)?;
     }
-    let binary =
-        std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let target = detect_target(args).await?;
+    let binary = if args.download {
+        crate::download::server_file(args, target).await?
+    } else {
+        let file = find_server_binary(args, target)?;
+        let size = std::fs::metadata(&file)
+            .map_err(|e| format!("cannot read {}: {e}", file.display()))?
+            .len();
+        if size == 0 || size > MAX_BINARY {
+            return Err(format!(
+                "{} has an implausible size of {size} bytes",
+                file.display()
+            ));
+        }
+        std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?
+    };
 
     let digest = sha256_hex(&binary);
 

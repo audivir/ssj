@@ -31,7 +31,6 @@ Order: performance (2), then the release (3).
 
 ## Later, optional
 
-- **`ssj install --download`**, fetching the server file from the release of the same version and checking it against `SHA256SUMS`. It needs an HTTPS client in the binary or a call to `curl`, and the archive already carries the server files, so it waits for a request.
 
 ## Known limits that stay until someone fixes them
 
