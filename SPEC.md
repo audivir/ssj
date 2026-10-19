@@ -148,7 +148,7 @@ was lost for good). Then:
 1. While there is no connection, `~.` still works, so the user is never stuck. The server is not
    told, and the session keeps running with its timeout.
 
-The client sends a `Ping` every second. It reports a stall when no frame has come for four round
+The client sends a `Ping` every second in which nothing has come for half a second (a frame that arrived a moment ago shows that the connection works, and a ping next to a keystroke is what a stream transport must avoid, see below). It reports a stall when no frame has come for four round
 trips of the connection, but not sooner than 2 seconds and not later than 10, so a good link
 reports quickly and a slow link does not report all the time. The message is `no response from the server`, with the time added in steps of five seconds after ten seconds, and it is removed with
 the next frame.
@@ -236,6 +236,32 @@ offsets, as after any loss. Every connection on these two transports starts a ne
 cannot ask for a passphrase (`BatchMode=yes`), so they need an agent or a shared connection
 (`ControlMaster auto`, `ControlPersist`) when the key has a passphrase. The same holds for the
 reconnects of a session that started over UDP and later fell back.
+
+Small packets on the TCP transport. Through `ssh -W`, the second of two small writes in the
+direction to the client can wait for the acknowledgement timer of the receiver, which runs for
+40 to 100 ms on Linux and adapts to the traffic of the connection. `bench/wprobe.py` shows it
+without `ssj`: a server that answers a byte with two small writes 0.2 ms apart is held for 51 ms
+in 61 of 300 cases through `ssh -W`, and in none when the two answers are one write, or the client
+answers in between. The `ssh` channel does not show it. `ssj` therefore never lets a small packet
+that nobody answers stand in front of the next one:
+
+- The server sends the `InputAck` in the write of the echo (queued frames go out in one write,
+  after a yield that lets the sender queue the second one). Alone it goes out after one second
+  or when 4 KiB of input are unacknowledged.
+- The client sends the `OutputAck` in the write of the next keystroke or of the next ping, and
+  alone only when 4 KiB of output are unacknowledged.
+- The client pings when nothing has come for half a second, not every second.
+
+`bench/docker-bench.sh --samples 4000 --jitter-ms 120 --only tcp` types 4000 keystrokes with
+random gaps against two containers (Ubuntu 24.04, OpenSSH 9.6) and counts the echoes that took
+10 ms more than the median (`stalls`). The same build before the change: 14 of 2000, 17 of 1500
+(51 ms each). With acknowledgements held back on the server only: 1 of 4000. With the change
+described here: 0 of 4000 (slowest echo 10.5 ms, median 1.6 ms), and 0 of 900 with gaps of up to
+1.2 s between keystrokes and 193 pings among them. UDP and the `ssh` channel never showed it.
+
+Not done: padding a write that follows an unanswered one to more than one packet. A padded TLS
+record spans two packets, its tail waits for the acknowledgement of the first, and the receiver
+cannot read the record without it: 81 stalls in 4000.
 
 ### Destination, address, and names
 
@@ -339,7 +365,26 @@ redraw.
 which hits `ssh` and `ssj` alike when the host is `localhost`. `--server` picks the server file,
 which is how the glibc and the musl build are compared. The workflow `bench.yml` runs both builds
 with and without `netem` on a GitHub runner against its own `sshd`, by hand. `bench/linux-bench.sh`
-runs the same inside a container (`docker run ... sh bench/linux-bench.sh`).
+runs the same inside one container (`docker run ... sh bench/linux-bench.sh`), with the link on the
+loopback. There the hop from `sshd` to the server port is on the loopback too and meets the delay
+and the loss a second time, so its TCP numbers are not those of a host.
+
+`bench/docker-bench.sh [bench.py options]` is the benchmark to believe. A client and a server
+container share a Docker network (Ubuntu 24.04 by default, `IMAGE=`), the link is simulated on
+their network interfaces (`NETEM="delay 40ms loss 1%"`, empty for none; offloads are off so that
+the loss hits packets of normal size), and `sshd` runs in the server container, so the hop to the
+server port is local, as on a host. The binaries are the static musl builds. More switches:
+`CAPTURE=1` records the hop from `sshd` to the server and writes every packet to a file,
+`CLIENT_LOG=1` runs the client with `-vvv` and keeps the log (`target/ssj-client-log.txt`),
+`TRACE=1` prints the socket options of `sshd`, and `PROBE=1` runs `bench/wprobe.py`.
+`bench.py --jitter-ms` adds a random gap between the keystrokes and the `stalls` column counts
+the echoes that took 10 ms more than the median.
+
+On a link of 40 ms each way and 1 % loss (real packets, no loopback) one run gave: `ssh` 0.2 MB/s,
+`ssj` UDP 6.2 MB/s, `ssj` UDP with compression 25.9 MB/s, `ssj` TCP and the `ssh` channel
+0.2 to 0.3 MB/s, and a keystroke median of 105 ms for `ssh` and 93 to 97 ms for `ssj` (the round
+trip is 80 ms). Without a link (1 GB/s on the bridge): `ssh` 171 MB/s and 15 ms, `ssj` UDP
+184 MB/s and 0.87 ms, TCP 163 MB/s and 1.2 ms, the `ssh` channel 187 MB/s and 1.4 ms.
 
 Each number is one run on one machine (the Linux ones in a container on an aarch64 virtual
 machine, with `sshd` in the same container), so differences of a few percent are noise. The bulk

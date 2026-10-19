@@ -376,8 +376,11 @@ impl<B: Backend> Session<B> {
                 .is_some_and(|a| a.hello_done && a.input_acked < input_received);
             let ack_deadline =
                 ack_pending.then(|| ack_since.map_or_else(Instant::now, |since| since + ACK_DELAY));
-            let ack_due =
-                ack_pending && (data_pending || ack_deadline.is_some_and(|d| d <= Instant::now()));
+            let ack_big = active
+                .as_ref()
+                .is_some_and(|a| input_received.saturating_sub(a.input_acked) >= ACK_BYTES);
+            let ack_due = ack_pending
+                && (data_pending || ack_big || ack_deadline.is_some_and(|d| d <= Instant::now()));
             let send_due = data_pending || ack_due;
             let want_input = pending_offset >= pending_input.len();
             // a deliberate detach waits for max_detached, a lost connection for detached_timeout
@@ -1094,8 +1097,13 @@ async fn read_connection(
     }
 }
 
-/// How long an acknowledgement of input waits for output to go with it.
-const ACK_DELAY: Duration = Duration::from_millis(30);
+/// How long an acknowledgement of input waits for output to go with it. It matters little when it
+/// comes: it only lets the client forget what it keeps for a reconnect. A standalone one is a
+/// small packet that nobody answers, which the next small packet can queue behind for 40 to
+/// 100 ms on the TCP transport.
+const ACK_DELAY: Duration = Duration::from_secs(1);
+/// Input that is acknowledged at once.
+const ACK_BYTES: u64 = 4096;
 
 /// The most that one write of queued frames takes.
 const COALESCE_MAX: usize = 64 * 1024;

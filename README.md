@@ -353,7 +353,9 @@ the server is built by the client.
 
 `bench/bench.py --host user@host` compares `ssh` with `ssj` over UDP, TCP, and the `ssh` channel:
 bulk output, keystroke latency, and an 8 MiB paste. It needs Python 3 and the release builds in
-`target/release`. See the specification for the options and the first numbers.
+`target/release`. `bench/docker-bench.sh` runs it between two Docker containers with a simulated
+link (`NETEM="delay 40ms loss 1%" bench/docker-bench.sh`), which is the setup to believe. See the
+specification for the options and the numbers.
 
 ### Tests
 

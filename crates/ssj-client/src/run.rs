@@ -78,6 +78,8 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A resize is sent when no newer one has come for this long.
 const RESIZE_QUIET: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(1);
+/// Output that is acknowledged at once. Less waits for a frame that goes out anyway.
+const ACK_BYTES: u64 = 4096;
 /// Input is compressed only while at least this many bytes wait for the server to take them.
 const COMPRESS_BACKLOG: u64 = 256 * 1024;
 /// Chunks shorter than this are not worth compressing.
@@ -1318,6 +1320,8 @@ struct Client {
     io: Io,
     input: ReplayBuffer,
     output_offset: u64,
+    /// Output that the server has been told about.
+    acked_output: u64,
     escape: EscapeFilter,
     echo: Echo,
     compress: bool,
@@ -1362,6 +1366,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         status_blocked_since: None,
         input: ReplayBuffer::new(INPUT_BUFFER),
         output_offset: 0,
+        acked_output: 0,
         escape,
         echo,
         compress,
@@ -1845,6 +1850,7 @@ impl Client {
         if matches!(hello, Hello::Attach { .. }) {
             // a client without history takes over the offsets of the server
             self.output_offset = welcome.output_offset;
+            self.acked_output = welcome.output_offset;
             self.input = ReplayBuffer::starting_at(INPUT_BUFFER, welcome.input_offset);
             if welcome.output_offset > 0 {
                 // the replay starts in the middle of the stream: cancel a sequence it may cut
@@ -1957,6 +1963,21 @@ impl Client {
 
     /// The frame for typed bytes: compressed when the uplink is what holds the input back (a
     /// paste over a slow link), plain otherwise. Typing is a few bytes and never compressed.
+    /// Tells the server how much output was shown: at once when it is a lot, or when `force` says
+    /// that a frame goes out anyway, and otherwise not yet.
+    ///
+    /// An acknowledgement alone is a small packet that nobody answers. On the TCP transport the
+    /// next small packet behind it, such as a keystroke, can wait for the acknowledgement timer of
+    /// the other side, which runs for 40 to 100 ms (see `bench/wprobe.py`). Sent in the write of
+    /// the keystroke, it costs nothing.
+    fn ack_output(&mut self, out: &mpsc::UnboundedSender<ClientFrame>, force: bool) {
+        let unacked = self.output_offset.saturating_sub(self.acked_output);
+        if unacked > 0 && (force || unacked >= ACK_BYTES) {
+            let _ = out.send(ClientFrame::OutputAck(self.output_offset));
+            self.acked_output = self.output_offset;
+        }
+    }
+
     fn input_frame(&mut self, bytes: &[u8]) -> ClientFrame {
         let waiting = self.input.end() - self.input.start();
         if self.compress
@@ -1990,6 +2011,8 @@ impl Client {
                         return Err("the input buffer overflowed".to_owned());
                     }
                     if let Some(link) = link {
+                        // the acknowledgement of the output goes out in the same write
+                        self.ack_output(link, true);
                         let frame = self.input_frame(&bytes);
                         let _ = link.send(frame);
                         // only with a connection: without one the echo cannot come
@@ -2109,7 +2132,7 @@ impl Client {
                             self.sync_status(false).await;
                             self.output_offset += data.len() as u64;
                             if !link.reader.frame_ready() {
-                                link.send(ClientFrame::OutputAck(self.output_offset));
+                                self.ack_output(&link.out, false);
                             }
                         }
                         ServerFrame::InputAck(offset) => {
@@ -2141,7 +2164,7 @@ impl Client {
                             let _ = self.io.output.write_all(&taken_back).await;
                             self.output_offset += skipped;
                             self.note_gap(skipped).await;
-                            link.send(ClientFrame::OutputAck(self.output_offset));
+                            self.ack_output(&link.out, true);
                         }
                         ServerFrame::Detached => {
                             vlog!(1, "`ssj detach` was run for this session: leaving it");
@@ -2247,7 +2270,13 @@ impl Client {
                     redraw(self.size, &link.out).await;
                 }
                 _ = ping.tick() => {
-                    link.send(ClientFrame::Ping);
+                    // A frame that arrived a moment ago shows that the connection works, so a ping
+                    // is for the quiet times. It also takes the acknowledgement of the output with
+                    // it, so that none goes out alone.
+                    if link.last_heard.elapsed() >= PING_EVERY / 2 {
+                        self.ack_output(&link.out, true);
+                        link.send(ClientFrame::Ping);
+                    }
                     self.unstick_status().await;
                     let silent = link.last_heard.elapsed();
                     let stall_after = link
