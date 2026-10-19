@@ -276,8 +276,9 @@ protocol between client and server.
   that one refresh per host runs at a time (a lock older than 30 seconds is stale). Lines read
   back from the cache are checked again: a name must be a valid selector, and the destination must
   parse as one without a port, since it reaches `ssh` later.
-- The id or name comes before the destination (`ssj attach ID host`), so the completion cannot know
-  the host and offers the names of all hosts with a list.
+- The id or name comes after the destination (`ssj attach host ID`), so the completion knows the
+  host and offers only the names of its sessions. Without a host (`--name`) it offers the names of
+  all hosts with a list.
 - A release publishes one archive per client platform, `ssj-<version>-<target>.tar.gz`, that holds
   a directory with `ssj`, the server files `ssj-server-<target>` of all five builds (next to the
   client, where the installer looks), `ssj.1`, `completions/`, `README.md`, `LICENSE`, and a
@@ -622,7 +623,7 @@ Ending (the session is over):
   confirms the status with `Close`. If the connection breaks without it, the status may not have
   arrived, so the session stays, sends the status again to the next connection, and ends when that
   client closes, or after `exit_grace` (60 seconds) without a client.
-- `ssj kill [ID] user@host` ends a session from another terminal. The server sends `SIGHUP` to the
+- `ssj kill user@host [ID]` ends a session from another terminal. The server sends `SIGHUP` to the
   process group of the shell, as a closing terminal would, and ends after the shell has exited.
 - `SIGTERM` or `SIGINT` to the server process does the same as `ssj kill`.
 - Closing the terminal window, or `SIGHUP` or `SIGTERM` to the client (`kill ssj`): the client

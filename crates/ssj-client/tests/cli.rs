@@ -146,24 +146,24 @@ fn subcommands_need_a_destination_after_them() {
         (vec!["list", "me@host"], Command::List, "me@host"),
         (vec!["attach", "host"], Command::Attach(None), "host"),
         (
-            vec!["attach", "abcdef012345", "host"],
+            vec!["attach", "host", "abcdef012345"],
             Command::Attach(Some(id.clone())),
             "host",
         ),
         (vec!["kill", "host"], Command::Kill(None), "host"),
         (
-            vec!["kill", "abcdef012345", "host"],
+            vec!["kill", "host", "abcdef012345"],
             Command::Kill(Some(id)),
             "host",
         ),
         // a name works where an id does
         (
-            vec!["attach", "work", "host"],
+            vec!["attach", "host", "work"],
             Command::Attach(Some("work".to_owned())),
             "host",
         ),
         (
-            vec!["kill", "My-Session", "host"],
+            vec!["kill", "host", "My-Session"],
             Command::Kill(Some("My-Session".to_owned())),
             "host",
         ),
@@ -180,9 +180,9 @@ fn subcommands_need_a_destination_after_them() {
     }
     for bad in [
         vec!["list", "a", "b"],
-        vec!["kill", "../../x", "host"],
-        vec!["kill", "a b", "host"],
-        vec!["attach", "id", "a", "b"],
+        vec!["kill", "host", "../../x"],
+        vec!["kill", "host", "a b"],
+        vec!["attach", "a", "b", "id"],
         vec!["host", "other"],
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
@@ -386,6 +386,17 @@ fn the_man_page_and_the_completions_are_built() {
         let text = std::fs::read_to_string(found(file)).unwrap();
         assert!(text.contains("transport"), "{file}");
     }
+    // the id after the host of `attach` and `kill` is completed from the sessions of that host
+    let zsh = std::fs::read_to_string(found("_ssj")).unwrap();
+    assert!(
+        zsh.starts_with("#compdef ssj\n"),
+        "compdef stays the first line"
+    );
+    assert!(zsh.contains("ssj --complete $words[2]"));
+    let bash = std::fs::read_to_string(found("ssj.bash")).unwrap();
+    assert!(bash.contains("ssj --complete \"${COMP_WORDS[2]}\""));
+    let fish = std::fs::read_to_string(found("ssj.fish")).unwrap();
+    assert!(fish.contains("-eq 3"));
 }
 
 #[test]

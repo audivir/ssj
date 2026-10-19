@@ -43,8 +43,8 @@ pub fn command() -> clap::Command {
     name = "ssj",
     version,
     about = "A roaming remote shell that survives jumps",
-    override_usage = "ssj [OPTIONS] [COMMAND] [ID] DESTINATION",
-    after_help = "Commands: list, attach [ID], kill [ID], install. A word is a command only when a \
+    override_usage = "ssj [OPTIONS] [COMMAND] DESTINATION [ID]",
+    after_help = "Commands: list, attach DESTINATION [ID], kill DESTINATION [ID], install. A word is a command only when a \
                   destination follows it.\n\
                   DESTINATION is [user@]host[:port], ssh://[user@]host[:port], or an IPv6 address."
 )]

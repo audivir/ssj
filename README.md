@@ -55,11 +55,11 @@ auto_install = "ask"   # "ask" (default), "always", or "never"
 
 ```shell
 ssj user@host                       # start a session
-ssj attach [ID] user@host           # join a running session, for example after a restart
+ssj attach user@host [ID]           # join a running session, for example after a restart
 ssj list user@host                  # sessions with state and age
-ssj kill [ID] user@host             # end a session
+ssj kill user@host [ID]             # end a session
 ssj --name work user@host           # join the session `work`, or start it
-ssj attach work user@host           # an id or a name
+ssj attach user@host work           # an id or a name
 ssj user@host:2222                  # port of the ssh server; also ssh://user@host:2222
 ssj --server-path ~/bin/ssj-server user@host
 ssj --ssh-command 'ssh -J jump' user@host
@@ -79,7 +79,7 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | Action | Effect |
 | --------------------------------------------------- | --------------------------------------------------- |
 | `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
-| `ssj kill [ID] user@host` | Ends the session from another terminal. |
+| `ssj kill user@host [ID]` | Ends the session from another terminal. |
 | `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
 | Closing the terminal, `SIGHUP`, `SIGTERM`, `SIGINT` | Disconnects. The shell keeps running. |
 

@@ -138,24 +138,58 @@ fn main() {
                 "--name=[Join the session of this name, or start it]:NAME:_default",
                 "--name=[Join the session of this name, or start it]:NAME:_ssj_sessions",
             );
-            text = format!(
-                "_ssj_sessions() {{ local -a s; s=(${{(f)\"$(ssj --complete 2>/dev/null)\"}}); compadd -a s; }}\n{text}"
+            // the words after the options: a command or a host, then a host, then (for `attach` and
+            // `kill`) the sessions of that host
+            text = text.replace(
+                "*::words -- Command, session id or name, and destination:_default",
+                "*::words -- Command, destination, and session id or name:_ssj_words",
             );
+            let helpers = r#"_ssj_sessions() { local -a s; s=(${(f)"$(ssj --complete 2>/dev/null)"}); compadd -a s; }
+_ssj_words() {
+    if (( CURRENT == 1 )); then
+        _alternative 'commands:command:compadd list attach kill install' 'hosts:host:_hosts'
+    elif [[ $words[1] == (list|attach|kill|install) ]]; then
+        if (( CURRENT == 2 )); then
+            _hosts
+        elif (( CURRENT == 3 )) && [[ $words[1] == (attach|kill) ]]; then
+            local -a s; s=(${(f)"$(ssj --complete $words[2] 2>/dev/null)"}); compadd -a s
+        fi
+    else
+        _hosts
+    fi
+}
+"#;
+            // `#compdef` must stay the first line, or the completion is not found
+            text = match text.split_once('\n') {
+                Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
+                None => format!("{helpers}{text}"),
+            };
         }
         fs::write(out.join(file), text).expect("write the completion");
     }
 }
 
-/// Hooks that let `attach`, `kill`, and `--name` offer the session names of `ssj --complete`.
+/// Hooks that let `attach`, `kill`, and `--name` offer the session names of `ssj --complete`: for
+/// the id after the host of `attach` and `kill` those of that host.
 fn dynamic(shell: Shell) -> &'static str {
     match shell {
         Shell::Bash => {
             r#"
 _ssj_sessions() {
+    local current=${COMP_WORDS[COMP_CWORD]}
     local previous=${COMP_WORDS[COMP_CWORD-1]}
+    # ssj attach|kill HOST <name>: the sessions of that host
+    case ${COMP_WORDS[1]} in
+        attach|kill)
+            if [[ $COMP_CWORD -eq 3 ]]; then
+                COMPREPLY=($(compgen -W "$(ssj --complete "${COMP_WORDS[2]}" 2>/dev/null)" -- "$current"))
+                [[ ${#COMPREPLY[@]} -gt 0 ]] && return
+            fi
+            ;;
+    esac
     case $previous in
-        attach|kill|--name)
-            COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "${COMP_WORDS[COMP_CWORD]}"))
+        --name)
+            COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
             [[ ${#COMPREPLY[@]} -gt 0 ]] && return
             ;;
     esac
@@ -166,7 +200,7 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
         }
         Shell::Fish => {
             r#"
-complete -c ssj -n '__fish_seen_subcommand_from attach kill' -f -a '(ssj --complete 2>/dev/null)'
+complete -c ssj -n '__fish_seen_subcommand_from attach kill; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
 complete -c ssj -l name -x -a '(ssj --complete 2>/dev/null)'
 "#
         }

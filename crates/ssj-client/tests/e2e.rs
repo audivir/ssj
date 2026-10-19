@@ -492,7 +492,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
     let first = ssj_typing(
         &runtime,
         &ssh,
-        &["attach", &id, "user@localhost"],
+        &["attach", "user@localhost", &id],
         &[
             (
                 "hello
@@ -556,7 +556,7 @@ fn attach_and_kill_without_a_session_say_so() {
     for words in [
         vec!["attach", "user@localhost"],
         vec!["kill", "user@localhost"],
-        vec!["kill", "abcdef012345", "user@localhost"],
+        vec!["kill", "user@localhost", "abcdef012345"],
     ] {
         let output = ssj(&runtime, &ssh, &words, "");
         assert_eq!(output.status.code(), Some(1), "{words:?}");
@@ -1375,7 +1375,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
     let third = ssj_typing(
         &runtime,
         &ssh,
-        &["attach", "work", "user@localhost"],
+        &["attach", "user@localhost", "work"],
         &[("three\n", "got:three:3"), ("~.", "")],
     );
     assert!(
@@ -1383,7 +1383,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         "{}",
         text(&third.stderr)
     );
-    let killed = ssj(&runtime, &ssh, &["kill", "work", "user@localhost"], "");
+    let killed = ssj(&runtime, &ssh, &["kill", "user@localhost", "work"], "");
     assert!(killed.status.success(), "{}", text(&killed.stderr));
 }
 

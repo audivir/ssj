@@ -326,7 +326,7 @@ fn from_options(options: Options) -> Result<Args, String> {
             let rest = &positionals[1..];
             let (id, destination) = match rest {
                 [destination] => (None, destination.clone()),
-                [id, destination] if word == "attach" || word == "kill" => (
+                [destination, id] if word == "attach" || word == "kill" => (
                     Some(
                         is_selector(id)
                             .then(|| id.clone())
@@ -336,9 +336,9 @@ fn from_options(options: Options) -> Result<Args, String> {
                 ),
                 _ => {
                     return Err(format!(
-                        "usage: ssj {word} {}user@host",
+                        "usage: ssj {word} user@host{}",
                         if matches!(word, "attach" | "kill") {
-                            "[ID] "
+                            " [ID]"
                         } else {
                             ""
                         }
