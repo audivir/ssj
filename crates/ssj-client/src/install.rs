@@ -1,7 +1,6 @@
 //! Putting the server on a host: finding the right file, uploading it, and deciding when to.
 
 use std::io::{BufRead, IsTerminal};
-use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 use ssj_proto::bootstrap::sanitize;
@@ -66,34 +65,6 @@ pub async fn detect_target(args: &Args) -> Result<Target, String> {
     parse_target(&remote.stdout)
 }
 
-/// The local server file for `target`: the explicit one, or `ssj-server-<build>` in the server
-/// directory. `None` means that nothing was named and the directory of the client, the default,
-/// has no file, so the release is the place to look.
-pub fn find_server_binary(args: &Args, target: Target) -> Result<Option<PathBuf>, String> {
-    if let Some(file) = &args.server_binary {
-        return Ok(Some(file.clone()));
-    }
-    let dir = match &args.server_dir {
-        Some(dir) => dir.clone(),
-        None => std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(PathBuf::from))
-            .ok_or("cannot find the directory of the client")?,
-    };
-    let path = dir.join(format!("ssj-server-{}", target.triple()));
-    if path.is_file() {
-        Ok(Some(path))
-    } else if args.server_dir.is_some() {
-        Err(format!(
-            "there is no server build for this host at {} (--server-dir); \
-             drop --server-dir to download it from the release",
-            path.display()
-        ))
-    } else {
-        Ok(None)
-    }
-}
-
 /// Returns the SHA-256 digest of `bytes` as lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -138,19 +109,14 @@ echo "SSJ INSTALLED $dir/ssj-server-p__PROTOCOL__""#;
 /// Uploads the server file for the host and returns the path it was installed at.
 pub async fn install(args: &Args) -> Result<String, String> {
     // a wrong address is found before the host is asked for anything.
-    if args.download || args.download_url.is_some() {
+    if args.server_binary.is_none() {
         crate::download::base_url(args)?;
     }
     let target = detect_target(args).await?;
     vlog!(1, "the host runs {}", target.triple());
-    // a local file wins; without one the release is the source.
-    let local = if args.download {
-        None
-    } else {
-        find_server_binary(args, target)?
-    };
-    let binary = if let Some(file) = local {
-        let size = std::fs::metadata(&file)
+    // the file named by the user, or else the release of the same version.
+    let binary = if let Some(file) = &args.server_binary {
+        let size = std::fs::metadata(file)
             .map_err(|e| format!("cannot read {}: {e}", file.display()))?
             .len();
         if size == 0 || size > MAX_BINARY {
@@ -159,9 +125,9 @@ pub async fn install(args: &Args) -> Result<String, String> {
                 file.display()
             ));
         }
-        std::fs::read(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?
+        std::fs::read(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?
     } else {
-        vlog!(1, "no local server file, downloading it from the release");
+        vlog!(1, "downloading the server file from the release");
         crate::download::server_file(args, target).await?
     };
 

@@ -115,13 +115,9 @@ pub struct Args {
     pub send_env: EnvFilter,
     /// Overrides the setting of the config file.
     pub auto_install: Option<AutoInstall>,
-    /// Fetch the server file from the release (`--download`).
-    pub download: bool,
     /// Where the release files are; the default comes from the repository of the package.
     pub download_url: Option<String>,
-    /// Directory with the files `ssj-server-<build>` for uploads.
-    pub server_dir: Option<PathBuf>,
-    /// The server file to upload, whatever the system of the host is.
+    /// The server file to upload instead of the one from the release.
     pub server_binary: Option<PathBuf>,
     /// `None` turns the escape character off.
     pub escape: Option<u8>,
@@ -178,9 +174,7 @@ impl Args {
             udp_host: None,
             send_env: EnvFilter::default_patterns(),
             auto_install: None,
-            download: false,
             download_url: None,
-            server_dir: None,
             server_binary: None,
             escape: Some(b'~'),
             detach_key: None,
@@ -498,9 +492,7 @@ fn from_options(options: Options) -> Result<Args, String> {
         udp_host: options.udp_host,
         send_env,
         auto_install,
-        download: options.download,
         download_url: options.download_url,
-        server_dir: options.server_dir.map(PathBuf::from),
         server_binary: options.server_binary.map(PathBuf::from),
         escape,
         detach_key,

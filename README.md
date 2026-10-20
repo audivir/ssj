@@ -43,14 +43,12 @@ What is in the archive and where each file goes:
 ```text
 ssj-VERSION-TARGET/
 ├── ssj                        # the client: a directory on your PATH, e.g. ~/.local/bin/
-├── ssj-server-<TARGET>        # server files of all five builds, kept next to `ssj`;
-│   └── ...                    #   `ssj install` uploads the one that matches the host
 ├── ssj.1                      # man page: a man1 directory, e.g. ~/.local/share/man/man1/
 ├── completions/
 │   ├── ssj.bash               # Bash: `source` it from ~/.bashrc
 │   ├── _ssj                   # Zsh: a directory in your fpath
 │   └── ssj.fish               # Fish: ~/.config/fish/completions/
-├── SHA256SUMS                 # checksums of `ssj` and the server files
+├── SHA256SUMS                 # checksum of `ssj`
 ├── README.md
 └── LICENSE
 ```
@@ -79,12 +77,12 @@ The server file lands on the host here:
 └── ssj-server-p1              # `p1` is the protocol version; other versions sit side by side
 ```
 
-Where `ssj install` takes the file from, in this order:
+Where `ssj install` takes the file from:
 
-1. `--server-binary FILE`, or `--server-dir DIR`.
-1. The file next to `ssj` (the release archive has it).
-1. A download of the file for the host from the release of the same version, over HTTPS.
-   `--download` does this even if a local file exists, and `--download-url` names another place.
+- By default, a download of the file for the host from the release of the same version, over
+  HTTPS. `--download-url` names another place.
+- With `--server-binary FILE`, exactly that file, with no download. Take it from the release
+  assets (`ssj-server-<TARGET>`) when the client cannot reach GitHub.
 
 Safety of the transfer:
 
@@ -120,7 +118,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 | `ssj detach user@host [ID...]` | Makes the clients leave; the sessions keep running. |
 | `ssj user@host -- make -j8` | Runs a command in a session that survives jumps (see below). |
 | `ssj user@host uptime` | The same, when the command has no options of its own. |
-| `ssj install user@host` | Puts the server file on the host (`--download` always fetches it). |
+| `ssj install user@host` | Puts the server file on the host (downloads it, or uploads `--server-binary`). |
 | `ssj edit` | Edits `client.toml` in `$EDITOR`. |
 | `ssj edit user@host` | Edits `server.toml` on the host in `$EDITOR`. |
 

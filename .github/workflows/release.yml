@@ -106,8 +106,8 @@ jobs:
         with:
           name: assets
           path: assets
-      # one archive for each platform of the client. The server builds of all systems sit next to
-      # the client, where `ssj` looks for the file to upload to a host.
+      # one archive for each platform of the client. The server files are separate assets of the
+      # release, which `ssj install` downloads.
       - name: Assemble the archives
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -118,11 +118,10 @@ jobs:
             name="ssj-${version}-${target}"
             mkdir -p "pack/$name"
             cp "dist/ssj-${target}" "pack/$name/ssj"
-            cp dist/ssj-server-* "pack/$name/"
             cp assets/ssj.1 "pack/$name/"
             cp -r assets/completions "pack/$name/"
             cp README.md LICENSE "pack/$name/"
-            (cd "pack/$name" && sha256sum ssj ssj-server-* > SHA256SUMS)
+            (cd "pack/$name" && sha256sum ssj > SHA256SUMS)
             tar -C pack -czf "out/${name}.tar.gz" "$name"
           done
           cp dist/ssj-server-* out/

@@ -774,28 +774,6 @@ fn attach_and_kill_without_a_session_say_so() {
     assert!(text(&listed.stdout).contains("no sessions"));
 }
 
-/// The name of the server build that matches the system of the tests, which is also the "host".
-fn local_build() -> &'static str {
-    let output = Command::new("uname").arg("-sm").output().unwrap();
-    match String::from_utf8_lossy(&output.stdout).trim() {
-        "Darwin arm64" => "aarch64-apple-darwin",
-        "Linux x86_64" => "x86_64-unknown-linux-musl",
-        "Linux aarch64" => "aarch64-unknown-linux-musl",
-        other => panic!("the tests have no server build for {other}"),
-    }
-}
-
-/// A directory with the server file under the name that the client looks for.
-fn server_dir() -> PathBuf {
-    let dir = short_dir();
-    std::fs::copy(
-        server_binary(),
-        dir.join(format!("ssj-server-{}", local_build())),
-    )
-    .unwrap();
-    dir
-}
-
 /// Directories for one test host: where the data (installed files) and the sockets go.
 struct Host {
     data: PathBuf,
@@ -899,13 +877,13 @@ fn words(owned: &[String]) -> Vec<&str> {
 fn install_uploads_checks_and_makes_the_default_path_work() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
+    let dir = server_binary();
 
     let output = host.ssj(
         &ssh,
         &[
             "install",
-            "--server-dir",
+            "--server-binary",
             dir.to_str().unwrap(),
             "user@localhost",
         ],
@@ -954,8 +932,8 @@ fn install_uploads_checks_and_makes_the_default_path_work() {
 fn missing_server_is_installed_on_demand_with_the_flag() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
-    let session = host.session_words(&["--install", "--server-dir", dir.to_str().unwrap()]);
+    let dir = server_binary();
+    let session = host.session_words(&["--install", "--server-binary", dir.to_str().unwrap()]);
 
     let output = host.ssj(&ssh, &words(&session), "go\n");
 
@@ -978,8 +956,8 @@ fn missing_server_is_installed_on_demand_with_the_flag() {
 fn without_a_terminal_a_missing_server_is_not_installed_unasked() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
-    let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
+    let dir = server_binary();
+    let session = host.session_words(&["--server-binary", dir.to_str().unwrap()]);
 
     let output = host.ssj(&ssh, &words(&session), "");
 
@@ -998,9 +976,9 @@ fn without_a_terminal_a_missing_server_is_not_installed_unasked() {
 fn a_missing_server_is_a_reason_to_install_for_auto_attach_and_name_but_not_for_attach() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
+    let dir = server_binary();
     for flags in [&["--auto-attach"][..], &["--name", "work"][..]] {
-        let mut extra = vec!["--server-dir", dir.to_str().unwrap()];
+        let mut extra = vec!["--server-binary", dir.to_str().unwrap()];
         extra.extend_from_slice(flags);
         let session = host.session_words(&extra);
 
@@ -1031,7 +1009,7 @@ fn a_missing_server_is_a_reason_to_install_for_auto_attach_and_name_but_not_for_
 fn the_config_file_and_the_flags_decide_in_this_order() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
+    let dir = server_binary();
     std::fs::create_dir_all(host.config.join("ssj")).unwrap();
     let config = host.config.join("ssj/client.toml");
     let write = |text: &str| {
@@ -1042,7 +1020,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
 
     // "never" in the config stops an installation that would otherwise happen.
     write("auto_install = \"never\"\n");
-    let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
+    let session = host.session_words(&["--server-binary", dir.to_str().unwrap()]);
     let output = host.ssj(&ssh, &words(&session), "go\n");
     assert_eq!(output.status.code(), Some(1));
     assert!(
@@ -1053,7 +1031,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     assert!(!host.installed().exists());
 
     // the flag wins over the config.
-    let session = host.session_words(&["--install", "--server-dir", dir.to_str().unwrap()]);
+    let session = host.session_words(&["--install", "--server-binary", dir.to_str().unwrap()]);
     assert_eq!(
         host.ssj(&ssh, &words(&session), "go\n").status.code(),
         Some(3)
@@ -1063,7 +1041,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
 
     // "always" in the config installs without a flag.
     write("auto_install = \"always\"\n");
-    let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
+    let session = host.session_words(&["--server-binary", dir.to_str().unwrap()]);
     assert_eq!(
         host.ssj(&ssh, &words(&session), "go\n").status.code(),
         Some(3)
@@ -1072,7 +1050,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     std::fs::remove_file(host.installed()).unwrap();
 
     // and --no-install wins over "always".
-    let session = host.session_words(&["--no-install", "--server-dir", dir.to_str().unwrap()]);
+    let session = host.session_words(&["--no-install", "--server-binary", dir.to_str().unwrap()]);
     assert_eq!(
         host.ssj(&ssh, &words(&session), "go\n").status.code(),
         Some(1)
@@ -1097,13 +1075,13 @@ fn damaged_upload_is_rejected_and_installs_nothing() {
     let ssh = fake_ssh(
         "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nshift\n{ cat; printf x; } | sh -c \"$*\"\n",
     );
-    let dir = server_dir();
+    let dir = server_binary();
 
     let output = host.ssj(
         &ssh,
         &[
             "install",
-            "--server-dir",
+            "--server-binary",
             dir.to_str().unwrap(),
             "user@localhost",
         ],
@@ -1124,15 +1102,15 @@ fn damaged_upload_is_rejected_and_installs_nothing() {
 }
 
 #[test]
-fn unsupported_systems_and_missing_builds_are_explained() {
+fn unsupported_systems_and_a_missing_server_file_are_explained() {
     let host = host();
     let freebsd = fake_ssh("#!/bin/sh\necho 'SSJ TARGET FreeBSD amd64'\n");
-    let dir = server_dir();
+    let dir = server_binary();
     let output = host.ssj(
         &freebsd,
         &[
             "install",
-            "--server-dir",
+            "--server-binary",
             dir.to_str().unwrap(),
             "user@localhost",
         ],
@@ -1146,13 +1124,13 @@ fn unsupported_systems_and_missing_builds_are_explained() {
     );
 
     let ssh = fake_ssh(FAKE_SSH);
-    let empty = short_dir();
+    let missing = short_dir().join("ssj-server");
     let output = host.ssj(
         &ssh,
         &[
             "install",
-            "--server-dir",
-            empty.to_str().unwrap(),
+            "--server-binary",
+            missing.to_str().unwrap(),
             "user@localhost",
         ],
         "",
@@ -1160,8 +1138,7 @@ fn unsupported_systems_and_missing_builds_are_explained() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = text(&output.stderr);
     assert!(
-        stderr.contains(&format!("ssj-server-{}", local_build()))
-            && stderr.contains("--server-dir"),
+        stderr.contains("cannot read") && stderr.contains("ssj-server"),
         "{stderr}"
     );
 }
@@ -1270,11 +1247,11 @@ impl OnTerminal {
 fn on_a_terminal_the_user_is_asked_and_can_decline() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
+    let dir = server_binary();
     let mut terminal = on_terminal(
         &host,
         &ssh,
-        &host.session_words(&["--server-dir", dir.to_str().unwrap()]),
+        &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
     );
 
     terminal.wait_for("Install it now? [y/N]");
@@ -1288,11 +1265,11 @@ fn on_a_terminal_the_user_is_asked_and_can_decline() {
 fn on_a_terminal_the_user_can_agree_and_the_session_starts() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);
-    let dir = server_dir();
+    let dir = server_binary();
     let mut terminal = on_terminal(
         &host,
         &ssh,
-        &host.session_words(&["--server-dir", dir.to_str().unwrap()]),
+        &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
     );
 
     terminal.wait_for("Install it now? [y/N]");
@@ -1311,11 +1288,11 @@ fn only_yes_means_yes() {
     for answer in ["\n", "yep\n", "no\n", "n\n", " \n"] {
         let host = host();
         let ssh = fake_ssh(FAKE_SSH);
-        let dir = server_dir();
+        let dir = server_binary();
         let mut terminal = on_terminal(
             &host,
             &ssh,
-            &host.session_words(&["--server-dir", dir.to_str().unwrap()]),
+            &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
         );
         terminal.wait_for("[y/N]");
         terminal.typed.write_all(answer.as_bytes()).unwrap();

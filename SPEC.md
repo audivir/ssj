@@ -343,10 +343,10 @@ redraw.
   host and offers only the names of its sessions. Without a host (`--name`) it offers the names of
   all hosts with a list.
 - A release publishes one archive per client platform, `ssj-<version>-<target>.tar.gz`, that holds
-  a directory with `ssj`, the server files `ssj-server-<target>` of all five builds (next to the
-  client, where the installer looks), `ssj.1`, `completions/`, `README.md`, `LICENSE`, and a
-  `SHA256SUMS` of the binaries. The release also lists the server files alone, a `SHA256SUMS` of
-  everything, and the build provenance attestation for all of them.
+  a directory with `ssj`, `ssj.1`, `completions/`, `README.md`, `LICENSE`, and a `SHA256SUMS` of
+  the client. The release also lists the server files `ssj-server-<target>` of all five builds as
+  separate assets, which `ssj install` downloads, a `SHA256SUMS` of everything, and the build
+  provenance attestation for all of them.
 
 ### Benchmark
 
@@ -623,12 +623,11 @@ How the upload works:
 1. The client asks the host for its system (`uname -sm`, in a line of its own that must appear
    exactly once) and maps it to a build: Linux x86_64 and aarch64 get the static `musl` build,
    macOS arm64 gets the native one. Anything else is refused with a clear message.
-1. The client takes the file `ssj-server-<build>` named by `--server-binary`, or found in
-   `--server-dir` (a missing file there is an error), or in the directory of the client itself,
-   where a release archive puts it. If nothing is named and that directory has no file, or with
-   `--download`, the client fetches `ssj-server-<build>` and `SHA256SUMS` over HTTPS from
-   `--download-url` instead (default: `<repository>/releases/download/v<version>` with the
-   repository named in `Cargo.toml`). It uses `ureq` with `rustls`
+1. The client takes the file named by `--server-binary`, whatever the build is. Without it, the
+   client fetches `ssj-server-<build>` and `SHA256SUMS` over HTTPS from `--download-url`
+   (default: `<repository>/releases/download/v<version>` with the repository named in
+   `Cargo.toml`). The client never looks for a server file next to itself or in a directory.
+   It uses `ureq` with `rustls`
    and `ring` and the root certificates of `webpki-roots`. Only `https://` addresses are taken,
    redirects must stay on HTTPS, a download may not exceed 64 MiB, and the file must match its
    line in `SHA256SUMS`, which the client checks before it uploads anything. The sums come from
@@ -645,7 +644,7 @@ Trust in the server file:
 
 - The digest that the client sends protects the transfer against damage and truncation. It does
   not protect against a swapped local file, since the client computes it from the same file that
-  it uploads. The trust anchor is the file next to the client, which comes from the same release.
+  it uploads. The trust anchor is the file that the user names, or the release of the same version.
 - A client could carry the digests of the server files of its release and refuse a different file.
   This was built and removed again: it needs the release pipeline to patch each client binary
   after the servers are built (and, on macOS, to sign it again), and it adds a crate and a tool for
