@@ -24,7 +24,7 @@ pub enum ReplayError {
 impl ReplayBuffer {
     pub fn new(capacity: usize) -> Self {
         Self {
-            // The memory is reserved once, so that growing never copies the buffer. The pages
+            // the memory is reserved once, so that growing never copies the buffer. The pages
             // are only touched when bytes arrive, so an idle session costs no resident memory.
             data: VecDeque::with_capacity(capacity),
             start: 0,
@@ -79,7 +79,8 @@ impl ReplayBuffer {
 
     /// Drops all bytes before `offset`. Stale acknowledgements are ignored.
     ///
-    /// Fails if `offset` is beyond the last byte written, which only a faulty or hostile peer sends.
+    /// Fails if `offset` is beyond the last byte written, which only a faulty or hostile peer
+    /// sends.
     pub fn ack(&mut self, offset: u64) -> Result<(), ReplayError> {
         if offset > self.end() {
             return Err(ReplayError::Ahead);

@@ -281,7 +281,7 @@ impl<B: Backend> Session<B> {
         let mut active: Option<Active> = None;
         let mut generation = 0u64;
         let mut detached_since = Some(Instant::now());
-        // The newest size of a burst of resizes, applied when no other message is queued.
+        // the newest size of a burst of resizes, applied when no other message is queued.
         let mut pending_resize: Option<WindowSize> = None;
         // a deliberate detach disables the timeout until the next connection
         let mut detached_on_purpose = false;
@@ -329,7 +329,7 @@ impl<B: Backend> Session<B> {
                 AgentConnected(io::Result<UnixStream>),
             }
 
-            // Backpressure holds only while somebody is there to acknowledge the output. With
+            // backpressure holds only while somebody is there to acknowledge the output. With
             // nobody there (no connection, or one that stays silent while the buffer is full) the
             // job must go on, so the oldest output is forgotten, as a `tmux` session does.
             if config.slow_client == SlowClient::Drop
@@ -348,7 +348,7 @@ impl<B: Backend> Session<B> {
             } else {
                 full_since = None;
             }
-            // With `Drop` the job never waits, so it always counts as away: the oldest output is
+            // with `Drop` the job never waits, so it always counts as away: the oldest output is
             // forgotten instead.
             let away = config.slow_client == SlowClient::Drop
                 || !connected
@@ -367,7 +367,7 @@ impl<B: Backend> Session<B> {
                 a.hello_done
                     && (a.pong_due || a.gap > 0 || a.output_sent < output.end() || exit_due)
             });
-            // An acknowledgement of input waits a moment for output to go with it: the echo of
+            // an acknowledgement of input waits a moment for output to go with it: the echo of
             // what was typed follows within milliseconds, and two small packets in a row are
             // held apart by a hop with Nagle's algorithm until the other side's delayed ACK, which
             // is 40 ms on Linux.
@@ -496,7 +496,7 @@ impl<B: Backend> Session<B> {
                                 input_received,
                             };
                             let a = active.as_mut().expect("checked above");
-                            // The shell was started before any client came, so the first
+                            // the shell was started before any client came, so the first
                             // `Start` joins it: nothing was consumed, and the size is applied.
                             let joins = config.prestart.is_some()
                                 && !ever_connected
@@ -760,7 +760,7 @@ impl<B: Backend> Session<B> {
                         let chunk = output
                             .read_from(a.output_sent, MAX_DATA_LEN)
                             .expect("sent offset lies inside the buffer");
-                        // How much the client has not taken yet: what waits to be sent and what
+                        // how much the client has not taken yet: what waits to be sent and what
                         // was sent and is not acknowledged. Compressing costs time, and it only
                         // pays when the link is what holds the output back. A link that keeps
                         // up has little of this, because the acknowledgements come back at once.
@@ -1120,7 +1120,7 @@ async fn write_connection(
         if frame.encode(&mut bytes).is_err() {
             break;
         }
-        // Frames that are queued at the same moment go out in one write: a small acknowledgement
+        // frames that are queued at the same moment go out in one write: a small acknowledgement
         // and the data behind it are one packet, not two that a hop with Nagle's algorithm holds
         // apart. The yield gives the sender the time to queue the second frame.
         tokio::task::yield_now().await;

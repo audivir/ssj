@@ -157,7 +157,7 @@ async fn new_connection_takes_over_while_old_one_is_still_open() {
     let error = timeout(Duration::from_secs(5), first.closed())
         .await
         .unwrap();
-    // The server's close frame can be overtaken by packets of the old client, which the endpoint
+    // the server's close frame can be overtaken by packets of the old client, which the endpoint
     // then answers with a stateless reset. Both mean that the server ended the connection.
     match error {
         ConnectionError::ApplicationClosed(closed) => {

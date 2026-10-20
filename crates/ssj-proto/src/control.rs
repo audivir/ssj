@@ -94,7 +94,7 @@ pub fn format_request(request: &Request) -> String {
 /// Parses one request line, with or without the final newline.
 pub fn parse_request(line: &[u8]) -> Result<Request, ControlError> {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
-    // The control socket speaks exact lines of one line each. `parse_pin` below would take a
+    // the control socket speaks exact lines of one line each. `parse_pin` below would take a
     // carriage return and a second line feed in front of the end, and the line would not be the
     // one that is formatted again.
     if line.iter().any(|b| matches!(b, b'\r' | b'\n')) {

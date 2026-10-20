@@ -110,7 +110,7 @@ impl Tracker {
         let mut rest = bytes;
         while let Some((&byte, tail)) = rest.split_first() {
             if self.state == State::Ground && self.utf8_pending == 0 {
-                // Plain text changes nothing: jump to the next byte that does (CAN, SUB, ESC, or
+                // plain text changes nothing: jump to the next byte that does (CAN, SUB, ESC, or
                 // the start of a multi-byte character).
                 let skip = rest
                     .iter()

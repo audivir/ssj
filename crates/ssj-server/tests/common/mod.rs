@@ -37,7 +37,7 @@ pub struct Launched {
     pub closed_after: Duration,
 }
 
-/// A short directory for the sockets, since the path of a unix socket is limited to about 100 bytes.
+/// A short directory for the sockets, since a unix socket path is limited to about 100 bytes.
 pub fn runtime_dir() -> PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let dir = PathBuf::from(format!(

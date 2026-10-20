@@ -1,6 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2329
-# (the commands for the containers are built in single quotes on purpose, and `cleanup` runs from the trap)
+# (the commands for the containers are built in single quotes on purpose, and `cleanup` runs from
+# the trap)
 # Runs bench/bench.py between two containers, a client and a server, on one docker network.
 #
 # The link is simulated on the network interfaces of the two containers, so only the traffic

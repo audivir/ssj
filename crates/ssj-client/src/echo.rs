@@ -42,9 +42,9 @@ fn faint(ch: char, out: &mut Vec<u8>) {
 }
 
 /// Characters that take exactly one column in every terminal, which is what the prediction needs:
-/// printable ASCII, the letters and signs of Latin-1 and Latin Extended (ä, ö, ü, ß, é, ñ), Greek,
-/// and Cyrillic. The no-break space, the soft hyphen, the combining marks (which take none), and
-/// everything wide (Chinese, Japanese, Korean, emoji) are left out.
+/// printable ASCII, the letters and signs of Latin-1 and Latin Extended (ä, ö, ü, ß, é, ñ),
+/// Greek, and Cyrillic. The no-break space, the soft hyphen, the combining marks (which take none),
+/// and everything wide (Chinese, Japanese, Korean, emoji) are left out.
 fn narrow(c: char) -> bool {
     matches!(c,
         ' '..='~'
@@ -277,7 +277,7 @@ impl Echo {
             self.feed(byte);
         }
         let mut after = Vec::new();
-        // In the middle of a sequence or of a character the drawing waits for the rest of it, or
+        // in the middle of a sequence or of a character the drawing waits for the rest of it, or
         // it would be part of it. The next output draws it.
         if self.idle() {
             for entry in &self.pending {

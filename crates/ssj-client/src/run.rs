@@ -1062,7 +1062,7 @@ impl FrameReader {
                 self.buf.drain(..self.start);
                 self.start = 0;
             }
-            // Read straight into the spare room of the buffer. This future is dropped when
+            // read straight into the spare room of the buffer. This future is dropped when
             // another branch of the `select!` wins, so the length of the buffer must only grow
             // when a read has completed: `read_buf` does that, and padding the buffer with zeros
             // before the read would leave the zeros in it.
@@ -1136,7 +1136,7 @@ async fn write_frames(mut out: Out, mut frames: mpsc::UnboundedReceiver<ClientFr
         if frame.encode(&mut bytes).is_err() {
             return;
         }
-        // Frames that are queued at the same moment go out in one write, so that a hop with
+        // frames that are queued at the same moment go out in one write, so that a hop with
         // Nagle's algorithm does not hold the second of two small packets back for the delayed
         // ACK of the first.
         tokio::task::yield_now().await;
@@ -1892,7 +1892,7 @@ impl Client {
         if self.input.ack(welcome.input_offset).is_err() {
             return Attempt::Fatal("the server consumed input that was never sent".to_owned());
         }
-        // The server forgot output while the client was away. The stream goes on at the new
+        // the server forgot output while the client was away. The stream goes on at the new
         // offset, and the gap is shown in the output where it happened, with its exact size.
         if let Hello::Resume { output_offset, .. } = hello
             && welcome.output_offset > *output_offset
@@ -2110,7 +2110,7 @@ impl Client {
                     };
                     match frame {
                         ServerFrame::Output(mut data) => {
-                            // Frames that are here already go to the terminal in one write. A
+                            // frames that are here already go to the terminal in one write. A
                             // terminal hands out its output in small pieces, and one write (a
                             // trip through the blocking pool) for each would cap the throughput.
                             while data.len() < OUTPUT_BATCH && link.reader.take_ready_output(&mut data) {}
@@ -2157,7 +2157,7 @@ impl Client {
                             }
                         }
                         ServerFrame::Gap(skipped) => {
-                            // The server skipped output that this client was too slow to take.
+                            // the server skipped output that this client was too slow to take.
                             // What was shown ahead of the server goes first, then the notice.
                             vlog!(1, "the server skipped {skipped} bytes of output (slow link)");
                             let taken_back = self.echo.cancel();
@@ -2231,7 +2231,8 @@ impl Client {
                     );
                     notices = 0;
                     self.rebind();
-                    // a faster network may have appeared: QUIC is tried on it while the stream works
+                    // a faster network may have appeared: QUIC is tried on it while the stream
+                    // works
                     if self.current != 0
                         && upgrade.is_none()
                         && matches!(self.params.tiers[0], Tier::Udp { .. })
@@ -2246,7 +2247,8 @@ impl Client {
                     probe = Some(tokio::time::Instant::now() + wait);
                 }
                 _ = async { tokio::time::sleep_until(probe.expect("guarded")).await }, if probe.is_some() => {
-                    // the new path did not bring an answer, so the old connection is not worth keeping
+                    // the new path did not bring an answer, so the old connection is not worth
+                    // keeping
                     vlog!(1, "no answer after the network change: giving up the connection and reconnecting");
                     return Ok(Pumped::Lost);
                 }
@@ -2292,7 +2294,8 @@ impl Client {
                     }
                     if silent > stall_after {
                         stalled = true;
-                        // the number changes in steps of five seconds, so the title does not flicker
+                        // the number changes in steps of five seconds, so the title does not
+                        // flicker
                         let text = if silent < Duration::from_secs(10) {
                             "no response from the server".to_owned()
                         } else {

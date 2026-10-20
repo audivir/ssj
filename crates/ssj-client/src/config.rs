@@ -3,13 +3,13 @@
 //! ```toml
 //! auto_install = "ask"            # "ask" (default), "always", or "never"
 //! escape_char = "~"               # one character, or "none"
-//! detach_key = "none"            # "none" (default) or a key such as "ctrl-]" that detaches anywhere
+//! detach_key = "none"             # "none" (default) or a key such as "ctrl-]" that detaches
 //! ssh_command = "ssh -J jump"     # replaces `ssh`
 //! send_env = ["TERM", "LANG", "LC_*"]
 //! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
-//! congestion = "auto"            # "auto" (default), "bbr", or "cubic": how fast to send
-//! compress = "off"                # "off" (default) or "auto": compress while the link is the limit
+//! congestion = "auto"             # "auto" (default), "bbr", or "cubic": how fast to send
+//! compress = "off"                # "off" (default) or "auto": when the link is the limit
 //! forward_agent = false           # let programs on the host use the ssh agent of this machine
 //! local_echo = "off"              # "off" (default) or "auto": show typed characters at once
 //! ```

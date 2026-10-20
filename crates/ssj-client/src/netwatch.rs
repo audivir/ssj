@@ -168,7 +168,7 @@ mod platform {
                     let _ = ready_tx.send(Err("cannot create a run loop source".to_owned()));
                     return;
                 };
-                // The run loop finds a mode by the text of its name, so the name of the default mode
+                // the run loop finds a mode by the text of its name, so the name of the default mode
                 // works without touching the extern static that holds it.
                 let mode = CFString::new("kCFRunLoopDefaultMode");
                 CFRunLoop::get_current().add_source(&source, mode.as_concrete_TypeRef());

@@ -944,7 +944,7 @@ async fn a_connected_client_that_stays_silent_is_treated_as_away() {
 
     wait_for_file(&marker).await;
 
-    // The connection was cut by the server, since it still owed the client bytes that are gone.
+    // the connection was cut by the server, since it still owed the client bytes that are gone.
     // What the client got before that is a prefix of the stream.
     let mut closed = false;
     while let Ok(frame) = timeout(Duration::from_secs(10), client.next()).await {

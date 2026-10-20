@@ -310,7 +310,7 @@ fn base_transport() -> quinn::TransportConfig {
             }));
         }
     }
-    // Bulk output is acknowledged every few packets and not every second one, which halves the
+    // bulk output is acknowledged every few packets and not every second one, which halves the
     // packets and system calls of the receiver. Data still goes out at once, so the delay of an
     // acknowledgement never delays an echo.
     let mut ack_frequency = quinn::AckFrequencyConfig::default();

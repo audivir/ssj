@@ -1,6 +1,6 @@
-//! The last known session names of each host (and whether a client is connected), for tab completion. A completion must answer in
-//! milliseconds and never prompt, so it reads these files, and a refresh in the background keeps
-//! them current.
+//! The last known session names of each host (and whether a client is connected), for tab
+//! completion. A completion must answer in milliseconds and never prompt, so it reads these files,
+//! and a refresh in the background keeps them current.
 
 use std::{
     fs::{self, OpenOptions},

@@ -52,7 +52,7 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
             if output_offset > view.output.end() {
                 return Err(ErrorCode::ReplayGap);
             }
-            // Output that was forgotten while nobody was there to acknowledge it is skipped: the
+            // output that was forgotten while nobody was there to acknowledge it is skipped: the
             // welcome starts at the oldest byte that is left, and the client works out from the
             // difference how many bytes it missed.
             let welcome = Welcome {

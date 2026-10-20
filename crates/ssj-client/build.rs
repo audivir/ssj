@@ -181,8 +181,8 @@ _ssj_words() {
     }
 }
 
-/// Hooks that let `attach`, `kill`, `detach`, and `--name` offer the session names of `ssj --complete`: for
-/// the id after the host of `attach`, `kill`, and `detach` those of that host.
+/// Hooks that let `attach`, `kill`, `detach`, and `--name` offer the session names of
+/// `ssj --complete`: for the id after the host of `attach`, `kill`, and `detach` those of that host.
 fn dynamic(shell: Shell) -> &'static str {
     match shell {
         Shell::Bash => {

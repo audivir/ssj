@@ -35,7 +35,8 @@ bench="python3 bench/bench.py --host localhost --ssj /target/release/ssj --serve
 [ -n "$CONGESTION" ] && bench="$bench --congestion $CONGESTION"
 [ -n "$ONLY" ] && bench="$bench --only $ONLY"
 
-# SCENARIOS picks some of them (zeros text slow lossy clean fast start cleanup), for example SCENARIOS="slow lossy"
+# SCENARIOS picks some of them (zeros text slow lossy clean fast start cleanup), for example
+# SCENARIOS="slow lossy"
 scenarios=${SCENARIOS:-"zeros text slow lossy"}
 want() { case " $scenarios " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
