@@ -120,11 +120,8 @@ protocol version, and two peers talk only if their versions are equal.
   stored file `tests/golden/protocol-<N>.bin`. A change of the wire format makes the test fail
   until the developer increases `PROTOCOL` and stores a new golden file. Increasing `PROTOCOL`
   without a new file fails the same test, because the file is missing.
-- `PROTOCOLS.md` is the table of releases: one row per release with its version and protocol.
-  It is checked by the release workflow, which fails if the version being released is missing or
-  its row differs from `PROTOCOL`. The client uses the table only for messages. When a handshake
-  fails with `no_application_protocol`, the client says which release speaks its protocol, for
-  example "client 0.4.0 speaks protocol 3, install it on the host with `ssj install`".
+- The README lists the protocol of every release that broke the wire format ("Protocol versions"). A
+  developer who increases `PROTOCOL` adds a row there.
 - The bootstrap line `SSJ CONNECT` has no version of its own and is covered by `N`.
 
 ### Reconnect (client)

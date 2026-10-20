@@ -365,6 +365,19 @@ It runs each test in its own process and stops and names a test that hangs. The 
 `.config/nextest.toml`; CI uses the `ci` profile, which retries a failed test once and lists it as
 flaky. `cargo test` works too, but it does not stop a hanging test.
 
+### Protocol versions
+
+A client and a server talk only if they speak the same protocol version. The server file on a
+host is named `ssj-server-p<N>` after the protocol, so servers of different protocols can sit side
+by side. After an upgrade that changes the protocol, run `ssj install HOST` for each host (the old
+server keeps serving its running sessions).
+
+Releases without a row in this table speak the protocol of the row above them.
+
+| Protocol | First release | Change |
+| -------- | ------------- | ------ |
+| 1 | 0.1.0-rc4 | First published format. It includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent forwarding. |
+
 ### Files
 
 Paths follow the XDG Base Directory specification: `$XDG_CONFIG_HOME/ssj/` (`client.toml`,
