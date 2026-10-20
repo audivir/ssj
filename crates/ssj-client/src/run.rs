@@ -198,6 +198,9 @@ pub struct Params {
     pub compress: bool,
     /// The socket of the local ssh agent, to offer it to the session.
     pub agent: Option<PathBuf>,
+    /// The destination for the line that says the session began (`[started session ...]`), or
+    /// `None` for no line (`-q`, or no terminal).
+    pub announce: Option<String>,
 }
 
 /// The terminal side of a session, so that tests can stand in for it.
@@ -958,15 +961,6 @@ async fn connect_session(
         }
     };
 
-    // without the message of the day of a login, nothing else says when the session starts.
-    notice(
-        &args,
-        &format!(
-            "[connected to {}: session {}]",
-            args.destination,
-            connect.id.as_str()
-        ),
-    );
     let raw = match RawMode::enable() {
         Ok(raw) => raw,
         Err(err) => {
@@ -1018,6 +1012,7 @@ async fn connect_session(
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
             compress: args.compress == Some(true),
             agent,
+            announce: (raw.is_some() && !args.quiet).then(|| args.destination.clone()),
         },
         io,
     )
@@ -1474,6 +1469,24 @@ impl Client {
                     return Err(message);
                 }
                 Attempt::Linked(mut link) => {
+                    if !self.linked_once
+                        && let Some(destination) = &self.params.announce
+                    {
+                        // without the message of the day of a login, nothing else says when the
+                        // session begins. The terminal is raw by now, hence the carriage return.
+                        let what = if matches!(hello, Hello::Start { .. }) {
+                            "started session"
+                        } else {
+                            "attached to session"
+                        };
+                        let line = format!(
+                            "[{what} {} on {destination} over {}]\r\n",
+                            self.params.connect.id.as_str(),
+                            self.params.tiers[self.current].name()
+                        );
+                        let _ = self.io.output.write_all(line.as_bytes()).await;
+                        let _ = self.io.output.flush().await;
+                    }
                     attempts = 0;
                     self.failures = 0;
                     self.linked_once = true;

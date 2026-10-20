@@ -124,6 +124,7 @@ async fn a_stream_that_is_slow_to_open_is_not_given_up_after_the_short_first_tim
         local_echo: false,
         compress: false,
         agent: None,
+        announce: None,
     };
     let client = tokio::spawn(run_session(params, io));
 

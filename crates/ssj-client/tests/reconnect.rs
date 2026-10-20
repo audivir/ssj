@@ -465,6 +465,7 @@ fn start_client_inner(
         local_echo: false,
         compress: false,
         agent: None,
+        announce: None,
         attach,
     };
     let client = tokio::spawn(run_session(params, io));

@@ -168,6 +168,7 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
         local_echo: false,
         compress: false,
         agent: Some(local.clone()),
+        announce: None,
     };
     let client = tokio::spawn(run_session(params, io));
     // nobody reads the terminal here, so keep it from filling up.

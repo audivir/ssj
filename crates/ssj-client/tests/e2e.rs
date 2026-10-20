@@ -377,7 +377,7 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
     assert_eq!(code, Some(7));
     // without the message of the day, these lines say when the session begins and ends.
     assert!(
-        seen.contains("[connected to me@localhost: session "),
+        seen.contains("[started session ") && seen.contains(" on me@localhost over udp]"),
         "{seen:?}"
     );
     assert!(
@@ -390,7 +390,7 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
 fn quiet_leaves_out_the_lines_about_connecting_and_disconnecting() {
     let (seen, code) = terminal_session(&["-q"]);
     assert_eq!(code, Some(7));
-    assert!(!seen.contains("[connected"), "{seen:?}");
+    assert!(!seen.contains("[started"), "{seen:?}");
     assert!(!seen.contains("[disconnected"), "{seen:?}");
 }
 
