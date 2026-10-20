@@ -25,12 +25,19 @@ fn fail(message: &str) -> ExitCode {
 /// belong to other versions of the server and are never touched.
 pub fn choose(sessions: Vec<Found>, selector: Option<&str>) -> Result<Found, String> {
     if let Some(selector) = selector {
-        let found = sessions
-            .into_iter()
-            .find(|f| {
-                f.info.id.as_str() == selector
-                    || f.info.name.as_ref().is_some_and(|n| n.as_str() == selector)
-            })
+        let mut matching = matches(&sessions, selector);
+        if matching.len() > 1 {
+            // a name is unique among the sessions that are made with it, but it may be the id of
+            // another session, and the caller has to say which one it means.
+            let ids: Vec<&str> = matching.iter().map(|f| f.info.id.as_str()).collect();
+            return Err(format!(
+                "{selector} matches several sessions ({}), name one by its id",
+                ids.join(", ")
+            ));
+        }
+        let found = matching
+            .pop()
+            .cloned()
             .ok_or_else(|| format!("no running session {selector}"))?;
         return if found.info.protocol == PROTOCOL {
             Ok(found)
@@ -86,16 +93,34 @@ pub fn read_pin() -> Result<[u8; 32], String> {
     parse_pin(&line).map_err(|_| "stdin does not hold a valid SSJ PIN line".to_owned())
 }
 
-/// With `--choose` and no selector, several sessions are listed for the caller to choose from,
-/// and the exit code says so, instead of the error that asks for a name.
+/// The sessions that a selector can mean: the one with that id and the ones with that name.
+fn matches<'a>(sessions: &'a [Found], selector: &str) -> Vec<&'a Found> {
+    sessions
+        .iter()
+        .filter(|f| {
+            f.info.id.as_str() == selector
+                || f.info.name.as_ref().is_some_and(|n| n.as_str() == selector)
+        })
+        .collect()
+}
+
+/// With `--choose`, several sessions are listed for the caller to choose from, and the exit code
+/// says so, instead of the error that asks for a name or an id. That happens for no selector and
+/// for one that fits several sessions.
 fn several_to_choose(args: &Args, selector: Option<&str>, sessions: &[Found]) -> Option<ExitCode> {
-    if !args.choose || selector.is_some() {
+    if !args.choose {
         return None;
     }
-    let mine: Vec<&Found> = sessions
-        .iter()
-        .filter(|f| f.info.protocol == PROTOCOL)
-        .collect();
+    let mine: Vec<&Found> = match selector {
+        Some(selector) => matches(sessions, selector)
+            .into_iter()
+            .filter(|f| f.info.protocol == PROTOCOL)
+            .collect(),
+        None => sessions
+            .iter()
+            .filter(|f| f.info.protocol == PROTOCOL)
+            .collect(),
+    };
     if mine.len() < 2 {
         return None;
     }

@@ -118,7 +118,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 | `ssj --name work user@host` | Joins the session `work`, or starts it. |
 | `ssj attach user@host [ID]` | Joins a running session, for example after a restart. `ID` is an id or a name. |
 | `ssj list user@host` | Lists sessions with state, age, and name, under a header on a terminal. `--json` prints JSON. |
-| `ssj kill user@host [ID...]` | Ends one or more sessions. |
+| `ssj kill [-f] user@host [ID...]` | Ends one or more sessions. `ID` is an id or a name. Without an `ID` the only session is ended after a question (`-f` skips it), and several sessions get a menu. |
 | `ssj detach user@host [ID...]` | Makes the clients leave; the sessions keep running. |
 | `ssj user@host -- make -j8` | Runs a command in a session that survives jumps (see below). |
 | `ssj user@host uptime` | The same, when the command has no options of its own. |
@@ -160,7 +160,7 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | Action | Effect |
 | ------------------------------------------- | ------------------------------------------------------------------- |
 | `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
-| `ssj kill user@host [ID...]` | Ends the sessions from another terminal. |
+| `ssj kill [-f] user@host [ID...]` | Ends the sessions from another terminal. |
 | `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
 | The detach key, anywhere | The same, also in the middle of a line or a program. |
 | `ssj detach user@host [ID...]` | The same, from another terminal, for the clients of those sessions. |
@@ -211,6 +211,13 @@ or failing.
 - Keys: arrow keys or `j` and `k`, a number to jump, Enter to choose, `q` or Ctrl-C to cancel.
 - Without a terminal nothing is asked: `--auto-attach` starts a session as before, and the other
   commands name the sessions in their error.
+- `ssj kill` without an id asks `End the session ...? [y/N]` when only one session runs (Enter is no,
+  and `-f` does not ask). With several sessions the menu is the question. Without a terminal and
+  without `-f` it refuses to end a session that you did not name.
+- An id or a name is exact. A session has one name, and `--name` joins the session of that name
+  instead of making another, but a name can be the id of a different session. A selector that fits
+  two sessions is never guessed: a terminal gets the menu of the two, and a script gets an error
+  that names both ids.
 
 Joining a session with `ssj attach` redraws the screen of the program in it, since the new client
 has no history: the shell shows its prompt again, and a full-screen program draws itself.

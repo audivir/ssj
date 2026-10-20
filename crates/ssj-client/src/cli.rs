@@ -139,6 +139,8 @@ pub struct Args {
     pub verbose: u8,
     /// No lines about connecting, disconnecting, and detaching (`-q`).
     pub quiet: bool,
+    /// `kill` does not ask before it ends the only session of the host (`-f`).
+    pub force: bool,
     /// Where the output of `-v` goes instead of the terminal.
     pub log_file: Option<PathBuf>,
     /// Never prompt and give up early: for refreshes that nobody waits for.
@@ -189,6 +191,7 @@ impl Args {
             json: false,
             verbose: 0,
             quiet: false,
+            force: false,
             log_file: None,
             batch: false,
             explicit: Explicit::default(),
@@ -333,6 +336,15 @@ fn positionals(args: &[String]) -> [Option<usize>; 2] {
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let args: Vec<String> = args.into_iter().collect();
     let [first, second] = positionals(&args);
+    // `ssj kill --help`: a command word alone is not a host, and the help is its own
+    if let Some(first) = first
+        && second.is_none()
+        && args.iter().any(|a| a == "--help" || a == "-h")
+        && let Some(text) = command_help(&args[first])
+    {
+        println!("{text}");
+        std::process::exit(0);
+    }
     let mut tail = Vec::new();
     let mut head = args;
     if let Some(first) = first {
@@ -356,6 +368,58 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         Err(error) => error.exit(),
     };
     from_options(options, &tail)
+}
+
+/// The help of a command of `ssj`, or `None` for a word that is not one.
+pub fn command_help(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "list" => {
+            "Usage: ssj list [OPTIONS] DESTINATION
+
+Lists the sessions on the host: id, state, age, protocol, and name. A terminal gets a header.
+
+Options:
+      --json  print a JSON array instead"
+        }
+        "attach" => {
+            "Usage: ssj attach [OPTIONS] DESTINATION [ID]
+
+Joins a running session. ID is an id or a name. Without it the only session is joined, and with
+several a menu asks which one."
+        }
+        "kill" => {
+            "Usage: ssj kill [OPTIONS] DESTINATION [ID...]
+
+Ends sessions on the host. Each ID is an id or a name. Without an ID the only session is ended
+after a question, and with several sessions a menu asks which one. A name that is also the id of
+another session gets a menu as well.
+
+Options:
+  -f, --force  do not ask before the only session is ended"
+        }
+        "detach" => {
+            "Usage: ssj detach [OPTIONS] DESTINATION [ID...]
+
+Makes the clients of sessions leave. The sessions keep running. Each ID is an id or a name. Without
+an ID the only session that has a client is detached, and with several a menu asks which one."
+        }
+        "install" => {
+            "Usage: ssj install [OPTIONS] DESTINATION
+
+Puts the server file on the host: downloaded from the release of this version, or the file given
+with --server-binary.
+
+Options:
+      --server-binary FILE  upload this file instead of the download
+      --download-url URL    take the files from this place"
+        }
+        "edit" => {
+            "Usage: ssj edit [OPTIONS] [DESTINATION]
+
+Edits client.toml in $EDITOR, or server.toml on the host. The text is checked before it is saved."
+        }
+        _ => return None,
+    })
 }
 
 /// Words that are commands of `ssj` when a destination follows them.
@@ -566,6 +630,7 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
         json: options.json,
         verbose: options.verbose.min(3),
         quiet: options.quiet,
+        force: options.force,
         log_file: options.log_file.map(PathBuf::from),
         batch: options.batch,
     })

@@ -66,6 +66,10 @@ pub struct Options {
     #[arg(short = 'q', long)]
     pub quiet: bool,
 
+    /// Do not ask before `kill` ends the only session of the host
+    #[arg(short = 'f', long)]
+    pub force: bool,
+
     /// Write the -v output to this file and not to the terminal
     #[arg(long, value_name = "FILE", overrides_with = "log_file")]
     pub log_file: Option<String>,

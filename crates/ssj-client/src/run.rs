@@ -515,7 +515,8 @@ async fn run_choosing(
 ) -> Result<Remote, String> {
     let mut extra = vec![flag.to_owned()];
     extra.extend(id.clone());
-    let choosing = id.is_none() && interactive() && !args.batch;
+    // a person is asked when there is no id, and when the id or name fits several sessions
+    let choosing = interactive() && !args.batch;
     if choosing {
         extra.push("--choose".to_owned());
     }
@@ -751,7 +752,102 @@ pub fn list_lines(infos: &[SessionInfo], header: bool) -> Vec<String> {
     lines
 }
 
+/// The sessions of the host, as `ssj list` has them.
+async fn fetch_sessions(args: &Args) -> Result<Vec<SessionInfo>, String> {
+    let remote = run_remote(args, &["--list".to_owned()], "").await?;
+    if remote.server_missing() {
+        return Ok(Vec::new());
+    }
+    if !remote.status.success() {
+        return Err(format!(
+            "could not list the sessions ({}): {}",
+            remote.status,
+            remote.error_text()
+        ));
+    }
+    Ok(remote
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter_map(|line| match parse_reply(line) {
+            Ok(Reply::Info(info)) => Some(info),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Asks a yes or no question on the terminal. Only `y` and `yes` agree, so that Enter is no.
+fn confirm_yes(question: &str) -> bool {
+    use std::io::{BufRead, Write};
+    let mut err = std::io::stderr();
+    let _ = write!(err, "{question} [y/N] ");
+    let _ = err.flush();
+    let mut answer = String::new();
+    match std::io::stdin().lock().read_line(&mut answer) {
+        Ok(read) if read > 0 => matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+        _ => false,
+    }
+}
+
+/// What `ssj kill HOST` does without an id: the only session is ended after a question (unless
+/// `-f` is given), and several sessions go into a menu, where the choice is the consent. Returns
+/// the id, or the message that ends the command.
+async fn session_to_kill(args: &Args) -> Result<String, String> {
+    if !interactive() {
+        // the server ends the only session, and refuses when there are several, and says so when
+        // there is none: only a session that would be ended without a word needs the flag
+        if args.force || fetch_sessions(args).await?.is_empty() {
+            return Ok(String::new());
+        }
+        return Err("there is no terminal to ask: name the session, or use -f".to_owned());
+    }
+    let mut sessions = fetch_sessions(args).await?;
+    sessions.retain(|s| s.protocol == ssj_proto::PROTOCOL);
+    sessions.sort_by_key(|s| s.age_secs);
+    match sessions.len() {
+        0 => Err("no running session".to_owned()),
+        1 => {
+            let s = &sessions[0];
+            if !args.force {
+                let what = s.name.as_ref().map_or_else(
+                    || s.id.as_str().to_owned(),
+                    |name| format!("{} ({})", name.as_str(), s.id.as_str()),
+                );
+                let question = format!(
+                    "End the session {what} on {} ({}, {})?",
+                    args.destination,
+                    state_word(s.state),
+                    format_age(s.age_secs)
+                );
+                if !confirm_yes(&question) {
+                    return Err("not ended".to_owned());
+                }
+            }
+            Ok(s.id.as_str().to_owned())
+        }
+        n => {
+            let title = format!(
+                "ssj: {n} sessions on {}. Which one to end?",
+                args.destination
+            );
+            match pick_session(title, sessions, false).await {
+                Picked::Session(id) => Ok(id),
+                _ => Err("cancelled".to_owned()),
+            }
+        }
+    }
+}
+
 async fn kill_session(args: &Args, mut ids: Vec<String>) -> u8 {
+    if ids.is_empty() {
+        match session_to_kill(args).await {
+            Ok(id) if !id.is_empty() => ids.push(id),
+            Ok(_) => {}
+            Err(message) => {
+                eprintln!("ssj: {message}");
+                return 1;
+            }
+        }
+    }
     let count = ids.len().max(1);
     let result = if ids.len() > 1 {
         // one call to the host ends them all.

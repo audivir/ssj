@@ -629,7 +629,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
     let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
     assert!(listing.contains("detached"), "{listing}");
 
-    let killed = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+    let killed = ssj(&runtime, &ssh, &["kill", "-f", "user@localhost"], "");
     assert!(killed.status.success(), "{}", text(&killed.stderr));
     assert!(text(&killed.stdout).contains("session ended"));
     let start = Instant::now();
@@ -717,7 +717,7 @@ fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
         "{}",
         text(&nobody.stderr)
     );
-    let _ = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+    let _ = ssj(&runtime, &ssh, &["kill", "-f", "user@localhost"], "");
 }
 
 #[test]
@@ -739,7 +739,7 @@ fn the_detach_key_leaves_in_the_middle_of_a_line() {
     );
     let id = wait_for_state(&runtime, &ssh, "detached");
     assert!(!id.is_empty());
-    let _ = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+    let _ = ssj(&runtime, &ssh, &["kill", "-f", "user@localhost"], "");
 }
 
 #[test]
@@ -1722,7 +1722,7 @@ fn auto_attach_joins_the_only_session_without_a_client() {
         text(&second.stdout),
         text(&second.stderr)
     );
-    let killed = ssj(&runtime, &ssh, &["kill", "user@localhost"], "");
+    let killed = ssj(&runtime, &ssh, &["kill", "-f", "user@localhost"], "");
     assert!(killed.status.success(), "{}", text(&killed.stderr));
 }
 
@@ -2095,4 +2095,127 @@ fn a_lock_that_is_held_on_the_host_stops_the_save_and_is_named() {
     assert!(!config.join("ssj/server.toml").exists());
     // the lock of somebody else is left alone.
     assert!(lock.is_dir());
+}
+
+/// A detached session on the host of the test, made as after `~.`.
+fn detached_session(host: &Host, ssh: &Path) {
+    let output = ssj_typing(
+        &host.runtime,
+        ssh,
+        &["--detach-key", "ctrl-]", "user@localhost"],
+        &[("x\x1d", "")],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+}
+
+fn sessions_listed(host: &Host, ssh: &Path) -> usize {
+    text(&ssj(&host.runtime, ssh, &["list", "user@localhost"], "").stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with("no sessions"))
+        .count()
+}
+
+fn wait_for_sessions(host: &Host, ssh: &Path, wanted: usize) {
+    let start = Instant::now();
+    while sessions_listed(host, ssh) != wanted {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the host has {} sessions, not {wanted}",
+            sessions_listed(host, ssh)
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn kill_words(host: &Host, extra: &[&str]) -> Vec<String> {
+    let mut words = vec![
+        "--server-path".to_owned(),
+        server_binary().to_str().unwrap().to_owned(),
+    ];
+    words.extend(extra.iter().map(|w| (*w).to_owned()));
+    let _ = host;
+    words
+}
+
+#[test]
+fn kill_without_an_id_asks_before_it_ends_the_only_session() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    detached_session(&host, &ssh);
+    assert_eq!(sessions_listed(&host, &ssh), 1);
+
+    // no is the answer of Enter, and of anything but yes
+    let mut terminal = on_terminal(&host, &ssh, &kill_words(&host, &["kill", "user@localhost"]));
+    terminal.wait_for("End the session ");
+    terminal.wait_for("[y/N]");
+    terminal.typed.write_all(b"\n").unwrap();
+    assert_eq!(terminal.exit_code(), Some(1));
+    assert_eq!(sessions_listed(&host, &ssh), 1);
+
+    let mut terminal = on_terminal(&host, &ssh, &kill_words(&host, &["kill", "user@localhost"]));
+    terminal.wait_for("[y/N]");
+    terminal.typed.write_all(b"y\n").unwrap();
+    assert_eq!(terminal.exit_code(), Some(0));
+    wait_for_sessions(&host, &ssh, 0);
+}
+
+#[test]
+fn kill_with_f_does_not_ask() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    detached_session(&host, &ssh);
+    let mut terminal = on_terminal(
+        &host,
+        &ssh,
+        &kill_words(&host, &["kill", "-f", "user@localhost"]),
+    );
+    assert_eq!(terminal.exit_code(), Some(0));
+    assert!(!terminal.seen.contains("[y/N]"), "{:?}", terminal.seen);
+    wait_for_sessions(&host, &ssh, 0);
+}
+
+#[test]
+fn kill_without_an_id_and_without_a_terminal_needs_f() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    detached_session(&host, &ssh);
+
+    let refused = ssj(&host.runtime, &ssh, &["kill", "user@localhost"], "");
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        text(&refused.stderr).contains("no terminal to ask")
+            && text(&refused.stderr).contains("-f"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert_eq!(sessions_listed(&host, &ssh), 1);
+
+    let forced = ssj(&host.runtime, &ssh, &["kill", "-f", "user@localhost"], "");
+    assert_eq!(forced.status.code(), Some(0), "{}", text(&forced.stderr));
+    wait_for_sessions(&host, &ssh, 0);
+}
+
+#[test]
+fn a_command_word_with_help_shows_its_own_help_and_not_a_host() {
+    for word in ["list", "attach", "kill", "detach", "install", "edit"] {
+        for flag in ["--help", "-h"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_ssj"))
+                .args([word, flag])
+                .output()
+                .unwrap();
+            let shown = text(&output.stdout);
+            assert_eq!(output.status.code(), Some(0), "{word} {flag}");
+            assert!(shown.starts_with(&format!("Usage: ssj {word}")), "{shown}");
+        }
+    }
+    assert!(
+        text(
+            &Command::new(env!("CARGO_BIN_EXE_ssj"))
+                .args(["kill", "--help"])
+                .output()
+                .unwrap()
+                .stdout
+        )
+        .contains("--force")
+    );
 }

@@ -346,6 +346,20 @@ redraw.
   to the host (`--kill ID ID...`). Each is answered on its own: a session that cannot be reached is
   reported on stderr, the others are still handled, and the exit code is 1 if any failed.
 
+- `ssj kill [-f] DESTINATION` without an id: with a terminal, the only session is ended after
+  `End the session <NAME> (<ID>) on <DESTINATION> (<STATE>, <AGE>)? [y/N]` (only `y` or `yes`
+  agrees, `-f` skips the question), and several sessions go into the menu, which is the consent.
+  Without a terminal the client refuses unless `-f` is given, and says "no running session" first
+  if there is none. An id given on the command line is never asked about.
+
+- A selector (id or name) that fits two sessions, which happens when a session is named like the id
+  of another, is an error that names both ids (`matches several sessions`). With `--choose` the
+  server lists the two sessions and exits with the code of a choice, and a client at a terminal
+  shows the menu, for `kill`, `detach`, and `attach`.
+
+- `ssj <command> --help` shows the help of the command (`list`, `attach`, `kill`, `detach`,
+  `install`, `edit`), since a command word alone would be read as the host of the command to run.
+
 - The completion offers further ids for `kill` and `detach`, and `detach` offers only sessions
   that had a client at the last refresh of the cache (`ssj --complete HOST --connected`). The
   cache file marks them: a line is `name` or `name connected`.

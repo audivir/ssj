@@ -538,3 +538,57 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
     let named = run_control(&runtime, &["--kill", &id, "--choose"], "");
     assert!(named.status.success());
 }
+
+// A name is the id of another session by chance of the user: the selector then fits two sessions,
+// and neither is guessed. A caller that can ask gets both, with the exit code for a choice.
+#[test]
+fn a_selector_that_fits_two_sessions_is_not_guessed() {
+    let runtime = runtime_dir();
+    let client = Identity::generate();
+    let first = launch(&runtime, &client, free_range(), "cat");
+    let confusing = first.connect.id.as_str().to_owned();
+    // a second session, named like the id of the first
+    let second = launch_with(
+        &runtime,
+        &client,
+        free_range(),
+        "cat",
+        &["--name", &confusing],
+    );
+    assert_ne!(second.connect.id, first.connect.id);
+    assert_eq!(list(&runtime).len(), 2);
+
+    // without a person to ask: an error that names both ids, and nothing is ended
+    let refused = run_control(&runtime, &["--kill", &confusing], "");
+    assert!(!refused.status.success());
+    let message = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        message.contains("matches several sessions")
+            && message.contains(first.connect.id.as_str())
+            && message.contains(second.connect.id.as_str()),
+        "{message}"
+    );
+    assert_eq!(list(&runtime).len(), 2);
+
+    // with `--choose`: the two sessions and the exit code of a choice
+    let offered = run_control(&runtime, &["--kill", &confusing, "--choose"], "");
+    assert_eq!(
+        offered.status.code(),
+        Some(i32::from(ssj_proto::bootstrap::CHOICE_EXIT_CODE))
+    );
+    let lines = stdout_of(&offered);
+    assert!(
+        lines.contains(first.connect.id.as_str()) && lines.contains(second.connect.id.as_str()),
+        "{lines}"
+    );
+    assert_eq!(list(&runtime).len(), 2);
+
+    // an id picked from the menu is exact for the first, and the name of the second is the id
+    // of the first, so only the id of the second is exact for it.
+    let killed = run_control(&runtime, &["--kill", second.connect.id.as_str()], "");
+    assert!(killed.status.success(), "{}", stdout_of(&killed));
+    wait_gone_one(&runtime, second.connect.id.as_str());
+    // now the selector fits one session again
+    let killed = run_control(&runtime, &["--kill", &confusing], "");
+    assert!(killed.status.success());
+}
