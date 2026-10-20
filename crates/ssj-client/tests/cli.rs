@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use ssj_client::bootstrap::{remote_command, shell_quote};
-use ssj_client::cli::{Args, ServerPath, parse};
+use ssj_client::cli::{Args, ServerPath, misplaced_option, parse};
 
 fn args(list: &[&str]) -> Result<Args, String> {
     parse(list.iter().map(|s| s.to_string()))
@@ -610,4 +610,17 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
+}
+
+#[test]
+fn an_option_after_the_destination_gets_a_hint_and_a_command_does_not() {
+    for word in ["--install", "--install=x", "--transport", "-q", "-A", "--no-install"] {
+        assert!(misplaced_option(word).is_some(), "{word}");
+    }
+    for word in ["ls", "--nothing", "-Z", "-", "--", "echo"] {
+        assert!(misplaced_option(word).is_none(), "{word}");
+    }
+    // it is still run as a command, as `ssh` would.
+    let parsed = args(&["host", "--install"]).unwrap();
+    assert_eq!(parsed.remote_command.as_deref(), Some("--install"));
 }

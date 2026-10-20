@@ -25,6 +25,15 @@ pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
+/// Quotes a path on the host. A leading `~/` stays the home directory of the host: a shell expands
+/// a tilde only when it is not quoted.
+fn quote_path(path: &str) -> String {
+    match path.strip_prefix("~/") {
+        Some(rest) => format!("\"$HOME\"/{}", shell_quote(rest)),
+        None => shell_quote(path),
+    }
+}
+
 /// Text that the wrapper prints, and the exit code it uses, when the server file is missing.
 pub const MISSING_MARKER: &str = "SSJ MISSING";
 /// Exit code of the wrapper when the server file is missing.
@@ -55,7 +64,7 @@ pub fn remote_command(args: &Args, extra: &[String]) -> String {
             &all,
         ),
         ServerPath::Custom(path) => {
-            let mut command = shell_quote(path);
+            let mut command = quote_path(path);
             for arg in &all {
                 command.push(' ');
                 command.push_str(&shell_quote(arg));
@@ -254,5 +263,34 @@ pub async fn start_server(
             remote.status,
             remote.error_text()
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::quote_path;
+
+    fn echoed(path: &str) -> String {
+        let out = Command::new("sh")
+            .args(["-c", &format!("printf %s {}", quote_path(path))])
+            .env("HOME", "/home/someone")
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    #[test]
+    fn a_path_in_the_home_directory_of_the_host_is_expanded_there() {
+        assert_eq!(echoed("~/bin/ssj-server"), "/home/someone/bin/ssj-server");
+        assert_eq!(echoed("~/a b/it's"), "/home/someone/a b/it's");
+    }
+
+    #[test]
+    fn any_other_path_is_taken_as_it_is() {
+        assert_eq!(echoed("/opt/ssj server"), "/opt/ssj server");
+        assert_eq!(echoed("~other/x"), "~other/x");
+        assert_eq!(echoed("$HOME/x"), "$HOME/x");
     }
 }

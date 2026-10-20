@@ -701,10 +701,10 @@ Location and name:
   `PATH` of a non-interactive `ssh` command often lacks `~/.local/bin`. `--server-path` overrides
   the location for servers installed elsewhere (for example by an administrator).
 - A session stays on the protocol it was started with. After updating the client to a newer
-  protocol, the old sessions are attached with an older client or ended. `ssj --list` shows the
+  protocol, the old sessions are attached with an older client or ended. `ssj list` shows the
   protocol of each session, and the attach error says which release to use.
-- `ssj gc user@host` removes server files of protocols that have no running session, except the
-  protocol of the client that runs the command.
+- The server files of older protocols stay on the host (`ssj-server-pN`, a few megabytes each);
+  remove one by hand when no session runs on its protocol (`ssj list` shows the protocol of each).
 
 Two ways to get it there:
 
@@ -814,7 +814,7 @@ QUIC has drained the connections, so the server waits for that and retries a bus
 two seconds. Without this a narrow port range would refuse an immediate re-attach.
 
 The client keeps the session ID and host in `$XDG_STATE_HOME/ssj/` as a hint. The ID is not a
-secret. `ssj --list user@host` shows the sessions of a host.
+secret. `ssj list user@host` shows the sessions of a host.
 
 ### Ending and leaving a session
 
@@ -1077,7 +1077,9 @@ The session starts the command and not an interactive shell, and ends with its e
   not an option (or the value of one). Everything after it, options included, belongs to the
   command: `ssj host ls -l`, `ssj host make -j4`, and `ssj host --name x` runs `--name x` on the
   host. A `--` directly after the destination is dropped, so `ssj host -- ls -l` works too.
-  Options of `ssj` stand before the destination.
+  Options of `ssj` stand before the destination. When the command starts with a dash and is an
+  option of `ssj` (a command never starts with one), `ssj` warns on the standard error and runs it
+  as asked; after an explicit `--` it does not warn.
 - The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) are the
   exception: when a second word follows a command word, the line is one of those commands, and
   its options may stand anywhere (`ssj list host --json`). A host with the name of a command is
@@ -1247,8 +1249,9 @@ Input path (client):
 
 Session and shell (server):
 
-- The shell is the login shell of the user from the password database. The client never selects
-  the command, the environment, or the working directory.
+- The shell is the one of `--shell`, else `$SHELL`, which `sshd` sets to the login shell of the
+  user from the password database. The client never selects the shell, the command, the
+  environment, or the working directory (`--server-arg` runs as the user and is theirs to give).
 - The shell starts with a clean environment. `SSH_*` and `XDG_SESSION_*` variables inherited
   from the bootstrap session are removed, because they describe a connection that no longer
   exists. The only variables the client can add are the ones allowed by the rules under

@@ -2410,7 +2410,10 @@ impl Client {
                             vlog!(1, "the server skipped {skipped} bytes of output (slow link)");
                             let taken_back = self.echo.cancel();
                             let _ = self.io.output.write_all(&taken_back).await;
-                            self.output_offset += skipped;
+                            self.output_offset = self
+                                .output_offset
+                                .checked_add(skipped)
+                                .ok_or("the server skipped more output than there can be")?;
                             self.note_gap(skipped).await;
                             self.ack_output(&link.out, true);
                         }

@@ -213,11 +213,13 @@ mod platform {
                 loop {
                     match socket.recv(&mut &mut buffer[..], 0) {
                         Ok(0) => return,
-                        // an overflow of the socket also means that something changed.
-                        Ok(_) | Err(_) if tx.send(Cause::NetworkChanged).is_err() => return,
                         Ok(_) => {}
+                        // an overflow of the socket also means that something changed.
                         Err(err) if err.raw_os_error() == Some(libc_enobufs()) => {}
                         Err(_) => return,
+                    }
+                    if tx.send(Cause::NetworkChanged).is_err() {
+                        return;
                     }
                 }
             })

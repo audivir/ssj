@@ -152,6 +152,18 @@ pub fn ask(path: &Path, request: &Request) -> io::Result<Reply> {
     parse_reply(&line).map_err(|_| io::Error::other("the server sent an invalid reply"))
 }
 
+/// Asks for the status. A refusal is asked a second time after a moment, since a server that has
+/// just made its socket refuses until it listens.
+fn ask_status(path: &Path) -> io::Result<Reply> {
+    match ask(path, &Request::Status) {
+        Err(err) if err.kind() == io::ErrorKind::ConnectionRefused => {
+            std::thread::sleep(Duration::from_millis(150));
+            ask(path, &Request::Status)
+        }
+        other => other,
+    }
+}
+
 /// A session found in the control directory.
 #[derive(Clone)]
 pub struct Found {
@@ -170,7 +182,7 @@ pub fn find_sessions(dir: &Path) -> Vec<Found> {
         if path.extension().is_none_or(|ext| ext != "sock") {
             continue;
         }
-        match ask(&path, &Request::Status) {
+        match ask_status(&path) {
             Ok(Reply::Info(info)) => found.push(Found { path, info }),
             Err(err)
                 if matches!(
@@ -180,6 +192,9 @@ pub fn find_sessions(dir: &Path) -> Vec<Found> {
             {
                 // a leftover of a server that did not end cleanly.
                 let _ = fs::remove_file(&path);
+                if let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) {
+                    let _ = fs::remove_file(agent_path(dir, id));
+                }
             }
             _ => {}
         }

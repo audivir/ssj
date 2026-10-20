@@ -353,6 +353,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             tail = head.split_off(first + 1);
             if tail.first().is_some_and(|word| word == "--") {
                 tail.remove(0);
+            } else if let Some(hint) = tail.first().and_then(|word| misplaced_option(word)) {
+                eprintln!("ssj: warning: {hint}");
             }
         }
     }
@@ -419,6 +421,33 @@ Options:
 Edits client.toml in $EDITOR, or server.toml on the host. The text is checked before it is saved."
         }
         _ => return None,
+    })
+}
+
+/// A hint for a word after the destination that is an option of `ssj`. The host would run it as
+/// a command, which a command never is, since it starts with a dash.
+pub fn misplaced_option(word: &str) -> Option<String> {
+    let name = word.split('=').next().unwrap_or(word);
+    let known = crate::options::command().get_arguments().any(|arg| {
+        match (name.strip_prefix("--"), name.strip_prefix('-')) {
+            (Some(long), _) => {
+                arg.get_long() == Some(long)
+                    || arg
+                        .get_all_aliases()
+                        .is_some_and(|aliases| aliases.contains(&long))
+            }
+            (None, Some(short)) => short
+                .chars()
+                .next()
+                .is_some_and(|first| arg.get_short() == Some(first)),
+            _ => false,
+        }
+    });
+    known.then(|| {
+        format!(
+            "`{name}` is after the destination, so the host runs it as a command; options go \
+             before the destination, or after `--` to run it on the host on purpose"
+        )
     })
 }
 

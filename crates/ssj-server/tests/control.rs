@@ -270,11 +270,14 @@ fn leftover_sockets_of_dead_servers_are_removed_and_not_listed() {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     let dead = dir.join("abcdef012345.sock");
     drop(std::os::unix::net::UnixListener::bind(&dead).unwrap());
+    let dead_agent = dir.join("abcdef012345.agent");
+    drop(std::os::unix::net::UnixListener::bind(&dead_agent).unwrap());
     assert!(dead.exists());
 
     assert!(list(&runtime).is_empty());
 
     assert!(!dead.exists());
+    assert!(!dead_agent.exists());
 }
 
 #[test]

@@ -324,6 +324,7 @@ until mkdir "$lock" 2>/dev/null; do
 done
 tmp="$dir/.server.toml.$$"
 trap 'rm -rf "$tmp" "$lock"' EXIT
+trap 'exit 1' HUP INT TERM
 cat > "$tmp"
 if command -v sha256sum >/dev/null 2>&1; then
   got=$(cat "$file" 2>/dev/null | sha256sum | cut -d' ' -f1)
