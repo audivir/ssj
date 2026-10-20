@@ -272,3 +272,60 @@ async fn a_second_stdio_connection_takes_over_and_the_session_goes_on() {
         }
     }
 }
+
+// The first process is not dead but slow: what it sends after the second one has taken over must
+// not reach the shell, and the second connection goes on without a gap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn input_that_a_replaced_stdio_connection_sends_late_is_ignored() {
+    let runtime = runtime_dir();
+    let launched = launch(
+        &runtime,
+        &Identity::generate(),
+        free_range(),
+        "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done",
+    );
+    let id = launched.connect.id.as_str().to_owned();
+
+    let (_first_process, mut first) = start_stdio(&runtime, &[&id]).await;
+    first
+        .send(ClientFrame::Hello(Hello::Start {
+            size: size(),
+            env: Env::default(),
+            agent: false,
+        }))
+        .await;
+    first.send(ClientFrame::Input(b"one\n".to_vec())).await;
+    let mut seen = String::new();
+    while !seen.contains("got:one:1") {
+        if let ServerFrame::Output(data) = first.next().await.expect("the stream ended") {
+            seen.push_str(&String::from_utf8_lossy(&data));
+        }
+    }
+
+    let (_second_process, mut second) = start_stdio(&runtime, &[&id]).await;
+    second
+        .send(ClientFrame::Hello(Hello::Resume {
+            size: size(),
+            output_offset: seen.len() as u64,
+        }))
+        .await;
+    second.send(ClientFrame::Input(b"two\n".to_vec())).await;
+    let mut after = String::new();
+    while !after.contains("got:two:2") {
+        if let ServerFrame::Output(data) = second.next().await.expect("the stream ended") {
+            after.push_str(&String::from_utf8_lossy(&data));
+        }
+    }
+
+    // the old connection wakes up and sends what it had held back.
+    first.send(ClientFrame::Input(b"late\n".to_vec())).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    second.send(ClientFrame::Input(b"three\n".to_vec())).await;
+    while !after.contains("got:three") {
+        if let ServerFrame::Output(data) = second.next().await.expect("the stream ended") {
+            after.push_str(&String::from_utf8_lossy(&data));
+        }
+    }
+    assert!(!after.contains("late"), "{after:?}");
+    assert!(after.contains("got:three:3"), "{after:?}");
+}

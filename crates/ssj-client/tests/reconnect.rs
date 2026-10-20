@@ -180,9 +180,22 @@ struct TcpProxy {
     /// The connections made so far, and how many of the oldest are swallowed.
     made: Arc<AtomicUsize>,
     blind: Arc<AtomicUsize>,
+    /// How many of the oldest connections hold back what they carry (it is not lost).
+    held: Arc<AtomicUsize>,
 }
 
 impl TcpProxy {
+    /// Makes the connections that exist now carry nothing for the moment. What they were given
+    /// waits, and goes through when [`TcpProxy::release_the_held`] is called.
+    fn hold_the_existing(&self) {
+        self.held
+            .store(self.made.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
+
+    fn release_the_held(&self) {
+        self.held.store(0, Ordering::Relaxed);
+    }
+
     /// Swallows what the connections that exist now carry, and nothing of the later ones.
     fn blind_the_existing(&self) {
         self.blind
@@ -198,11 +211,14 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
     let swallowing = swallow.clone();
     let made = Arc::new(AtomicUsize::new(0));
     let blind = Arc::new(AtomicUsize::new(0));
-    let (made_by_proxy, blind_by_proxy) = (made.clone(), blind.clone());
+    let held = Arc::new(AtomicUsize::new(0));
+    let (made_by_proxy, blind_by_proxy, held_by_proxy) =
+        (made.clone(), blind.clone(), held.clone());
     tokio::spawn(async move {
         while let Ok((client, _)) = listener.accept().await {
             let number = made_by_proxy.fetch_add(1, Ordering::Relaxed);
             let blind = blind_by_proxy.clone();
+            let held = held_by_proxy.clone();
             let mut killed = killed.clone();
             // only a kill from now on ends this connection.
             killed.borrow_and_update();
@@ -215,11 +231,15 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
                 let (mut ur, mut uw) = upstream.into_split();
                 let swallowing_up = swallowing.clone();
                 let blind_up = blind.clone();
+                let held_up = held.clone();
                 let up = async move {
                     let mut buf = vec![0u8; 16 * 1024];
                     while let Ok(n) = cr.read(&mut buf).await {
                         if n == 0 {
                             break;
+                        }
+                        while number < held_up.load(Ordering::Relaxed) {
+                            sleep(Duration::from_millis(20)).await;
                         }
                         let swallowed = swallowing_up.load(Ordering::Relaxed)
                             || number < blind_up.load(Ordering::Relaxed);
@@ -233,6 +253,9 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
                     while let Ok(n) = ur.read(&mut buf).await {
                         if n == 0 {
                             break;
+                        }
+                        while number < held.load(Ordering::Relaxed) {
+                            sleep(Duration::from_millis(20)).await;
                         }
                         let swallowed = swallowing.load(Ordering::Relaxed)
                             || number < blind.load(Ordering::Relaxed);
@@ -255,6 +278,7 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
         swallow,
         made,
         blind,
+        held,
     }
 }
 
@@ -1395,6 +1419,40 @@ async fn output_through_the_move_to_a_spare_loses_and_repeats_no_line() {
     let expected: Vec<String> = (1..=200).map(|i| format!("out{i}")).collect();
     assert_eq!(lines, expected);
     assert!(proxy.made.load(Ordering::Relaxed) >= 2, "no spare was made");
+}
+
+// The old connection is not dead, only slow: what it carries arrives late, after the spare has
+// taken over. The server must ignore the late input of the old connection, and the client must
+// not see the late output twice.
+#[tokio::test]
+async fn an_old_connection_that_delivers_late_does_not_repeat_a_line() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    let mut terminal = start_client_tcp(&server, client_id, proxy.addr, Duration::from_secs(60));
+
+    // the old connection holds back everything from line 20 on. The spare takes over a few
+    // seconds later, and the old connection is let go at line 70, when its input and its output
+    // arrive late.
+    for i in 0..100 {
+        terminal.type_line(&format!("l{i}")).await;
+        if i == 20 {
+            proxy.hold_the_existing();
+        }
+        if i == 70 {
+            assert!(
+                proxy.made.load(Ordering::Relaxed) >= 2,
+                "the spare had not taken over"
+            );
+            proxy.release_the_held();
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    terminal.wait_for("got:l99").await;
+    terminal.settle().await;
+
+    let expected: Vec<String> = (0..100).map(|i| format!("got:l{i}")).collect();
+    assert_eq!(terminal.got_lines(), expected);
 }
 
 // A terminal that reads nothing for a while is a client that is too slow. The job must not wait
