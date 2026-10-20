@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201
 """Measures what `ssh -W` does to two small writes in a row, without ssj.
 
     wprobe.py server PORT GAP_US NODELAY MODE    answers every byte with 27 bytes and then 41 bytes,
@@ -17,23 +18,31 @@ Run by bench/docker-bench.sh with PROBE=1. A time near 40 ms means that the seco
 back until the acknowledgement of the first (Nagle's algorithm with delayed acknowledgements).
 """
 
+from __future__ import annotations
+
 import os
 import random
 import select
 import socket
 import statistics
+import struct
 import subprocess
 import sys
 import time
+from typing import IO
+
+MIN_ARGS_WITH_GAP = 7  # the program, the mode, five arguments, and then the gap
 
 
-def spin(micros):
+def spin(micros: float) -> None:
+    """Waits by looping, since a sleep is too coarse for microseconds."""
     end = time.perf_counter() + micros / 1e6
     while time.perf_counter() < end:
         pass
 
 
-def server(port, gap_us, nodelay, mode):
+def server(port: int, gap_us: int, nodelay: bool, mode: str) -> None:
+    """Answers every byte of a client, for ever."""
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", port))
@@ -57,7 +66,8 @@ def server(port, gap_us, nodelay, mode):
             conn.sendall(b"b" * (2000 if mode == "pad2" else 41))
 
 
-def recv_exactly(conn, count):
+def recv_exactly(conn: socket.socket, count: int) -> bytes:
+    """Reads `count` bytes from a socket."""
     data = b""
     while len(data) < count:
         chunk = conn.recv(count - len(data))
@@ -67,10 +77,8 @@ def recv_exactly(conn, count):
     return data
 
 
-def up_server(conn, mode):
+def up_server(conn: socket.socket, mode: str) -> None:
     """Times how long the second of two writes of the client takes to arrive."""
-    import struct
-
     first_size = 2000 if mode == "up-pad1" else 27
     second_size = 2000 if mode == "up-pad2" else 41
     if mode == "up-merge":
@@ -87,7 +95,8 @@ def up_server(conn, mode):
         return
 
 
-def read_exactly(fd, count, timeout=10):
+def read_exactly(fd: int, count: int, timeout: float = 10) -> bytes:
+    """Reads `count` bytes from a file descriptor, or raises when none come in time."""
     data = b""
     end = time.monotonic() + timeout
     while len(data) < count:
@@ -101,72 +110,77 @@ def read_exactly(fd, count, timeout=10):
     return data
 
 
-def up_client(host, port, samples, mode, gap_us=200):
-    import struct
-
+def spawn(host: str, port: int) -> tuple[subprocess.Popen[bytes], IO[bytes], int]:
+    """Starts `ssh -W` to the probe server. Returns the process, its input, and its output."""
     child = subprocess.Popen(
         ["ssh", "-W", f"127.0.0.1:{port}", host], stdin=subprocess.PIPE, stdout=subprocess.PIPE
     )
-    out = child.stdout.fileno()
+    if child.stdin is None or child.stdout is None:
+        raise RuntimeError("no pipes")
+    return child, child.stdin, child.stdout.fileno()
+
+
+def up_client(host: str, port: int, samples: int, mode: str, gap_us: int = 200) -> None:
+    """Sends two writes and prints how long the second takes to arrive after the first."""
+    _, stdin, out = spawn(host, port)
     first = b"a" * (2000 if mode == "up-pad1" else 27)
     second = b"b" * (2000 if mode == "up-pad2" else 41)
     gaps = []
     for _ in range(samples):
         if mode == "up-merge":
-            child.stdin.write(first + second)
-            child.stdin.flush()
+            stdin.write(first + second)
+            stdin.flush()
         else:
-            child.stdin.write(first)
-            child.stdin.flush()
+            stdin.write(first)
+            stdin.flush()
             if mode == "up-reply":
                 read_exactly(out, 1)
             else:
                 spin(gap_us)
-            child.stdin.write(second)
-            child.stdin.flush()
+            stdin.write(second)
+            stdin.flush()
         gaps.append(struct.unpack("d", read_exactly(out, 8))[0])
         time.sleep(0.01 + random.random() * 0.12)
-    child.stdin.close()
+    stdin.close()
     gaps.sort()
     median = statistics.median(gaps)
     stalls = sum(1 for g in gaps if g > median + 10)
     print(
-        f"second write arrives after the first: median {median:.2f} ms, p99 {gaps[int(len(gaps) * 0.99)]:.2f},"
+        f"second write arrives after the first: median {median:.2f} ms,"
+        f" p99 {gaps[int(len(gaps) * 0.99)]:.2f},"
         f" max {gaps[-1]:.2f}, stalls {stalls} of {samples}"
     )
 
 
-def client(host, port, samples, mode, gap_us=200):
+def client(host: str, port: int, samples: int, mode: str, gap_us: int = 200) -> None:
+    """Reads two answers per byte and prints how long the second takes after the first."""
     if mode.startswith("up-"):
-        return up_client(host, port, samples, mode, gap_us)
+        up_client(host, port, samples, mode, gap_us)
+        return
     first_size = 2000 if mode == "pad1" else 27
     second_size = 2000 if mode == "pad2" else 41
     if mode == "merge":
         first_size, second_size = 27, 41
-    child = subprocess.Popen(
-        ["ssh", "-W", f"127.0.0.1:{port}", host],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-    )
-    out = child.stdout.fileno()
+    _, stdin, out = spawn(host, port)
     gaps = []
     for _ in range(samples):
-        child.stdin.write(b"x")
-        child.stdin.flush()
+        stdin.write(b"x")
+        stdin.flush()
         read_exactly(out, first_size)
         first = time.perf_counter()
         if mode == "reply":
-            child.stdin.write(b"y")
-            child.stdin.flush()
+            stdin.write(b"y")
+            stdin.flush()
         read_exactly(out, second_size)
         gaps.append((time.perf_counter() - first) * 1000)
         time.sleep(0.01 + random.random() * 0.12)
-    child.stdin.close()
+    stdin.close()
     gaps.sort()
     median = statistics.median(gaps)
     stalls = sum(1 for g in gaps if g > median + 10)
     print(
-        f"second answer after the first: median {median:.2f} ms, p99 {gaps[int(len(gaps) * 0.99)]:.2f},"
+        f"second answer after the first: median {median:.2f} ms,"
+        f" p99 {gaps[int(len(gaps) * 0.99)]:.2f},"
         f" max {gaps[-1]:.2f}, stalls {stalls} of {samples}"
     )
 
@@ -176,5 +190,5 @@ if __name__ == "__main__":
     if mode == "server":
         server(int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "1", sys.argv[5])
     else:
-        gap = int(sys.argv[6]) if len(sys.argv) > 6 else 200
+        gap = int(sys.argv[6]) if len(sys.argv) >= MIN_ARGS_WITH_GAP else 200
         client(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], gap)

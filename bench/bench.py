@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Compares ssh with ssj over UDP, TCP, and the ssh channel: bulk output, keystroke latency,
-and a large paste. Each client runs on a pseudo terminal, as a user would run it.
+# ruff: noqa: T201
+"""Compares ssh with ssj over UDP, TCP, and the ssh channel.
+
+It measures bulk output, keystroke latency, and a large paste. Each client runs on a pseudo
+terminal, as a user would run it.
 
     bench/bench.py --host me@localhost --ssj target/release/ssj \
         --server target/release/ssj-server [--netem "delay 40ms loss 1%"] [--json]
@@ -9,7 +12,10 @@ and a large paste. Each client runs on a pseudo terminal, as a user would run it
 ssj alike, so use it with --host localhost. Nothing is gated: the script prints numbers.
 """
 
+from __future__ import annotations
+
 import argparse
+import contextlib
 import json
 import os
 import pty
@@ -20,6 +26,8 @@ import statistics
 import subprocess
 import sys
 import time
+from pathlib import Path
+from typing import Any
 
 MARK = "END" + "42"  # the command shows END$((6*7)), the output shows END42
 
@@ -27,14 +35,16 @@ MARK = "END" + "42"  # the command shows END$((6*7)), the output shows END42
 class Terminal:
     """A client process on a pseudo terminal."""
 
-    def __init__(self, argv):
+    def __init__(self, argv: list[str]) -> None:
+        """Starts `argv` on a new pseudo terminal."""
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.execvp(argv[0], argv)
         self.buffer = b""
         self.seen = b""
 
-    def send(self, data):
+    def send(self, data: str | bytes) -> None:
+        """Writes `data` to the terminal, and reads what the client prints meanwhile."""
         if isinstance(data, str):
             data = data.encode()
         view = memoryview(data)
@@ -46,7 +56,8 @@ class Terminal:
             if writable:
                 view = view[os.write(self.fd, view[:65536]) :]
 
-    def read_some(self):
+    def read_some(self) -> bytes:
+        """Reads what the client printed, and answers a request for the cursor position."""
         try:
             chunk = os.read(self.fd, 1 << 20)
         except OSError:
@@ -58,7 +69,8 @@ class Terminal:
         self.seen = (self.seen + chunk)[-300:]
         return chunk
 
-    def wait_for(self, text, timeout=300):
+    def wait_for(self, text: str, timeout: float = 300) -> int:
+        """Reads until `text` is printed. Returns the number of bytes before it."""
         needle = text.encode()
         end = time.monotonic() + timeout
         total = 0
@@ -78,11 +90,10 @@ class Terminal:
             if readable and not self.read_some():
                 raise EOFError("the client ended")
 
-    def close(self):
-        try:
+    def close(self) -> None:
+        """Ends the shell, and waits for the client to end (or kills it)."""
+        with contextlib.suppress(OSError):
             os.write(self.fd, b"\nexit\n")
-        except OSError:
-            pass
         # a process cannot end while its output is queued on the terminal, so keep reading
         killed = False
         end = time.monotonic() + 5
@@ -100,7 +111,8 @@ class Terminal:
         os.close(self.fd)
 
 
-def clients(args):
+def clients(args: argparse.Namespace) -> dict[str, list[str]]:
+    """The command line of every client."""
     base = shlex.split(args.ssh_command)
     ssj = [args.ssj, "--server-path", args.server, "--ssh-command", args.ssh_command]
     if not args.allow_drop:
@@ -112,14 +124,15 @@ def clients(args):
     return {
         "ssh": [*base, "-tt", "-o", "BatchMode=yes", args.host],
         "ssh-C": [*base, "-tt", "-C", "-o", "BatchMode=yes", args.host],
-        "udp": ssj + ["--transport", "udp", args.host],
+        "udp": [*ssj, "--transport", "udp", args.host],
         "udp-z": ssj + compress + ["--transport", "udp", args.host],
-        "tcp": ssj + ["--transport", "tcp", args.host],
-        "stdio": ssj + ["--transport", "stdio", args.host],
+        "tcp": [*ssj, "--transport", "tcp", args.host],
+        "stdio": [*ssj, "--transport", "stdio", args.host],
     }
 
 
-def session(argv):
+def session(argv: list[str]) -> Terminal:
+    """Starts a client and returns it when the shell answers."""
     terminal = Terminal(argv)
     # the shell is ready when it answers a command
     terminal.send("echo READY$((6*7))\n")
@@ -130,7 +143,8 @@ def session(argv):
 TEXT_LINE = "2026-10-18 12:00:%02d INFO worker-%d handled request id=%d status=200 bytes=%d"
 
 
-def bulk(argv, megabytes, raw=False, text=False):
+def bulk(argv: list[str], megabytes: int, raw: bool = False, text: bool = False) -> dict[str, Any]:
+    """Seconds for the shell to print `megabytes` of output."""
     terminal = session(argv)
     if text:
         # lines like a log, which compress about the way build and server output does
@@ -145,7 +159,8 @@ def bulk(argv, megabytes, raw=False, text=False):
         # the numbers would show `tr`. With `raw` the zeros go to the terminal as they are.
         producer = "" if raw else " | tr '\\0' a"
         terminal.send(
-            f"dd if=/dev/zero bs=1048576 count={megabytes} 2>/dev/null{producer}; echo {MARK[:3]}$((6*7))\n"
+            f"dd if=/dev/zero bs=1048576 count={megabytes} 2>/dev/null{producer};"
+            f" echo {MARK[:3]}$((6*7))\n"
         )
     start = time.monotonic()
     terminal.wait_for(MARK)
@@ -154,7 +169,8 @@ def bulk(argv, megabytes, raw=False, text=False):
     return {"megabytes_per_second": round(megabytes / seconds, 1), "seconds": round(seconds, 2)}
 
 
-def latency(argv, samples, jitter_ms=0):
+def latency(argv: list[str], samples: int, jitter_ms: int = 0) -> dict[str, Any]:
+    """The time from a keystroke to its echo."""
     terminal = session(argv)
     terminal.send("stty raw -echo; cat\n")
     time.sleep(0.5)
@@ -185,7 +201,8 @@ def latency(argv, samples, jitter_ms=0):
     }
 
 
-def paste(argv, megabytes, text=False):
+def paste(argv: list[str], megabytes: int, text: bool = False) -> dict[str, Any]:
+    """Seconds for the shell to take `megabytes` of input."""
     terminal = session(argv)
     size = megabytes * 1048576
     terminal.send(f"stty raw -echo; head -c {size} > /dev/null; echo {MARK[:3]}$((6*7))\n")
@@ -193,7 +210,10 @@ def paste(argv, megabytes, text=False):
     terminal.buffer = b""
     start = time.monotonic()
     if text:
-        lines = [(TEXT_LINE % (i % 60, i % 8, (i * 7919) % 100000, (i * 31) % 5000)) + "\n" for i in range(size // 80 + 1)]
+        lines = [
+            (TEXT_LINE % (i % 60, i % 8, (i * 7919) % 100000, (i * 31) % 5000)) + "\n"
+            for i in range(size // 80 + 1)
+        ]
         payload = "".join(lines).encode()[:size]
     else:
         payload = b"x" * size
@@ -204,7 +224,7 @@ def paste(argv, megabytes, text=False):
     return {"seconds": round(seconds, 2), "megabytes_per_second": round(megabytes / seconds, 1)}
 
 
-def startup(argv, runs):
+def startup(argv: list[str], runs: int) -> dict[str, Any]:
     """Seconds from starting the client until the shell answers a command, and until it is gone."""
     ready, ended = [], []
     for _ in range(runs):
@@ -214,21 +234,26 @@ def startup(argv, runs):
         begin = time.monotonic()
         terminal.close()
         ended.append(time.monotonic() - begin)
-    return {"ready_s": round(statistics.median(ready), 2), "exit_s": round(statistics.median(ended), 2)}
+    return {
+        "ready_s": round(statistics.median(ready), 2),
+        "exit_s": round(statistics.median(ended), 2),
+    }
 
 
-def netem(args, action):
+def netem(args: argparse.Namespace, action: str) -> None:
+    """Adds or removes the simulated link on the loopback device."""
     if not args.netem:
         return
     command = ["tc", "qdisc", action, "dev", "lo", "root"]
     if action == "add":
-        command += ["netem"] + args.netem.split()
+        command += ["netem", *args.netem.split()]
     # root (a container) needs no sudo
     prefix = [] if os.geteuid() == 0 else ["sudo", "-n"]
     subprocess.run(prefix + command, check=False)
 
 
-def main():
+def main() -> None:
+    """Runs the measurements and prints them."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--ssj", default="target/release/ssj")
@@ -237,18 +262,26 @@ def main():
     parser.add_argument("--congestion", choices=["bbr", "cubic"], help="for ssj (default: its own)")
     parser.add_argument("--only", help="comma separated: ssh,ssh-C,udp,udp-z,tcp,stdio")
     parser.add_argument("--text-bulk", action="store_true", help="log-like text for bulk and paste")
-    parser.add_argument("--allow-drop", action="store_true", help="let ssj skip output on a slow link")
+    parser.add_argument(
+        "--allow-drop", action="store_true", help="let ssj skip output on a slow link"
+    )
     parser.add_argument("--bulk-mb", type=int, default=256)
     parser.add_argument("--raw-bulk", action="store_true", help="bulk output without tr")
     parser.add_argument("--paste-mb", type=int, default=8)
     parser.add_argument("--samples", type=int, default=300)
-    parser.add_argument("--jitter-ms", type=int, default=0, help="random extra gap between keystrokes")
-    parser.add_argument("--rounds", type=int, default=3, help="the best bulk and paste round counts")
-    parser.add_argument("--startup", type=int, metavar="RUNS", help="only time the start and the end, RUNS times")
+    parser.add_argument(
+        "--jitter-ms", type=int, default=0, help="random extra gap between keystrokes"
+    )
+    parser.add_argument(
+        "--rounds", type=int, default=3, help="the best bulk and paste round counts"
+    )
+    parser.add_argument(
+        "--startup", type=int, metavar="RUNS", help="only time the start and the end, RUNS times"
+    )
     parser.add_argument("--netem", help='for example "delay 40ms loss 1%%" (Linux, root)')
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    args.ssj, args.server = os.path.abspath(args.ssj), os.path.abspath(args.server)
+    args.ssj, args.server = str(Path(args.ssj).resolve()), str(Path(args.server).resolve())
 
     chosen = clients(args)
     if args.only:
@@ -261,7 +294,9 @@ def main():
             if args.startup:
                 results[name] = startup(argv, args.startup)
                 continue
-            rounds = [bulk(argv, args.bulk_mb, args.raw_bulk, args.text_bulk) for _ in range(args.rounds)]
+            rounds = [
+                bulk(argv, args.bulk_mb, args.raw_bulk, args.text_bulk) for _ in range(args.rounds)
+            ]
             pastes = [paste(argv, args.paste_mb, args.text_bulk) for _ in range(args.rounds)]
             results[name] = {
                 "bulk": max(rounds, key=lambda r: r["megabytes_per_second"]),
@@ -278,7 +313,10 @@ def main():
         for name, r in results.items():
             print(f"{name:6} {r['ready_s']:>8} {r['exit_s']:>8}")
         return
-    print(f"{'':6} {'bulk MB/s':>10} {'median ms':>10} {'p95 ms':>8} {'max ms':>8} {'stalls':>7} {'paste s':>8}")
+    print(
+        f"{'':6} {'bulk MB/s':>10} {'median ms':>10} {'p95 ms':>8} {'max ms':>8}"
+        f" {'stalls':>7} {'paste s':>8}"
+    )
     for name, r in results.items():
         print(
             f"{name:6} {r['bulk']['megabytes_per_second']:>10} {r['latency']['median_ms']:>10}"

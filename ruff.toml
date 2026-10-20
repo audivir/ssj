@@ -1,0 +1,53 @@
+extend-exclude = []
+line-length = 100
+
+[lint]
+dummy-variable-rgx = "^(dummy_.*|unused_.*|_)$"
+
+select = ["ALL"]
+
+ignore = [
+  "CPY001",  # Missing copyright notice at top of file
+  "PLC0415",  # `import` should be at the top-level of a file
+  "ISC001",  # implicit-str-concat
+  "COM812",  # missing-trailing-comma
+  "S301",  # `pickle` and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue
+  "TD003",  # Missing issue link on the line following this TODO
+  "FIX002",  # Line contains TODO, consider resolving the issue
+  "FBT001",  # Boolean-typed positional argument in function definition
+  "FBT002",  # Boolean default positional argument
+  "FBT003",  # Boolean positional value in function call
+  "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in `**kwargs`
+  "EM101",  # Exception must not use a string literal, assign to variable first
+  "EM102",  # Exception must not use an f-string literal, assign to variable first
+  "TRY003",  # Avoid specifying long messages outside the exception class
+  "TRY300",  # Use of else blocks in try/except
+  "D105",  # Missing docstring in magic method
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+required-imports = ["from __future__ import annotations"]
+split-on-trailing-comma = false
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.per-file-ignores]
+# Stub files for C extensions are allowed to have docstrings and overwrite __doc__, __version__, etc.
+"_*.pyi" = ["PYI021", "A"]
+
+# conf.py automatically created by Sphinx
+"docs/conf.py" = ["INP001", "D100", "ERA001", "A"]
+
+# Test files do not need to have docstrings at each test function
+# S101: assert, PLR2004: magic value comparison, T20: print statements
+"**/test_*.py" = ["INP001", "PLR2004", "S101", "D101", "D102", "D103", "T20"]
+"tests/**" = ["INP001", "PLR2004", "S101", "D101", "D102", "D103", "T20"]
+
+# The scripts of bench/ are command line tools (they print with `# ruff: noqa: T201`): they start
+# the programs they measure, and the jitter between keystrokes does not need a secure random number.
+# S603/S606/S607: starting programs, S311: random, INP001: not a package
+"bench/*.py" = ["INP001", "S311", "S603", "S606", "S607"]
