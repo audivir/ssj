@@ -475,8 +475,28 @@ async fn only_accepted_client_variables_reach_the_shell() {
     let text = String::from_utf8_lossy(&seen.output);
 
     assert!(text.contains("TERM=xterm-test"), "{text}");
-    assert!(!text.contains("LD_PRELOAD"), "{text}");
+    assert!(!text.contains("LD_PRELOAD="), "{text}");
     assert!(!text.contains("FOO=bar"), "{text}");
+    // and the user is told which ones were left out, before the output of the shell.
+    let notice =
+        "ssj: the host does not accept LD_PRELOAD, FOO (accept_env in its server.toml)\r\n";
+    assert!(text.starts_with(notice), "{text}");
+}
+
+#[tokio::test]
+async fn nothing_is_said_when_the_host_takes_all_variables() {
+    let harness = start(config("echo ready"));
+    let mut client = harness.connect().await;
+    let env = Env::new(vec![
+        ("TERM".into(), "xterm-test".into()),
+        ("LC_THEME".into(), "dark".into()),
+    ])
+    .unwrap();
+    client.start_with(env).await;
+
+    let seen = client.read_until(|s| s.exit.is_some()).await;
+
+    assert_eq!(String::from_utf8_lossy(&seen.output), "ready\r\n");
 }
 
 #[tokio::test]

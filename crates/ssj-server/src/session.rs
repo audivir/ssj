@@ -312,7 +312,10 @@ impl<B: Backend> Session<B> {
             )
             .await
             {
-                Ok(running) => shell = Some(running),
+                Ok((running, dropped)) => {
+                    shell = Some(running);
+                    output.push_evicting(&dropped_notice(&dropped));
+                }
                 Err(err) => return SessionEnd::Failed(err),
             }
         }
@@ -550,7 +553,12 @@ impl<B: Backend> Session<B> {
                                             )
                                             .await
                                             {
-                                                Ok(running) => shell = Some(running),
+                                                Ok((running, dropped)) => {
+                                                    shell = Some(running);
+                                                    // it comes before the output of the shell,
+                                                    // which is not read yet.
+                                                    output.push_evicting(&dropped_notice(&dropped));
+                                                }
                                                 Err(err) => {
                                                     let _ = a.out.try_send(ServerFrame::Error(
                                                         ErrorCode::Internal,
@@ -941,7 +949,7 @@ async fn start_shell<B: Backend>(
     client_env: &Env,
     agent: bool,
     agent_listener: &mut Option<(UnixListener, SocketFile)>,
-) -> io::Result<Running<B::Shell>> {
+) -> io::Result<(Running<B::Shell>, Vec<String>)> {
     if agent && let Some(path) = &config.agent_socket {
         *agent_listener = listen_for_agent(path);
     }
@@ -955,8 +963,8 @@ async fn spawn_shell<B: Backend>(
     size: WindowSize,
     client_env: &Env,
     agent_socket: Option<&Path>,
-) -> io::Result<Running<B::Shell>> {
-    let (accepted, _dropped) = config.accept_env.apply(client_env);
+) -> io::Result<(Running<B::Shell>, Vec<String>)> {
+    let (accepted, dropped) = config.accept_env.apply(client_env);
     let mut env = config.template.env.clone();
     for (name, value) in accepted.iter() {
         env.retain(|(existing, _)| existing != name);
@@ -974,14 +982,36 @@ async fn spawn_shell<B: Backend>(
         size,
     };
     let parts = backend.spawn(&config.id, spec).await?.split();
-    Ok(Running {
+    let running = Running {
         reader: parts.reader,
         writer: parts.writer,
         exit: Some(parts.exit),
         status: None,
         reader_eof: false,
         exit_queued: false,
-    })
+    };
+    Ok((running, dropped))
+}
+
+/// The line that tells the user which variables of the client the host did not take, or nothing
+/// when it took all of them. It goes into the output of the session, since that is the one way to
+/// reach a client of any version; the names are valid ones, so they hold no control characters.
+fn dropped_notice(dropped: &[String]) -> Vec<u8> {
+    const SHOWN: usize = 6;
+    if dropped.is_empty() {
+        return Vec::new();
+    }
+    let mut names = dropped
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if dropped.len() > SHOWN {
+        names.push_str(&format!(", and {} more", dropped.len() - SHOWN));
+    }
+    format!("ssj: the host does not accept {names} (accept_env in its server.toml)\r\n")
+        .into_bytes()
 }
 
 fn start_connection(

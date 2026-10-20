@@ -1172,7 +1172,10 @@ them.
 - Server: the accepted names come from the server config file (`server.toml` in the config
   directory below, key `accept_env`), default: `TERM`, `LANG`, and `LC_*`. They are never taken
   from the command line that the client passes through `ssh`, since that would let the client
-  override the filter.
+  override the filter. When the server drops variables that the client sent, it writes one line
+  to the start of the output of the session, before the shell's output (`ssj: the host does not accept FOO, BAR (accept_env in its server.toml)`; six names at most, then "and N more"). The
+  output is the one way to reach a client of any version, and a session that is joined later has
+  the line in its replay.
 - The variables travel in the session start frame inside the encrypted QUIC connection, never in
   the `ssh` bootstrap command.
 - They are applied once, when the shell is created. After a reconnect the client does not resend
