@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.0"
 edition = "2024"
 description = "Session survives jumps: a roaming remote shell over QUIC"
 repository = "https://github.com/zshsetup/ssj"
@@ -26,10 +26,10 @@ rustix = "1.1.5"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 sha2 = "0.11.1"
 socket2 = "0.6.5"
-ssj-config = { path = "crates/ssj-config", version = "0.1.2" }
-ssj-net = { path = "crates/ssj-net", version = "0.1.2" }
-ssj-proto = { path = "crates/ssj-proto", version = "0.1.2" }
-ssj-server = { path = "crates/ssj-server", version = "0.1.2" }
+ssj-config = { path = "crates/ssj-config", version = "0.1.0" }
+ssj-net = { path = "crates/ssj-net", version = "0.1.0" }
+ssj-proto = { path = "crates/ssj-proto", version = "0.1.0" }
+ssj-server = { path = "crates/ssj-server", version = "0.1.0" }
 system-configuration = "0.8.0"
 tokio = "1.53.3"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
