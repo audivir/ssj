@@ -1633,6 +1633,8 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
     );
     assert_eq!(first.status.code(), Some(0), "{}", text(&first.stderr));
 
+    // the server notes the detach a moment after the client has gone
+    wait_for_state(&runtime, &ssh, "detached");
     let listing = text(&ssj(&runtime, &ssh, &["list", "user@localhost"], "").stdout);
     assert!(
         listing.contains("detached") && listing.contains("work"),
@@ -2106,6 +2108,8 @@ fn detached_session(host: &Host, ssh: &Path) {
         &[("x\x1d", "")],
     );
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    // the server notes the detach a moment after the client has gone
+    wait_for_state(&host.runtime, ssh, "detached");
 }
 
 fn sessions_listed(host: &Host, ssh: &Path) -> usize {
