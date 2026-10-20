@@ -14,7 +14,14 @@ fn generated(name: &str) -> PathBuf {
 
 /// A directory with a fake `ssj`: `--complete` prints the names of a host.
 fn fake_ssj() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ssj-completions-{}", std::process::id()));
+    // one directory for each call, since tests of one process run at the same time and a file
+    // that is being written cannot be run.
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "ssj-completions-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("ssj");
     std::fs::write(
@@ -246,11 +253,7 @@ fn fish_completes_the_values_of_options_with_a_fixed_set() {
         let mut values: Vec<String> = out
             .lines()
             .filter_map(|l| l.split('\t').next())
-            .map(|v| {
-                v.trim_start_matches(|c| c != '=')
-                    .trim_start_matches('=')
-                    .to_owned()
-            })
+            .map(|v| v.rsplit('=').next().unwrap_or(v).to_owned())
             .collect();
         values.sort();
         values.join(" ")
