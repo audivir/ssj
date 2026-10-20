@@ -484,7 +484,7 @@ A client and a server talk only if they speak the same protocol version.
 
 | Protocol | First release | Change |
 | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 1 | 0.1.0-rc4 | First published format. It includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent forwarding. |
+| 1 | 0.1.0 | First published format. It includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent forwarding. |
 
 ## Development
 

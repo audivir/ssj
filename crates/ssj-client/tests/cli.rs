@@ -614,7 +614,14 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
 
 #[test]
 fn an_option_after_the_destination_gets_a_hint_and_a_command_does_not() {
-    for word in ["--install", "--install=x", "--transport", "-q", "-A", "--no-install"] {
+    for word in [
+        "--install",
+        "--install=x",
+        "--transport",
+        "-q",
+        "-A",
+        "--no-install",
+    ] {
         assert!(misplaced_option(word).is_some(), "{word}");
     }
     for word in ["ls", "--nothing", "-Z", "-", "--", "echo"] {

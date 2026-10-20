@@ -256,8 +256,9 @@ gives way to the next one.
 The server replaces the working connection only when the new one sends its hello. A connection
 that has been accepted and has said nothing is kept as `incoming`, and a failure or the hello
 timeout of it leaves the working one alone; before this, a spare that merely completed its TLS
-handshake ended the stream it was meant to back up. Servers of 0.1.0-rc6 and older do the old
-thing, so a host needs `ssj install` for spares to be harmless; the protocol version is the same.
+handshake ended the stream it was meant to back up. Servers older than 0.1.0 (the release
+candidates) do the old thing, so a host needs `ssj install` for spares to be harmless; the protocol
+version is the same.
 The tests (`reconnect.rs`, `session.rs`, `transports.rs`) type a hundred lines and print two
 hundred through the move with the old connection swallowed, held back and delivered late, or
 working in one direction only, and they check that a silent second connection does not end the
@@ -471,7 +472,7 @@ which is
 the round trip. The numbers are from one machine and few runs: read them as a direction.
 
 On a Mac (Darwin arm64, OpenSSH 10.3, `CLIENT=host`, 1500 keystrokes with random gaps, no link
-simulated): the released 0.1.0-rc5 needed a median of 45.4 ms per keystroke over TCP (every one
+simulated): the release candidate 0.1.0-rc5 (no longer published) needed a median of 45.4 ms per keystroke over TCP (every one
 of them waited for the acknowledgement timer), the working tree 2.9 ms (slowest 6.8 ms, no
 stalls). The `ssh` channel was fast in both (2.4 and 2.8 ms), and plain `ssh` had a median of 11.9
 ms.

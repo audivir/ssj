@@ -248,7 +248,23 @@ async fn resuming_after_a_lost_connection_has_no_gap_and_no_duplicate() {
     let rest = second.read_until(|s| s.exit.is_some()).await;
 
     assert_eq!(rest.welcome.unwrap().output_offset, seen);
-    assert_eq!([part.output, rest.output].concat(), expected);
+    let (first_part, gaps) = (part.output.len(), rest.gaps);
+    let got = [part.output, rest.output].concat();
+    // on a mismatch, show where it starts and not the thousands of bytes.
+    let at = got.iter().zip(&expected).position(|(a, b)| a != b);
+    assert!(
+        got == expected,
+        "differs at {at:?} (first connection {first_part} bytes, gaps {gaps:?}, got {} of {} \
+         bytes): got {:?}, expected {:?}",
+        got.len(),
+        expected.len(),
+        String::from_utf8_lossy(
+            &got[at.unwrap_or(0).saturating_sub(20)..got.len().min(at.unwrap_or(0) + 40)]
+        ),
+        String::from_utf8_lossy(
+            &expected[at.unwrap_or(0).saturating_sub(20)..expected.len().min(at.unwrap_or(0) + 40)]
+        ),
+    );
 }
 
 // A program that echoes while it receives a large paste: if reading output and writing input
