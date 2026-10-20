@@ -110,7 +110,7 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     let first_line = std::fs::read_to_string(&file).unwrap();
     assert!(first_line.starts_with("#compdef ssj\n"));
 
-    let case = |words: &str, current: usize| {
+    let case_with = |words: &str, current: usize, prefix: &str| {
         // the completion system is replaced by functions that print what they are asked for.
         let code = format!(
             "compdef() {{ :; }}\nsource '{}'\n\
@@ -118,13 +118,14 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
              _hosts() {{ print hosts; }}\n\
              _files() {{ print files; }}\n\
              _alternative() {{ print \"alternative: $*\"; }}\n\
-             words=({words}); CURRENT={current}; _ssj_words",
+             PREFIX='{prefix}'; words=({words}); CURRENT={current}; _ssj_words",
             file.display()
         );
         run("zsh", &["-f", "-c", &code], &fake_ssj())
             .trim()
             .to_owned()
     };
+    let case = |words: &str, current: usize| case_with(words, current, "");
     // the first word is a command or a host.
     assert!(case("''", 1).contains("alternative:"), "{}", case("''", 1));
     // the word after a command is a host.
@@ -140,6 +141,17 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     assert_eq!(case("attach other@host ''", 3), "names:");
     // list and install take nothing more.
     assert_eq!(case("list me@box ''", 3), "");
+    // the options of a command stand anywhere, also after the destination.
+    let options = case_with;
+    let offered = options("install me@box --ser", 3, "--ser");
+    assert!(
+        offered.starts_with("add: -- ") && offered.contains(" --server-binary"),
+        "{offered}"
+    );
+    assert!(options("install --ser", 2, "--ser").contains(" --server-binary"));
+    assert!(options("kill me@box --fo", 3, "--fo").contains(" --force"));
+    // after the host of a command for the host the words are files.
+    assert_eq!(options("me@box ls --ser", 3, "--ser"), "files");
     // after the destination come the words of the command for the host: files, not hosts.
     assert_eq!(case("me@box ''", 2), "files");
     assert_eq!(case("me@box rm ''", 3), "files");

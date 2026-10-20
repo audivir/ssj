@@ -149,6 +149,13 @@ fn main() {
     page.extend_from_slice(COMMAND.as_bytes());
     page.extend_from_slice(FILES.as_bytes());
     fs::write(out.join("ssj.1"), page).expect("write the man page");
+    // the options for a command word, whose options may stand after the destination.
+    let long_options = command
+        .get_arguments()
+        .filter_map(|arg| arg.get_long())
+        .map(|long| format!("--{long}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     for (shell, file) in [
         (Shell::Bash, "ssj.bash"),
         (Shell::Zsh, "_ssj"),
@@ -174,9 +181,11 @@ fn main() {
 _ssj_words() {
     if (( CURRENT == 1 )); then
         _alternative 'commands:command:compadd list attach kill detach install' 'hosts:host:_hosts'
-    elif [[ $words[1] == (list|attach|kill|detach|install) ]]; then
+    elif [[ $words[1] == (list|attach|kill|detach|install|edit) ]]; then
         # `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
         if (( CURRENT >= 3 )) && [[ $words[2] == -- ]]; then _files; return; fi
+        # the options of a command may stand after the destination (`ssj install host --server-binary`)
+        if [[ $PREFIX == -* ]]; then compadd -- __OPTIONS__; return; fi
         if (( CURRENT == 2 )); then
             _hosts
         elif [[ ( $CURRENT -eq 3 && $words[1] == attach ) || ( $CURRENT -ge 3 && $words[1] == (kill|detach) ) ]]; then
@@ -191,6 +200,7 @@ _ssj_words() {
     fi
 }
 "#;
+            let helpers = helpers.replace("__OPTIONS__", &long_options);
             // `#compdef` must stay the first line, or the completion is not found.
             text = match text.split_once('\n') {
                 Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
