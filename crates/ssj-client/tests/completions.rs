@@ -130,6 +130,18 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     assert!(case("''", 1).contains("alternative:"), "{}", case("''", 1));
     // the word after a command is a host.
     assert_eq!(case("attach ''", 2), "hosts");
+    // the aliases of the ssh config are offered when zsh knows how to read them.
+    let code = format!(
+        "compdef() {{ :; }}\nsource '{}'\n\
+         _ssh_hosts() {{ print ssh hosts; }}\n\
+         _hosts() {{ print hosts; }}\n\
+         words=(list ''); CURRENT=2; PREFIX=''; _ssj_words",
+        file.display()
+    );
+    assert_eq!(
+        run("zsh", &["-f", "-c", &code], &fake_ssj()).trim(),
+        "ssh hosts"
+    );
     assert_eq!(case("list ''", 2), "hosts");
     // the word after the host of attach and kill is a session of that host.
     assert_eq!(case("attach me@box ''", 3), "names: work build");

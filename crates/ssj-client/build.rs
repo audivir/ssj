@@ -178,16 +178,18 @@ fn main() {
                 "*::words -- Command, destination, and session id or name:_ssj_words",
             );
             let helpers = r#"_ssj_sessions() { local -a s; s=(${(f)"$(ssj --complete 2>/dev/null)"}); compadd -a s; }
+# the aliases of `~/.ssh/config` (`Host merk-c1-mac5`) are known to `_ssh_hosts`, not to `_hosts`
+_ssj_hosts() { if (( $+functions[_ssh_hosts] )); then _ssh_hosts; else _hosts; fi; }
 _ssj_words() {
     if (( CURRENT == 1 )); then
-        _alternative 'commands:command:compadd list attach kill detach install' 'hosts:host:_hosts'
+        _alternative 'commands:command:compadd list attach kill detach install' 'hosts:host:_ssj_hosts'
     elif [[ $words[1] == (list|attach|kill|detach|install|edit) ]]; then
         # `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
         if (( CURRENT >= 3 )) && [[ $words[2] == -- ]]; then _files; return; fi
         # the options of a command may stand after the destination (`ssj install host --server-binary`)
         if [[ $PREFIX == -* ]]; then compadd -- __OPTIONS__; return; fi
         if (( CURRENT == 2 )); then
-            _hosts
+            _ssj_hosts
         elif [[ ( $CURRENT -eq 3 && $words[1] == attach ) || ( $CURRENT -ge 3 && $words[1] == (kill|detach) ) ]]; then
             # `detach` only acts on a session that has a client
             local -a s extra; [[ $words[1] == detach ]] && extra=(--connected)
