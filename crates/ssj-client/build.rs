@@ -249,7 +249,22 @@ _ssj_sessions() {
             [[ ${#COMPREPLY[@]} -gt 0 ]] && return
             ;;
     esac
+    # a command or a host as the first word, a host after a command: the aliases of the ssh
+    # config are known to `_known_hosts_real` of bash-completion, as for ssh
+    local hosts=
+    if [[ $current != -* ]] && declare -F _known_hosts_real >/dev/null; then
+        if [[ $COMP_CWORD -eq 1 ]]; then
+            hosts=1
+        elif [[ $COMP_CWORD -eq 2 ]]; then
+            case ${COMP_WORDS[1]} in list|attach|kill|detach|install|edit) hosts=1 ;; esac
+        fi
+    fi
     _ssj "$1" "$current" "$previous"
+    if [[ -n $hosts ]]; then
+        local others=("${COMPREPLY[@]}")
+        _known_hosts_real -- "$current"
+        COMPREPLY=("${others[@]}" "${COMPREPLY[@]}")
+    fi
 }
 complete -F _ssj_sessions -o bashdefault -o default ssj
 "#
@@ -260,6 +275,9 @@ complete -c ssj -n '__fish_seen_subcommand_from detach; and test (count (command
 complete -c ssj -n '__fish_seen_subcommand_from kill; and test (count (commandline -opc | string match -v -- "-*")) -ge 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
 complete -c ssj -n '__fish_seen_subcommand_from attach; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
 complete -c ssj -l name -x -a '(ssj --complete 2>/dev/null)'
+complete -c ssj -n 'test (count (commandline -opc | string match -v -- "-*")) -eq 1' -f -a 'list attach kill detach install edit'
+complete -c ssj -n 'test (count (commandline -opc | string match -v -- "-*")) -eq 1' -f -a '(__fish_print_hostnames)'
+complete -c ssj -n '__fish_seen_subcommand_from list attach kill detach install edit; and test (count (commandline -opc | string match -v -- "-*")) -eq 2' -f -a '(__fish_print_hostnames)'
 "#
         }
         _ => "",

@@ -97,6 +97,26 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(case("ssj attach other@host ''", 3), "");
     // --name offers the names of all hosts.
     assert_eq!(case("ssj --name ''", 2), "work build other");
+
+    // hosts: the first word, and the word after a command, when bash-completion is loaded.
+    let hosts = |words: &str, cword: usize| {
+        let code = format!(
+            "source '{}'\n_known_hosts_real() {{ COMPREPLY=(boxa boxb); }}\n\
+             COMP_WORDS=({words}); COMP_CWORD={cword}; _ssj_sessions; echo \"${{COMPREPLY[*]}}\"",
+            file.display()
+        );
+        run("bash", &["-c", &code], &fake_ssj()).trim().to_owned()
+    };
+    assert!(
+        hosts("ssj ''", 1).ends_with("boxa boxb"),
+        "{}",
+        hosts("ssj ''", 1)
+    );
+    assert_eq!(hosts("ssj attach ''", 2), "boxa boxb");
+    assert_eq!(hosts("ssj list ''", 2), "boxa boxb");
+    // not for the session, nor for a second word after a host, nor for an option.
+    assert_eq!(hosts("ssj attach me@box ''", 3), "work build");
+    assert!(!hosts("ssj --na", 1).contains("boxa"));
 }
 
 #[test]
@@ -205,6 +225,35 @@ fn fish_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(case("ssj attach "), "");
     // --name offers the names of all hosts.
     assert_eq!(case("ssj --name "), "build other work");
+}
+
+#[test]
+fn fish_offers_the_commands_and_the_hosts() {
+    if !installed("fish") {
+        return;
+    }
+    let file = generated("ssj.fish");
+    let case = |line: &str| {
+        // `__fish_print_hostnames` is replaced, since it reads the files of the person.
+        let code = format!(
+            "function __fish_print_hostnames; printf 'boxa\\nboxb\\n'; end; source '{}'; complete -C '{line}'",
+            file.display()
+        );
+        let out = run("fish", &["-c", &code], &fake_ssj());
+        let mut names: Vec<String> = out
+            .lines()
+            .filter_map(|l| l.split('\t').next())
+            .filter(|n| matches!(*n, "boxa" | "boxb" | "attach" | "list"))
+            .map(str::to_owned)
+            .collect();
+        names.sort();
+        names.join(" ")
+    };
+    assert_eq!(case("ssj "), "attach boxa boxb list");
+    assert_eq!(case("ssj attach "), "boxa boxb");
+    assert_eq!(case("ssj -v list "), "boxa boxb");
+    // after the host the sessions follow, not the hosts.
+    assert_eq!(case("ssj attach me@box "), "");
 }
 
 /// Options with a fixed set of values, and the values.
