@@ -231,19 +231,35 @@ the connection stays open. The client pings every second, shows "no response" af
 and gives a stream up after 10 seconds of silence. Then it makes a new one and resumes with the
 offsets, as after any loss.
 
-A stream that has heard nothing for 3 seconds (`SPARE_AFTER`) gets a spare: a second connection
-over the same transport is opened beside it, and the session moves to whichever works first, with
-the same resume as after a loss. This is for a flaky link such as a train, where waiting for the
-10 seconds and then for a login loses more time than the outage itself, and where the old TCP
-connection may sit in its long retransmission backoff when the network is back. A spare that does
-not open within 5 seconds is replaced by a fresh one the next second (a connection that was started
-on a dead path has lost its first packets and retries them at growing intervals, so a fresh one
-finds a returning network sooner), and one that fails outright waits 2 seconds. A spare that
-opens while the stream has answered again is dropped, and a stream that answers drops its spare. A
-stream is not given up while a spare is opening, but at the latest after three times the limit
-(30 seconds), so that a transport that never opens still gives way to the next one. The tests
-(`reconnect.rs`) type a hundred lines and print two hundred through the move, with the old
-connection swallowed by a proxy, and compare every line. Every connection on these two transports starts a new `ssh`, which
+The lag of a stream is the longest of three times: the silence of the server, the age of a ping
+that no pong has answered, and the age of typed input that the server has not acknowledged. The
+second and the third matter because the two directions of a TCP connection recover on their own
+retransmission timers after an outage: the server can be heard again while it hears nothing, and
+the keystrokes wait for the timer of the client. A stream with a lag of 3 seconds (`SPARE_AFTER`)
+gets spares: a second connection over the same transport is opened beside it, a new one every
+second while the lag lasts, up to three at once (`SPARES_AT_ONCE`), and the session moves to the
+first one that opens, with the same resume as after a loss. This is for a flaky link such as a
+train, where waiting for the 10 seconds and then for a login loses more time than the outage
+itself, and where the old TCP connection may sit in its long retransmission backoff when the
+network is back. The new ones every second hedge: a connection that was started on a dead path
+has lost its first packets and retries them at growing intervals, so a fresh one finds a returning
+network sooner. A spare gets 5 seconds to open, and one that fails outright pauses the next for 2
+seconds. When the stream answers again (lag under 1.5 seconds) the spares are dropped, and a spare
+that opens at that moment is dropped too. A stream is not given up while spares are opening, but
+at the latest after three times the limit (30 seconds), so that a transport that never opens still
+gives way to the next one.
+
+The server replaces the working connection only when the new one sends its hello. A connection
+that has been accepted and has said nothing is kept as `incoming`, and a failure or the hello
+timeout of it leaves the working one alone; before this, a spare that merely completed its TLS
+handshake ended the stream it was meant to back up. Servers of 0.1.0-rc6 and older do the old
+thing, so a host needs `ssj install` for spares to be harmless; the protocol version is the same.
+The tests (`reconnect.rs`, `session.rs`, `transports.rs`) type a hundred lines and print two
+hundred through the move with the old connection swallowed, held back and delivered late, or
+working in one direction only, and they check that a silent second connection does not end the
+working one.
+
+Every connection on these two transports starts a new `ssh`, which
 cannot ask for a passphrase (`BatchMode=yes`), so they need an agent or a shared connection
 (`ControlMaster auto`, `ControlPersist`) when the key has a passphrase. The same holds for the
 reconnects of a session that started over UDP and later fell back.

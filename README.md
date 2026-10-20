@@ -245,6 +245,11 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 | The server stops answering | The window title shows `no response from the server` after a short time that depends on the speed of the link. |
 | The connection is lost | The title shows `connection lost, reconnecting`. The session keeps running, and what you type meanwhile is sent when the connection is back. `~.` works even without a connection. |
 
+- On the TCP and `ssh` channel transports, a connection that is slow to answer (3 seconds without an
+  answer to a ping or to what you typed) gets spares: `ssj` opens new connections beside it, up to
+  three at once, and moves to the first that works. On a train this brings the session back in a
+  few seconds, where `ssh` can need half a minute. The server must be installed from the same
+  release (`ssj install`).
 - `ssj` notices when the network changes or the machine wakes from sleep (through the network
   state of macOS or netlink on Linux, and a clock check everywhere) and moves to the new path at
   once instead of waiting for a timeout.

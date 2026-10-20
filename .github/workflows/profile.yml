@@ -7,6 +7,9 @@ on:
       only:
         description: "clients to run (bench.py --only)"
         default: "ssh,udp"
+      bench_args:
+        description: "more bench.py arguments, for example --allow-drop or --congestion cubic"
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -24,7 +27,17 @@ jobs:
           perf_bin="$(ls /usr/lib/linux-tools/*/perf | head -1)"
           echo "$perf_bin" > perf-path
           sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
-          sudo "$perf_bin" record -F 499 -a -g -o perf.data -- env NETEM= BUILD=0 bench/docker-bench.sh --only "${{ inputs.only }}" --raw-bulk --bulk-mb 512 --samples 20 --rounds 2 | tee bench.txt
+          sudo apt-get install -y -qq strace
+          # the system calls of the client and the server for a few seconds of the bulk output
+          (
+            for name in ssj ssj-server; do
+              until pid="$(pgrep -x "$name" | head -1)" && [ -n "$pid" ]; do sleep 1; done
+              sleep 4
+              sudo timeout 8 strace -c -f -p "$pid" -o "strace-$name.txt" || true
+            done
+          ) &
+          sudo "$perf_bin" record -F 499 -a -g -o perf.data -- env NETEM= BUILD=0 bench/docker-bench.sh --only "${{ inputs.only }}" --raw-bulk --bulk-mb 512 --samples 20 --rounds 2 ${{ inputs.bench_args }} | tee bench.txt
+          wait
       - name: Report
         run: |
           perf_bin="$(cat perf-path)"
@@ -33,6 +46,11 @@ jobs:
             echo '### CPU by process'; echo '```'
             sudo "$perf_bin" report -i perf.data --no-children --sort comm -g none --stdio 2>/dev/null | grep -v '^#' | grep -v '^$' | head -15
             echo '```'
+            for name in ssj ssj-server; do
+              echo "### system calls of $name (8 seconds of bulk output)"; echo '```'
+              head -14 "strace-$name.txt" 2>/dev/null || echo "no trace"
+              echo '```'
+            done
             for comm in ssj ssj-server sshd ssh; do
               echo "### $comm: top symbols"; echo '```'
               sudo "$perf_bin" report -i perf.data --no-children --comms "$comm" --sort dso,sym -g none --stdio 2>/dev/null | grep -v '^#' | grep -v '^$' | head -25
