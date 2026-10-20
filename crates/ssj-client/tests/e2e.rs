@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::Once;
 use std::time::{Duration, Instant};
 
 const FAKE_SSH: &str = "#!/bin/sh\n# usage: fake-ssh [options] -- destination command\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nshift\nexec sh -c \"$*\"\n";
@@ -26,16 +25,44 @@ impl SpawnLocked for std::process::Command {
     }
 }
 
+/// The server that the tests run.
+///
+/// Every test is a process of its own under nextest, and each one runs `cargo build`, which links
+/// `target/debug/ssj-server` anew even when nothing changed: for a moment the path does not exist,
+/// and a server started then fails with "No such file or directory". So each process links the
+/// file once under a name of its own (a hard link is the same file and takes no space), and the
+/// builds of the other tests do not reach it.
 fn server_binary() -> PathBuf {
-    static BUILD: Once = Once::new();
-    BUILD.call_once(|| {
-        let status = Command::new(env!("CARGO"))
-            .args(["build", "-p", "ssj-server"])
-            .status()
-            .unwrap();
-        assert!(status.success());
-    });
-    Path::new(env!("CARGO_BIN_EXE_ssj")).with_file_name("ssj-server")
+    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let status = Command::new(env!("CARGO"))
+                .args(["build", "-p", "ssj-server"])
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let built = Path::new(env!("CARGO_BIN_EXE_ssj")).with_file_name("ssj-server");
+            let dir = built.with_file_name(format!("e2e-server-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let own = dir.join("ssj-server");
+            let _ = std::fs::remove_file(&own);
+            // the build of another test may be between removing the old link and making the
+            // new one
+            let started = Instant::now();
+            loop {
+                match std::fs::hard_link(&built, &own) {
+                    Ok(()) => return own,
+                    Err(err)
+                        if err.kind() == std::io::ErrorKind::NotFound
+                            && started.elapsed() < Duration::from_secs(60) =>
+                    {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(err) => panic!("{}: {err}", built.display()),
+                }
+            }
+        })
+        .clone()
 }
 
 /// An empty directory for the config of the client. A test that does not give its own one would
@@ -82,9 +109,15 @@ fn fake_ssh(script: &str) -> PathBuf {
     // the first build of the server takes a minute on a slow machine, and a test that times itself
     // must not count it.
     server_binary();
-    let dir =
-        std::env::temp_dir().join(format!("ssj-e2e-{}-{}", std::process::id(), rand_suffix()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = loop {
+        let dir =
+            std::env::temp_dir().join(format!("ssj-e2e-{}-{}", std::process::id(), rand_suffix()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break dir,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => panic!("{}: {err}", dir.display()),
+        }
+    };
     let path = dir.join("fake-ssh");
     std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -449,14 +482,23 @@ fn quiet_leaves_out_the_lines_about_connecting_and_disconnecting() {
     assert!(!seen.contains("[disconnected"), "{seen:?}");
 }
 
+/// A new directory with a short path (a socket path is short). The process ids come round on a
+/// machine that runs the tests often, and a directory of an earlier run with the same name has the
+/// state of that run in it, so the directory is created exclusively and the next name is tried if
+/// one exists.
 fn short_dir() -> PathBuf {
-    let dir = PathBuf::from(format!(
-        "/tmp/ssjt-c-{}-{}",
-        std::process::id(),
-        rand_suffix()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    loop {
+        let dir = PathBuf::from(format!(
+            "/tmp/ssjt-c-{}-{}",
+            std::process::id(),
+            rand_suffix()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => panic!("{}: {err}", dir.display()),
+        }
+    }
 }
 
 /// Runs `ssj` with the given words and stdin, against the server in the same runtime directory.
