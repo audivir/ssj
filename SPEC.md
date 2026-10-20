@@ -1113,7 +1113,7 @@ The session starts the command and not an interactive shell, and ends with its e
 ### Editing the config files (`ssj edit`)
 
 `ssj edit` edits `client.toml`, and `ssj edit [user@]host` edits `server.toml` on the host. The
-word `edit` alone is the command (a host with that name is `user@edit`); with a destination it
+word `edit` alone is the command (a host with that name is `ssj connect edit`, or `user@edit`); with a destination it
 follows the rule of the other commands.
 
 - The editor is `$EDITOR`, else `$VISUAL`, else `vi`, run through `sh -c` so that it may have

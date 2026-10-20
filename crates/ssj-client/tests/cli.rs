@@ -232,6 +232,12 @@ fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
     // the options of the connection, before the destination
     let parsed = args(&["connect", "--send-env=LC_THEME", "host"]).unwrap();
     assert_eq!(parsed.command, Command::Connect);
+    // `ssj edit` alone is the editor, and `ssj connect edit` is the host
+    assert_eq!(args(&["edit"]).unwrap().command, Command::Edit);
+    let parsed = args(&["connect", "edit"]).unwrap();
+    assert_eq!(parsed.command, Command::Connect);
+    assert_eq!(parsed.destination, "edit");
+    assert_eq!(args(&["edit", "edit"]).unwrap().destination, "edit");
     // a destination is needed
     assert!(
         args(&["connect"])

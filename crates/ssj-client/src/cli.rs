@@ -399,7 +399,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         foreign_option(&command, &matches, word)?;
     }
     let options = Options::from_arg_matches(&matches).map_err(|e| e.to_string())?;
-    from_options(options, &tail)
+    from_options(options, &tail, explicit)
 }
 
 /// The help of a command of `ssj`, or `None` for a word that is not one.
@@ -538,7 +538,7 @@ fn is_command_word(word: &str) -> bool {
     )
 }
 
-fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
+fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Args, String> {
     // A command for the session is everything after the destination, as with `ssh`.
     let words = options.words.clone();
     let remote_command = (!tail.is_empty()).then(|| tail.join(" "));
@@ -640,8 +640,8 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
         .filter(|_| positionals.len() > 1)
         .map(String::as_str);
     // `ssj edit` alone is the editor for the local file; a host that is called `edit` is reached
-    // as `user@edit`.
-    let local_edit = positionals.as_slice() == ["edit"];
+    // as `ssj connect edit` or `user@edit`.
+    let local_edit = !explicit && positionals.as_slice() == ["edit"];
     let (command, destination) = match command_word {
         _ if local_edit => (Command::Edit, String::new()),
         Some(word @ ("list" | "attach" | "kill" | "detach" | "install" | "edit")) => {

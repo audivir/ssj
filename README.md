@@ -451,7 +451,8 @@ such as `code -w` works). `ssj edit user@host` does the same for `server.toml` o
 - If somebody else changed the file while your editor was open, nothing is overwritten: the error
   names a file with your text.
 - Sessions that run keep their settings; new ones use the file.
-- A host called `edit` is reached as `user@edit`.
+- A host called `edit` is reached as `ssj connect edit` (or `user@edit`); `ssj edit` alone is the
+  editor of `client.toml`, and `ssj edit edit` edits `server.toml` on the host `edit`.
 
 ### Files
 
