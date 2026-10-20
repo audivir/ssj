@@ -1004,9 +1004,13 @@ async fn connect_session(
         Ok(Finished::HungUp) => 129,
         Ok(Finished::Detached) => {
             let port = args.ssh_port.map(|p| format!(":{p}")).unwrap_or_default();
-            eprintln!(
-                "[detached from session; it keeps running: ssj attach {}{port}]",
-                args.destination
+            // after a hangup the terminal is gone, and `eprintln!` would panic on the error.
+            let _ = std::io::Write::write_fmt(
+                &mut std::io::stderr(),
+                format_args!(
+                    "[detached from session; it keeps running: ssj attach {}{port}]\n",
+                    args.destination
+                ),
             );
             0
         }
