@@ -2333,7 +2333,14 @@ impl Client {
                     // QUIC finds a returning network by itself and survives long outages. A
                     // stream has no way to notice that its path is gone, and the `ssh` behind it
                     // would hang, so a long silence ends it and a new one is made.
-                    if link.quic.is_none() && silent > self.params.stream_dead_after {
+                    // not while a spare is opening, which would lose its progress, but not for ever:
+                    // a transport that never opens has to give way to the next one.
+                    let patience = if spare.is_some() {
+                        self.params.stream_dead_after * 3
+                    } else {
+                        self.params.stream_dead_after
+                    };
+                    if link.quic.is_none() && silent > patience {
                         vlog!(1, "nothing heard for {silent:?} on a stream: giving it up");
                         return Ok(Pumped::Lost);
                     }

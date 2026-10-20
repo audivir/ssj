@@ -229,7 +229,21 @@ culprit. The server offers what it is told to
 A stream has no keepalive of QUIC: if the path dies without a sign (a firewall, a hung `ssh`),
 the connection stays open. The client pings every second, shows "no response" after 2 seconds,
 and gives a stream up after 10 seconds of silence. Then it makes a new one and resumes with the
-offsets, as after any loss. Every connection on these two transports starts a new `ssh`, which
+offsets, as after any loss.
+
+A stream that has heard nothing for 3 seconds (`SPARE_AFTER`) gets a spare: a second connection
+over the same transport is opened beside it, and the session moves to whichever works first, with
+the same resume as after a loss. This is for a flaky link such as a train, where waiting for the
+10 seconds and then for a login loses more time than the outage itself, and where the old TCP
+connection may sit in its long retransmission backoff when the network is back. A spare that does
+not open within 5 seconds is replaced by a fresh one the next second (a connection that was started
+on a dead path has lost its first packets and retries them at growing intervals, so a fresh one
+finds a returning network sooner), and one that fails outright waits 2 seconds. A spare that
+opens while the stream has answered again is dropped, and a stream that answers drops its spare. A
+stream is not given up while a spare is opening, but at the latest after three times the limit
+(30 seconds), so that a transport that never opens still gives way to the next one. The tests
+(`reconnect.rs`) type a hundred lines and print two hundred through the move, with the old
+connection swallowed by a proxy, and compare every line. Every connection on these two transports starts a new `ssh`, which
 cannot ask for a passphrase (`BatchMode=yes`), so they need an agent or a shared connection
 (`ControlMaster auto`, `ControlPersist`) when the key has a passphrase. The same holds for the
 reconnects of a session that started over UDP and later fell back.
@@ -323,8 +337,13 @@ redraw.
   text there; `cli::parse` checks the values. A word is a command (`list`, `attach`, `kill`, `detach`,
   `install`) only when a destination follows it, so a host named `list` still works. An option
   given twice takes the last value, except `--server-arg` and `--send-env`, which collect.
-- `build.rs` writes the man page (`ssj.1`, with a FILES section for `client.toml` and
-  `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
+- The options with a fixed set of values (`--transport`, `--local-echo`, `--compress`,
+  `--congestion`) carry it in the definition (`PossibleValuesParser`), so the completions of all
+  three shells offer the values after a space and after `=`, and clap rejects anything else with
+  the list. The sets are written again in the `parse_*` functions of `cli.rs`, which turn the text
+  into the types, and in the test table of `completions.rs`.
+- `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
+  section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left
   out.
 - `ssj list --json` prints a JSON array of `{"id", "name", "state", "age_secs", "protocol"}`.
@@ -392,10 +411,24 @@ of `eth0` in both directions while the interface and its address stay, as in a t
 tells the programs that the network is gone, and the keys typed meanwhile wait. At the end of the
 outage the script types a marker, and the time until its echo is the recovery. The table shows the
 keystroke latency outside the outages (median, 95th percentile, maximum), the echoes that did not
-arrive, and the recovery after each outage. A first run (5 and 12 s outages, one run each, so
-read it as a direction and not a result): `ssh` recovered in 0.9 to 1.8 s, `ssj` over UDP in 0.4 s,
-over TCP in 0.4 and 3.6 s, and over the `ssh` channel in 2.2 and 3.6 s. A stream gives up after 10
-s of silence and starts a new `ssh`, which costs the handshake.
+arrive, and the recovery after each outage. Results (Ubuntu 24.04 containers on a Mac, 80 ms
+delay, 160 ms round trip, seconds from the end of the outage to the echo of the marker):
+
+| Client | After 5 s | After 12 s | After 12 s | After 20 s |
+| ------ | --------- | ---------- | ---------- | ---------- |
+| `ssh` | 1.2 | 6.7 | 10.9 | 27.6 |
+| `ssj` over UDP | 0.3 | 0.7 | 0.4 | 0.3 |
+
+`ssh` waits for the retransmission timer of its TCP connection, which has backed off during the
+outage. The streams of `ssj` before the spare connection gave up after 10 seconds and made a new
+`ssh`: 3.6 s after outages of 12 s, and 0.2 to 0.4 s after shorter ones, where the old connection
+recovered by itself. With the spare, in two runs of ten outages each per transport (4, 6, 8, 10,
+and 12 s, twice): TCP recovered in 0.26 to 0.43 s after all ten outages of the first run and in
+0.27 to 0.76 s after those of the second. Stdio recovered in 0.14 to 0.17 s after eight of the ten
+of the first run (6.2 s and 1.0 s after two outages of 4 and 6 s, not yet explained) and in 0.13 to
+0.46 s after all ten of the second. The median keystroke latency was 166 to 175 ms on all of them,
+which is
+the round trip. The numbers are from one machine and few runs: read them as a direction.
 
 On a Mac (Darwin arm64, OpenSSH 10.3, `CLIENT=host`, 1500 keystrokes with random gaps, no link
 simulated): the released 0.1.0-rc5 needed a median of 45.4 ms per keystroke over TCP (every one

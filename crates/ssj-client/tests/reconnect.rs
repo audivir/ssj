@@ -1299,8 +1299,9 @@ async fn a_silent_tcp_path_is_given_up_after_a_while_and_replaced() {
     })
     .await;
     assert!(silent.is_some(), "{:?}", terminal.status());
-    // the client gives the connection up, and its new attempts are swallowed too.
-    let gave_up = wait_until(Duration::from_secs(10), || {
+    // the client gives the connection up, and its new attempts are swallowed too. The spares that
+    // it opens meanwhile delay this until three times the limit.
+    let gave_up = wait_until(Duration::from_secs(20), || {
         terminal.status().iter().any(|s| s.contains("reconnecting"))
     })
     .await;
