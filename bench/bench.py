@@ -32,6 +32,28 @@ from typing import Any
 MARK = "END" + "42"  # the command shows END$((6*7)), the output shows END42
 
 
+class Args(argparse.Namespace):
+    """The command line, with the type of every option."""
+
+    host: str
+    ssj: str
+    server: str
+    ssh_command: str
+    congestion: str | None
+    only: str | None
+    text_bulk: bool
+    allow_drop: bool
+    bulk_mb: int
+    raw_bulk: bool
+    paste_mb: int
+    samples: int
+    jitter_ms: int
+    rounds: int
+    startup: int | None
+    netem: str | None
+    json: bool
+
+
 class Terminal:
     """A client process on a pseudo terminal."""
 
@@ -111,7 +133,7 @@ class Terminal:
         os.close(self.fd)
 
 
-def clients(args: argparse.Namespace) -> dict[str, list[str]]:
+def clients(args: Args) -> dict[str, list[str]]:
     """The command line of every client."""
     base = shlex.split(args.ssh_command)
     ssj = [args.ssj, "--server-path", args.server, "--ssh-command", args.ssh_command]
@@ -240,7 +262,7 @@ def startup(argv: list[str], runs: int) -> dict[str, Any]:
     }
 
 
-def netem(args: argparse.Namespace, action: str) -> None:
+def netem(args: Args, action: str) -> None:
     """Adds or removes the simulated link on the loopback device."""
     if not args.netem:
         return
@@ -280,7 +302,7 @@ def main() -> None:
     )
     parser.add_argument("--netem", help='for example "delay 40ms loss 1%%" (Linux, root)')
     parser.add_argument("--json", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=Args())
     args.ssj, args.server = str(Path(args.ssj).resolve()), str(Path(args.server).resolve())
 
     chosen = clients(args)

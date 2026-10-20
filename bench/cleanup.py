@@ -51,6 +51,15 @@ def reap(terminal: Terminal) -> None:
         os.waitpid(terminal.pid, 0)
 
 
+class Args(argparse.Namespace):
+    """The command line, with the type of every option."""
+
+    host: str
+    ssj: str
+    server: str
+    wait: float
+
+
 def main() -> None:
     """Runs every case and prints the result."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -60,7 +69,7 @@ def main() -> None:
     parser.add_argument(
         "--wait", type=float, default=6, help="seconds to wait for the server to end"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=Args())
     argv = [
         str(Path(args.ssj).resolve()),
         "--server-path",
