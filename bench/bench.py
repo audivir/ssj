@@ -27,7 +27,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 MARK = "END" + "42"  # the command shows END$((6*7)), the output shows END42
 
@@ -57,11 +60,11 @@ class Args(argparse.Namespace):
 class Terminal:
     """A client process on a pseudo terminal."""
 
-    def __init__(self, argv: list[str]) -> None:
+    def __init__(self, argv: Sequence[str]) -> None:
         """Starts `argv` on a new pseudo terminal."""
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.execvp(argv[0], argv)
+            os.execvp(argv[0], list(argv))
         self.buffer = b""
         self.seen = b""
 
@@ -153,7 +156,7 @@ def clients(args: Args) -> dict[str, list[str]]:
     }
 
 
-def session(argv: list[str]) -> Terminal:
+def session(argv: Sequence[str]) -> Terminal:
     """Starts a client and returns it when the shell answers."""
     terminal = Terminal(argv)
     # the shell is ready when it answers a command
@@ -165,7 +168,9 @@ def session(argv: list[str]) -> Terminal:
 TEXT_LINE = "2026-10-18 12:00:%02d INFO worker-%d handled request id=%d status=200 bytes=%d"
 
 
-def bulk(argv: list[str], megabytes: int, raw: bool = False, text: bool = False) -> dict[str, Any]:
+def bulk(
+    argv: Sequence[str], megabytes: int, raw: bool = False, text: bool = False
+) -> dict[str, Any]:
     """Seconds for the shell to print `megabytes` of output."""
     terminal = session(argv)
     if text:
@@ -191,7 +196,7 @@ def bulk(argv: list[str], megabytes: int, raw: bool = False, text: bool = False)
     return {"megabytes_per_second": round(megabytes / seconds, 1), "seconds": round(seconds, 2)}
 
 
-def latency(argv: list[str], samples: int, jitter_ms: int = 0) -> dict[str, Any]:
+def latency(argv: Sequence[str], samples: int, jitter_ms: int = 0) -> dict[str, Any]:
     """The time from a keystroke to its echo."""
     terminal = session(argv)
     terminal.send("stty raw -echo; cat\n")
@@ -223,7 +228,7 @@ def latency(argv: list[str], samples: int, jitter_ms: int = 0) -> dict[str, Any]
     }
 
 
-def paste(argv: list[str], megabytes: int, text: bool = False) -> dict[str, Any]:
+def paste(argv: Sequence[str], megabytes: int, text: bool = False) -> dict[str, Any]:
     """Seconds for the shell to take `megabytes` of input."""
     terminal = session(argv)
     size = megabytes * 1048576
@@ -246,7 +251,7 @@ def paste(argv: list[str], megabytes: int, text: bool = False) -> dict[str, Any]
     return {"seconds": round(seconds, 2), "megabytes_per_second": round(megabytes / seconds, 1)}
 
 
-def startup(argv: list[str], runs: int) -> dict[str, Any]:
+def startup(argv: Sequence[str], runs: int) -> dict[str, Any]:
     """Seconds from starting the client until the shell answers a command, and until it is gone."""
     ready, ended = [], []
     for _ in range(runs):

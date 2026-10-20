@@ -22,7 +22,10 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def load(path: str) -> dict[str, Any]:
@@ -33,7 +36,7 @@ def load(path: str) -> dict[str, Any]:
     return result
 
 
-def table(title: str, results: dict[str, Any]) -> str:
+def table(title: str, results: Mapping[str, Any]) -> str:
     """Renders the results of one run as a markdown table."""
     lines = [
         f"### {title}",
