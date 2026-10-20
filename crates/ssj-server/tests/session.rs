@@ -398,6 +398,38 @@ async fn broken_clients_lose_their_connection_but_not_the_session() {
     assert!(contains(&seen.output, "still alive"));
 }
 
+// A second connection that has not said hello (a spare that is still opening, or a client that
+// connects and stays silent) does not end the working connection.
+#[tokio::test]
+async fn a_connection_without_a_hello_does_not_replace_the_working_one() {
+    let mut cfg = config("cat");
+    cfg.hello_timeout = Duration::from_millis(500);
+    let harness = start(cfg);
+    let mut working = harness.connect().await;
+    working.start().await;
+
+    let mut silent = harness.connect().await;
+    working
+        .send(ClientFrame::Input(b"still here\n".to_vec()))
+        .await;
+    let seen = working
+        .read_until(|s| contains(&s.output, "still here"))
+        .await;
+    assert!(contains(&seen.output, "still here"), "{:?}", seen.error);
+    assert!(!seen.closed);
+
+    // the silent one is sent away after the hello timeout, and the working one goes on.
+    let gone = silent.read_until(|_| false).await;
+    assert_eq!(gone.error, Some(ErrorCode::BadHello));
+    working
+        .send(ClientFrame::Input(b"and again\n".to_vec()))
+        .await;
+    let seen = working
+        .read_until(|s| contains(&s.output, "and again"))
+        .await;
+    assert!(contains(&seen.output, "and again"));
+}
+
 #[tokio::test]
 async fn hello_must_arrive_in_time() {
     let mut cfg = config("cat");

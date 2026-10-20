@@ -280,6 +280,10 @@ impl<B: Backend> Session<B> {
         let mut pending_budget: Option<Arc<Semaphore>> = None;
         let mut shell: Option<Running<B::Shell>> = None;
         let mut active: Option<Active> = None;
+        // The newest connection that has not said hello yet. It replaces the active one only
+        // when it does: a client that opens a second connection beside a working one (a spare)
+        // must not end the working one by connecting.
+        let mut incoming: Option<Active> = None;
         let mut generation = 0u64;
         let mut detached_since = Some(Instant::now());
         // the newest size of a burst of resizes, applied when no other message is queued.
@@ -468,15 +472,13 @@ impl<B: Backend> Session<B> {
                 Event::Connection(None) => return SessionEnd::Closed,
                 Event::Connection(Some(conn)) => {
                     generation += 1;
-                    active = Some(start_connection(
+                    incoming = Some(start_connection(
                         conn,
                         generation,
                         control_tx.clone(),
                         config.hello_timeout,
                         config.lost_after,
                     ));
-                    detached_since = None;
-                    detached_on_purpose = false;
                 }
                 Event::DetachedTimeout => return SessionEnd::DetachedTimeout,
                 // the next turn of the loop sees that the client is away now.
@@ -486,6 +488,22 @@ impl<B: Backend> Session<B> {
                     generation: g,
                     control,
                 })) => {
+                    if incoming.as_ref().is_some_and(|i| i.generation == g) {
+                        if matches!(control, Control::Hello(_)) {
+                            // the client is here: the connection before it is replaced.
+                            lose(&mut active, &events);
+                            active = incoming.take();
+                            detached_since = None;
+                            detached_on_purpose = false;
+                        } else {
+                            // it failed before its hello: the active connection is not touched.
+                            if let (Control::Violation(code), Some(i)) = (&control, &incoming) {
+                                let _ = i.out.try_send(ServerFrame::Error(*code));
+                            }
+                            incoming = None;
+                            continue;
+                        }
+                    }
                     if active.as_ref().map(|a| a.generation) != Some(g) {
                         continue;
                     }
