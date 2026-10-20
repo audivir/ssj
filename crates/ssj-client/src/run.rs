@@ -98,14 +98,15 @@ const STALL_MAX: Duration = Duration::from_secs(10);
 /// [`STREAM_DEAD_AFTER`] would leave a flaky link (a train) without a session for that long, and
 /// the stream itself may be in the long backoff of TCP when the network is back.
 const SPARE_AFTER: Duration = Duration::from_secs(3);
-/// Time a spare gets to open before a new one replaces it. A connection that was started on a dead
-/// path has lost its first packets and retries them with growing pauses, so a fresh one finds a
-/// returning network sooner than an old one does.
-const SPARE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Time a spare gets to open. A connection that was started on a dead path has lost its first
+/// packets and retries them after 1 and 3 seconds, and then needs the login: it opens about 6
+/// seconds after it was started, so a shorter time would end the spares that are about to work.
+/// The fresh ones that come every second find a returning network sooner.
+const SPARE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Spares that open at the same time. A connection started on a dead path loses its first packets
 /// and may not open for seconds, so a new one starts every second while the stream lags, and the
 /// first to open wins (the same idea as asking two servers and taking the faster answer).
-const SPARES_AT_ONCE: usize = 3;
+const SPARES_AT_ONCE: usize = 6;
 /// Pause after a spare that failed outright, so that a broken login does not become a loop.
 const SPARE_PAUSE: Duration = Duration::from_secs(2);
 /// A change of network produces many notifications. One reaction follows when they stop.

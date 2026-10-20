@@ -237,14 +237,16 @@ second and the third matter because the two directions of a TCP connection recov
 retransmission timers after an outage: the server can be heard again while it hears nothing, and
 the keystrokes wait for the timer of the client. A stream with a lag of 3 seconds (`SPARE_AFTER`)
 gets spares: a second connection over the same transport is opened beside it, a new one every
-second while the lag lasts, up to three at once (`SPARES_AT_ONCE`), and the session moves to the
+second while the lag lasts, up to six at once (`SPARES_AT_ONCE`), and the session moves to the
 first one that opens, with the same resume as after a loss. This is for a flaky link such as a
 train, where waiting for the 10 seconds and then for a login loses more time than the outage
 itself, and where the old TCP connection may sit in its long retransmission backoff when the
 network is back. The new ones every second hedge: a connection that was started on a dead path
 has lost its first packets and retries them at growing intervals, so a fresh one finds a returning
-network sooner. A spare gets 5 seconds to open, and one that fails outright pauses the next for 2
-seconds. When the stream answers again (lag under 1.5 seconds) the spares are dropped, and a spare
+network sooner. A spare gets 10 seconds to open (one that was started on a dead path retries its first
+packets after 1 and 3 seconds and then needs the login, so it opens about 6 seconds after the
+start, and a shorter limit ended the spares that were about to work), and one that fails outright
+pauses the next for 2 seconds. When the stream answers again (lag under 1.5 seconds) the spares are dropped, and a spare
 that opens at that moment is dropped too. A stream is not given up while spares are opening, but
 at the latest after three times the limit (30 seconds), so that a transport that never opens still
 gives way to the next one.
