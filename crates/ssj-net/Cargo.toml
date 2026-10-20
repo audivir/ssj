@@ -7,15 +7,14 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-# for the type of the round-trip estimate that a congestion controller is given
-quinn-proto = { version = "0.11.19", default-features = false }
-rcgen = "0.14.10"
-rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
-sha2 = "0.11.1"
+quinn.workspace = true
+quinn-proto.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+sha2.workspace = true
 ssj-proto.workspace = true
-tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-rustls.workspace = true
 
 [lints]
 workspace = true

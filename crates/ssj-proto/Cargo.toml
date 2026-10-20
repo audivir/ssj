@@ -7,7 +7,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-zstd = { version = "0.14.3", default-features = false }
+zstd.workspace = true
 
 [lints]
 workspace = true

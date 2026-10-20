@@ -9,11 +9,32 @@ description = "Session survives jumps: a roaming remote shell over QUIC"
 repository = "https://github.com/audivir/ssj"
 license = "MIT"
 
+# Every dependency is declared here, sorted, and the crates take it with `dep.workspace = true`.
+# A crate adds only the features that it needs on top (as for `tokio`).
 [workspace.dependencies]
+clap = "4.6.7"
+clap_complete = "4.6.11"
+clap_mangen = "0.3.3"
+core-foundation = "0.10.1"
+netlink-sys = "0.9.0"
+pty-process = "0.5.3"
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# for the type of the round-trip estimate that a congestion controller is given
+quinn-proto = { version = "0.11.19", default-features = false }
+rcgen = "0.14.10"
+rustix = "1.1.5"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+sha2 = "0.11.1"
+socket2 = "0.6.5"
 ssj-config = { path = "crates/ssj-config", version = "0.1.0-rc6" }
 ssj-net = { path = "crates/ssj-net", version = "0.1.0-rc6" }
 ssj-proto = { path = "crates/ssj-proto", version = "0.1.0-rc6" }
 ssj-server = { path = "crates/ssj-server", version = "0.1.0-rc6" }
+system-configuration = "0.8.0"
+tokio = "1.53.3"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+zstd = { version = "0.14.3", default-features = false }
 
 [workspace.lints.rust]
 # `deny` and not `forbid`, so that the few places that need `unsafe` can allow it with a reason

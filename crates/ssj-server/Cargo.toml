@@ -7,14 +7,14 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-pty-process = { version = "0.5.3", features = ["async"] }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustix = { version = "1.1.5", features = ["fs", "process", "stdio", "system"] }
-socket2 = { version = "0.6.5", features = ["all"] }
+pty-process = { workspace = true, features = ["async"] }
+quinn.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "stdio", "system"] }
+socket2 = { workspace = true, features = ["all"] }
 ssj-config.workspace = true
 ssj-net.workspace = true
 ssj-proto.workspace = true
-tokio = { version = "1.53.3", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 
 [lints]
 workspace = true
