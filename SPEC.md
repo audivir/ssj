@@ -347,8 +347,8 @@ redraw.
   reported on stderr, the others are still handled, and the exit code is 1 if any failed.
 
 - `ssj kill [-f] DESTINATION` without an id: with a terminal, the only session is ended after
-  `End the session <NAME> (<ID>) on <DESTINATION> (<STATE>, <AGE>)? [y/N]` (only `y` or `yes`
-  agrees, `-f` skips the question), and several sessions go into the menu, which is the consent.
+  `End the session <NAME> (<ID>) on <DESTINATION> (<STATE>, <AGE>)? [Y/n]` (Enter, `y`, and `yes`
+  agree, anything else does not, and `-f` skips the question), and several sessions go into the menu, which is the consent.
   Without a terminal the client refuses unless `-f` is given, and says "no running session" first
   if there is none. An id given on the command line is never asked about.
 

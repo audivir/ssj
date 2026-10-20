@@ -775,15 +775,16 @@ async fn fetch_sessions(args: &Args) -> Result<Vec<SessionInfo>, String> {
         .collect())
 }
 
-/// Asks a yes or no question on the terminal. Only `y` and `yes` agree, so that Enter is no.
-fn confirm_yes(question: &str) -> bool {
+/// Asks a question on the terminal that Enter answers with yes, as the capital in `[Y/n]` says.
+/// Anything but an empty answer, `y`, or `yes` is no, and so is a closed input.
+fn confirm_default_yes(question: &str) -> bool {
     use std::io::{BufRead, Write};
     let mut err = std::io::stderr();
-    let _ = write!(err, "{question} [y/N] ");
+    let _ = write!(err, "{question} [Y/n] ");
     let _ = err.flush();
     let mut answer = String::new();
     match std::io::stdin().lock().read_line(&mut answer) {
-        Ok(read) if read > 0 => matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+        Ok(read) if read > 0 => crate::install::accepts(&answer),
         _ => false,
     }
 }
@@ -818,7 +819,7 @@ async fn session_to_kill(args: &Args) -> Result<String, String> {
                     state_word(s.state),
                     format_age(s.age_secs)
                 );
-                if !confirm_yes(&question) {
+                if !confirm_default_yes(&question) {
                     return Err("not ended".to_owned());
                 }
             }

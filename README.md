@@ -211,7 +211,7 @@ or failing.
 - Keys: arrow keys or `j` and `k`, a number to jump, Enter to choose, `q` or Ctrl-C to cancel.
 - Without a terminal nothing is asked: `--auto-attach` starts a session as before, and the other
   commands name the sessions in their error.
-- `ssj kill` without an id asks `End the session ...? [y/N]` when only one session runs (Enter is no,
+- `ssj kill` without an id asks `End the session ...? [Y/n]` when only one session runs (Enter is yes,
   and `-f` does not ask). With several sessions the menu is the question. Without a terminal and
   without `-f` it refuses to end a session that you did not name.
 - An id or a name is exact. A session has one name, and `--name` joins the session of that name

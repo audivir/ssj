@@ -2144,17 +2144,20 @@ fn kill_without_an_id_asks_before_it_ends_the_only_session() {
     detached_session(&host, &ssh);
     assert_eq!(sessions_listed(&host, &ssh), 1);
 
-    // no is the answer of Enter, and of anything but yes
-    let mut terminal = on_terminal(&host, &ssh, &kill_words(&host, &["kill", "user@localhost"]));
-    terminal.wait_for("End the session ");
-    terminal.wait_for("[y/N]");
-    terminal.typed.write_all(b"\n").unwrap();
-    assert_eq!(terminal.exit_code(), Some(1));
-    assert_eq!(sessions_listed(&host, &ssh), 1);
+    // no is the answer of n, no, and any other word, and Enter is yes
+    for answer in [b"n\n".as_slice(), b"no\n", b"nope\n"] {
+        let mut terminal =
+            on_terminal(&host, &ssh, &kill_words(&host, &["kill", "user@localhost"]));
+        terminal.wait_for("End the session ");
+        terminal.wait_for("[Y/n]");
+        terminal.typed.write_all(answer).unwrap();
+        assert_eq!(terminal.exit_code(), Some(1), "{answer:?}");
+        assert_eq!(sessions_listed(&host, &ssh), 1, "{answer:?}");
+    }
 
     let mut terminal = on_terminal(&host, &ssh, &kill_words(&host, &["kill", "user@localhost"]));
-    terminal.wait_for("[y/N]");
-    terminal.typed.write_all(b"y\n").unwrap();
+    terminal.wait_for("[Y/n]");
+    terminal.typed.write_all(b"\n").unwrap();
     assert_eq!(terminal.exit_code(), Some(0));
     wait_for_sessions(&host, &ssh, 0);
 }
@@ -2170,7 +2173,7 @@ fn kill_with_f_does_not_ask() {
         &kill_words(&host, &["kill", "-f", "user@localhost"]),
     );
     assert_eq!(terminal.exit_code(), Some(0));
-    assert!(!terminal.seen.contains("[y/N]"), "{:?}", terminal.seen);
+    assert!(!terminal.seen.contains("[Y/n]"), "{:?}", terminal.seen);
     wait_for_sessions(&host, &ssh, 0);
 }
 
