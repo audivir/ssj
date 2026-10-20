@@ -40,9 +40,11 @@ the workspace root):
    is visible to other users in `ps`.
 1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
    range and a TCP port on the loopback address, prints the session id, both ports, and the server
-   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new]`), and detaches from the `ssh` channel. The
-   optional fifth field `new` says that this server has just made the session; a session that ran, and a server that
-   does not say, leave it out, and the client then reads the first line as `attached to session`. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
+   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]`), and detaches from the `ssh`
+   channel. The optional field `new` says that this server has just made the session; a session
+   that ran leaves it out, and the client then reads the first line as `attached to session`. The
+   optional field `name=NAME` gives the name of the session, so that `ssj attach HOST` and a join
+   by an id show it too; each field stands once, `new` first, and anything else is an error. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
    the client also accepts and passes on to `ssj-server`. `--port-range 0` takes any port that the
    kernel gives, for hosts where the range is full or filtered anyway.
 1. Client reads the line, closes the `ssh` connection, and connects over the best transport (see
@@ -1294,7 +1296,7 @@ Bootstrap (client):
 - The client starts `ssh` with an argument vector and never through a shell. A host argument that
   starts with `-` is rejected, to prevent option injection such as `-oProxyCommand`.
 - `ssh` runs without a terminal, so output is not altered and stdin is not echoed.
-- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new]`, of
+- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]`, of
   bounded length, and ignores other output such as banners and `.bashrc` noise. Remote text is
   never printed to the terminal unfiltered, because it could contain escape sequences.
 - The server reads the client fingerprint from stdin with a length limit and a timeout.

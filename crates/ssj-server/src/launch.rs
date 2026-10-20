@@ -250,6 +250,7 @@ pub fn run_parent(args: &Args) -> ExitCode {
     };
     // this server made the session, and only it can tell the client so.
     connect.new = true;
+    connect.name = args.name.clone();
     let mut out = std::io::stdout();
     if out
         .write_all(format_connect(&connect).as_bytes())

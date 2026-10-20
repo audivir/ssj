@@ -91,6 +91,7 @@ fn replies_survive_a_round_trip() {
             tcp: Some(40123),
             fingerprint: fingerprint(),
             new: false,
+            name: None,
         }),
         Reply::Connect(Connect {
             id: SessionId::parse("abcdef012345").unwrap(),
@@ -98,6 +99,7 @@ fn replies_survive_a_round_trip() {
             tcp: None,
             fingerprint: fingerprint(),
             new: false,
+            name: None,
         }),
         Reply::Info(info(SessionState::Connected)),
         Reply::Info(info(SessionState::Disconnected)),
@@ -178,6 +180,7 @@ fn a_reply_with_more_than_one_line_is_refused() {
         tcp: None,
         fingerprint: fingerprint(),
         new: false,
+        name: None,
     }));
     assert!(parse_reply(connect.as_bytes()).is_ok());
     assert_eq!(

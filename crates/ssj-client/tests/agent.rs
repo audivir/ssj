@@ -152,6 +152,7 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
             tcp: None,
             fingerprint: identity.fingerprint(),
             new: false,
+            name: None,
         },
         identity,
         tiers: vec![Tier::Stream {

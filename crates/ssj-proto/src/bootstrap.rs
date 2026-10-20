@@ -5,7 +5,7 @@
 
 use crate::env::Env;
 use crate::frame::{ClientFrame, Hello, decode_client};
-use crate::types::{SessionId, WindowSize};
+use crate::types::{SessionId, SessionName, WindowSize};
 
 /// Start of the line that carries the connection data.
 pub const PREFIX: &str = "SSJ CONNECT ";
@@ -46,6 +46,8 @@ pub struct Connect {
     /// The server made the session for this client, which a fifth field `new` on the line says.
     /// `false` for a session that ran, and for a server that does not say.
     pub new: bool,
+    /// The name of the session, when it has one (`name=NAME` on the line).
+    pub name: Option<SessionName>,
 }
 
 /// Failure to read a line of the bootstrap.
@@ -58,7 +60,7 @@ pub enum BootstrapError {
 }
 
 /// Formats the line, including the final newline:
-/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new]`.
+/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]`.
 pub fn format_connect(connect: &Connect) -> String {
     let port = |kind: &str, port: Option<u16>| match port {
         Some(port) => format!("{kind}:{port}"),
@@ -75,6 +77,10 @@ pub fn format_connect(connect: &Connect) -> String {
     }
     if connect.new {
         line.push_str(" new");
+    }
+    if let Some(name) = &connect.name {
+        line.push_str(" name=");
+        line.push_str(name.as_str());
     }
     line.push('\n');
     line
@@ -105,21 +111,28 @@ pub fn parse_connect(output: &[u8]) -> Result<Option<Connect>, BootstrapError> {
 
 fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
     let mut parts = fields.split(|&b| b == b' ');
-    let (Some(id), Some(udp), Some(tcp), Some(fingerprint), flag, None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
+    let (Some(id), Some(udp), Some(tcp), Some(fingerprint)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
         return Err(BootstrapError::Malformed);
     };
-    let new = match flag {
-        None => false,
-        Some(b"new") => true,
-        Some(_) => return Err(BootstrapError::Malformed),
-    };
+    // what may follow, each once and in this order: `new`, and `name=NAME`.
+    let (mut new, mut name) = (false, None);
+    let mut rest = parts.peekable();
+    if rest.peek() == Some(&&b"new"[..]) {
+        new = true;
+        rest.next();
+    }
+    if let Some(field) = rest.next() {
+        let text = field
+            .strip_prefix(b"name=")
+            .and_then(|text| std::str::from_utf8(text).ok())
+            .and_then(SessionName::parse);
+        name = Some(text.ok_or(BootstrapError::Malformed)?);
+    }
+    if rest.next().is_some() {
+        return Err(BootstrapError::Malformed);
+    }
     let id = std::str::from_utf8(id)
         .ok()
         .and_then(SessionId::parse)
@@ -130,6 +143,7 @@ fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
         tcp: parse_transport(tcp, b"tcp:")?,
         fingerprint: parse_fingerprint(fingerprint)?,
         new,
+        name,
     })
 }
 

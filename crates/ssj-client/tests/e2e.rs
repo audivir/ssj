@@ -38,6 +38,18 @@ fn server_binary() -> PathBuf {
     Path::new(env!("CARGO_BIN_EXE_ssj")).with_file_name("ssj-server")
 }
 
+/// An empty directory for the config of the client. A test that does not give its own one would
+/// read the file of the person who runs it, and `auto_attach = true` there changes what a plain
+/// `ssj host` does.
+fn no_config() -> &'static Path {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("ssj-e2e-noconfig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    })
+}
+
 fn fake_ssh(script: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     // the first build of the server takes a minute on a slow machine, and a test that times itself
@@ -117,6 +129,7 @@ fn run_client_to(
 ) -> Output {
     let port = free_port();
     let mut command = Command::new(env!("CARGO_BIN_EXE_ssj"));
+    command.env("XDG_CONFIG_HOME", no_config());
     command
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
@@ -191,6 +204,7 @@ fn shell_command_runs_through_bootstrap_quic_and_pty_and_its_exit_code_is_return
 fn run_with_command(ssh: &Path, words: &[&str]) -> Output {
     let port = free_port();
     let child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_CONFIG_HOME", no_config())
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--port-range", &format!("{port}:{port}")])
@@ -293,6 +307,7 @@ fn terminal_session(extra: &[&str]) -> (String, Option<i32>) {
     let (pty, pts) = pty_process::blocking::open().unwrap();
     pty.resize(pty_process::Size::new(31, 97)).unwrap();
     let mut child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_CONFIG_HOME", no_config())
         .args(extra)
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
@@ -433,6 +448,7 @@ const LEAK_GUARD: [&str; 8] = [
 
 fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_CONFIG_HOME", no_config())
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", runtime)
         .args(["--ssh-command", ssh.to_str().unwrap()])
@@ -471,6 +487,7 @@ fn ssj_typing(runtime: &Path, ssh: &Path, words: &[&str], steps: &[(&str, &str)]
     use std::sync::{Arc, Mutex};
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_CONFIG_HOME", no_config())
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", runtime)
         .args(["--ssh-command", ssh.to_str().unwrap()])
@@ -1759,6 +1776,7 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
     let (pty, pts) = pty_process::blocking::open().unwrap();
     pty.resize(pty_process::Size::new(24, 80)).unwrap();
     let mut child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .env("XDG_CONFIG_HOME", no_config())
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--udp-host", "127.0.0.1", "--local-echo", local_echo])

@@ -115,6 +115,8 @@ impl Frontend {
             tcp,
             fingerprint: identity.fingerprint(),
             new: false,
+            // the caller adds what it knows: the control socket knows the name of the session.
+            name: None,
         })
     }
 

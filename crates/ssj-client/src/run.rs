@@ -207,7 +207,7 @@ pub struct Params {
 #[derive(Clone, Debug)]
 pub struct Announce {
     pub destination: String,
-    /// The name of the session, when the user gave one.
+    /// The name of the session, when it has one.
     pub name: Option<String>,
     /// Whether the server made the session for this client. A server that does not say counts as
     /// no: the line then says `attached to`.
@@ -1127,7 +1127,9 @@ async fn connect_session(
         }
     };
 
-    let connect_id = connect.id.as_str().to_owned();
+    // the server says the name: it is not only the one the user typed (`ssj attach host` joins a
+    // session whose name the user may not remember).
+    let session_name = connect.name.as_ref().map(|name| name.as_str().to_owned());
     let raw = match RawMode::enable() {
         Ok(raw) => raw,
         Err(err) => {
@@ -1182,12 +1184,7 @@ async fn connect_session(
             announce: (raw.is_some() && !args.quiet).then(|| Announce {
                 destination: args.destination.clone(),
                 started: new_session,
-                // `--name work` and `ssj attach host work` name the session, and an id does not
-                name: extra
-                    .iter()
-                    .rfind(|word| !word.starts_with("--"))
-                    .filter(|word| word.as_str() != connect_id)
-                    .cloned(),
+                name: session_name,
             }),
         },
         io,

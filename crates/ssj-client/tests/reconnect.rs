@@ -454,6 +454,7 @@ fn start_client_inner(
             tcp: Some(server.tcp_addr.port()),
             fingerprint: server.fingerprint,
             new: false,
+            name: None,
         },
         tiers,
         attempt_timeout,

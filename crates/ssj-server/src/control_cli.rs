@@ -74,7 +74,9 @@ pub fn choose(sessions: Vec<Found>, selector: Option<&str>) -> Result<Found, Str
 /// Asks the session to accept the client with the pin, and prints the line to connect.
 pub fn attach_session(found: &Found, pin: [u8; 32]) -> ExitCode {
     match ask(&found.path, &Request::Attach(pin)) {
-        Ok(Reply::Connect(connect)) => {
+        Ok(Reply::Connect(mut connect)) => {
+            // the client joins by an id or a selector, and learns the name here.
+            connect.name.clone_from(&found.info.name);
             let mut out = std::io::stdout();
             let _ = out.write_all(format_reply(&Reply::Connect(connect)).as_bytes());
             let _ = out.flush();

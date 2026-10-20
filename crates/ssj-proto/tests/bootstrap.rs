@@ -1,7 +1,7 @@
-use ssj_proto::SessionId;
 use ssj_proto::bootstrap::{
     BootstrapError, Connect, format_connect, format_pin, parse_connect, parse_pin, sanitize,
 };
+use ssj_proto::{SessionId, SessionName};
 
 fn connect() -> Connect {
     let mut fingerprint = [0u8; 32];
@@ -14,6 +14,7 @@ fn connect() -> Connect {
         tcp: Some(40123),
         fingerprint,
         new: false,
+        name: None,
     }
 }
 
@@ -312,6 +313,39 @@ fn the_new_flag_is_an_optional_fifth_field_and_nothing_else_is() {
 
     // any other fifth field, and a sixth, are errors
     for tail in [" old", " NEW", " new new", " new x", " "] {
+        let line = format!("{}{tail}\n", plain.trim_end());
+        assert_eq!(
+            parse_connect(line.as_bytes()),
+            Err(BootstrapError::Malformed),
+            "{tail:?}"
+        );
+    }
+}
+
+#[test]
+fn the_name_is_an_optional_field_after_new() {
+    let plain = format_connect(&connect());
+    let mut connect = connect();
+    connect.name = SessionName::parse("work");
+    let named = format_connect(&connect);
+    assert!(named.ends_with(" name=work\n"), "{named:?}");
+    assert_eq!(parse_connect(named.as_bytes()), Ok(Some(connect.clone())));
+
+    connect.new = true;
+    let both = format_connect(&connect);
+    assert!(both.ends_with(" new name=work\n"), "{both:?}");
+    assert_eq!(parse_connect(both.as_bytes()), Ok(Some(connect)));
+
+    // a name must be a valid one, stand once, and come after `new`
+    for tail in [
+        " name=",
+        " name=a b",
+        " name=wo/rk",
+        " name=work name=work",
+        " name=work new",
+        " name=work x",
+        " name=0123456789012345678901234567890123",
+    ] {
         let line = format!("{}{tail}\n", plain.trim_end());
         assert_eq!(
             parse_connect(line.as_bytes()),

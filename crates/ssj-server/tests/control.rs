@@ -336,6 +336,10 @@ fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
     let id = launched.connect.id.clone();
     // the server says that it made the session, so that the client can name what it did.
     assert!(launched.connect.new);
+    assert_eq!(
+        launched.connect.name.as_ref().map(|n| n.as_str()),
+        Some("work")
+    );
 
     let sessions = list(&runtime);
     assert_eq!(sessions.len(), 1);
@@ -346,6 +350,7 @@ fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
     let joined = launch_with(&runtime, &second, free_range(), "cat", &["--name", "work"]);
     assert_eq!(joined.connect.id, id);
     assert!(!joined.connect.new);
+    assert_eq!(joined.connect.name, launched.connect.name);
     assert_ne!(joined.connect.fingerprint, launched.connect.fingerprint);
     assert_eq!(list(&runtime).len(), 1);
 
@@ -361,6 +366,14 @@ fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
     assert!(attached.status.success());
     let line = stdout_of(&attached);
     assert!(line.contains(id.as_str()), "{line}");
+    assert!(line.contains(" name=work"), "{line}");
+    // by the id, the client learns the name too.
+    let by_id = run_control(&runtime, &["--attach", id.as_str()], &pin);
+    assert!(
+        stdout_of(&by_id).contains(" name=work"),
+        "{}",
+        stdout_of(&by_id)
+    );
     let killed = run_control(&runtime, &["--kill", "work"], "");
     assert!(killed.status.success());
     wait_gone_one(&runtime, id.as_str());
