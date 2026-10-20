@@ -40,6 +40,16 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
         self.writer.flush().await.unwrap();
     }
 
+    /// Like [`Wire::send`], for a connection that the session may have closed: the process behind
+    /// it can be gone already, and then the frame cannot be sent at all.
+    async fn try_send(&mut self, frame: ClientFrame) {
+        let mut bytes = Vec::new();
+        frame.encode(&mut bytes).unwrap();
+        if self.writer.write_all(&bytes).await.is_ok() {
+            let _ = self.writer.flush().await;
+        }
+    }
+
     /// Next frame, or `None` at the end of the stream or on an error.
     async fn next(&mut self) -> Option<ServerFrame> {
         loop {
@@ -318,7 +328,7 @@ async fn input_that_a_replaced_stdio_connection_sends_late_is_ignored() {
     }
 
     // the old connection wakes up and sends what it had held back.
-    first.send(ClientFrame::Input(b"late\n".to_vec())).await;
+    first.try_send(ClientFrame::Input(b"late\n".to_vec())).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     second.send(ClientFrame::Input(b"three\n".to_vec())).await;
     while !after.contains("got:three") {
