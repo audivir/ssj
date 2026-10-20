@@ -11,7 +11,10 @@
 #
 #   bench/docker-bench.sh [bench.py arguments]
 #
-#   NETEM="delay 40ms loss 1%"    the link; empty for none
+#   NETEM="delay 40ms loss 1%"    the link; empty for none; `train` is a ride on a train: delay with
+#                                 jitter and bursts of loss (about 4 percent in all). With
+#                                 `--train` bench.py adds blackouts, in which every packet is
+#                                 dropped for some seconds
 #   IMAGE=ubuntu:24.04            the system of both containers (the version of sshd matters)
 #   BUILD=1                       build the static musl binaries first (default), 0 to reuse
 #   CLIENT=host                   run the client on this machine and not in a container: the Mac or
@@ -36,12 +39,14 @@
 #                                 (RcvbufErrors counts datagrams that a full socket buffer dropped)
 #   TRACE=1                       print the socket options that sshd sets (TCP_NODELAY and such)
 #
-# Examples: bench/docker-bench.sh --raw-bulk --bulk-mb 64 --samples 100
+# Examples: NETEM=train bench/docker-bench.sh --train --outages 5,15 --only ssh,udp,tcp,stdio
+#           bench/docker-bench.sh --raw-bulk --bulk-mb 64 --samples 100
 #           NETEM="delay 20ms" bench/docker-bench.sh --only ssh,udp,tcp --json
 set -e
 cd "$(dirname "$0")/.."
 IMAGE=${IMAGE:-ubuntu:24.04}
 NETEM=${NETEM-delay 40ms loss 1%}
+[ "$NETEM" = train ] && NETEM='delay 80ms 40ms loss gemodel 1% 20% 70% 0.5%'
 BUILD=${BUILD:-1}
 CAPTURE=${CAPTURE:-0}
 TRACE=${TRACE:-0}
@@ -86,7 +91,7 @@ if [ -n "$NETEM" ]; then
     ethtool -K eth0 tso off gso off gro off >/dev/null 2>&1 || true
     tc qdisc add dev eth0 root netem $NETEM
 fi'
-install='apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq iproute2 ethtool openssh-server openssh-client python3 tcpdump strace >/dev/null 2>&1'
+install='apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq iproute2 ethtool openssh-server openssh-client python3 tcpdump strace iptables >/dev/null 2>&1'
 capture=
 probe_servers=
 if [ "$PROBE" = 1 ]; then

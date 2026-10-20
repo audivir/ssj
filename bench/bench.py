@@ -8,6 +8,12 @@ terminal, as a user would run it.
     bench/bench.py --host me@localhost --ssj target/release/ssj \
         --server target/release/ssj-server [--netem "delay 40ms loss 1%"] [--json]
 
+--train replaces the measurements with a ride on a train: the link loses packets in bursts all the
+time (give it with --netem or NETEM=train of docker-bench.sh), and --outages seconds-long blackouts,
+in which every packet is dropped in both directions while the interface stays up, are cut into the
+typing. It reports the keystroke latency outside the outages and the time from the end of each
+outage to the first echo. Blackouts need Linux, root, and iptables.
+
 --netem needs Linux and root (it runs `tc qdisc` on the loopback device) and applies to ssh and
 ssj alike, so use it with --host localhost. Nothing is gated: the script prints numbers.
 """
@@ -16,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import itertools
 import json
 import os
 import pty
@@ -53,6 +60,9 @@ class Args(argparse.Namespace):
     jitter_ms: int
     rounds: int
     startup: int | None
+    train: bool
+    outages: str
+    quiet: float
     netem: str | None
     json: bool
 
@@ -269,6 +279,121 @@ def startup(argv: Sequence[str], runs: int) -> dict[str, Any]:
     }
 
 
+def blackout(on: bool) -> None:
+    """Drops every packet of eth0 in both directions, or lets them pass again.
+
+    The interface and its address stay, as when a train enters a tunnel: nothing tells the
+    programs that the network is gone.
+    """
+    action = "-I" if on else "-D"
+    for chain, flag in (("INPUT", "-i"), ("OUTPUT", "-o")):
+        subprocess.run(["iptables", "-w", action, chain, flag, "eth0", "-j", "DROP"], check=False)
+
+
+def type_and_wait(terminal: Terminal, byte: bytes, timeout: float = 60) -> float | None:
+    """Types a byte and returns the milliseconds until its echo, or None if none came."""
+    start = time.monotonic()
+    terminal.send(byte)
+    while byte not in terminal.buffer:
+        left = timeout - (time.monotonic() - start)
+        if left <= 0:
+            return None
+        readable, _, _ = select.select([terminal.fd], [], [], min(left, 1))
+        if readable and not terminal.read_some():
+            return None
+    terminal.buffer = b""
+    return (time.monotonic() - start) * 1000
+
+
+LETTERS = itertools.cycle(bytes([c]) for c in range(ord("a"), ord("z") + 1))
+# the longest wait for a sign of life after a blackout
+RECOVERY_LIMIT = 120
+# bytes that no status message and no letter of the typing contains
+MARKER = b"\x01\x02\x03\x04"
+
+
+def type_for(terminal: Terminal, seconds: float, times: list[float]) -> int:
+    """Types at the pace of a person for `seconds`. Returns the number of lost echoes."""
+    lost = 0
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        took = type_and_wait(terminal, next(LETTERS))
+        if took is None:
+            lost += 1
+        else:
+            times.append(took)
+        time.sleep(0.05 + random.random() * 0.15)
+    return lost
+
+
+def go_through_blackout(terminal: Terminal, seconds: int) -> float | None:
+    """Types during a blackout, and returns the seconds from its end to the echo of a marker."""
+    blackout(True)
+    try:
+        # the user goes on typing, and the keys wait in the client.
+        for _ in range(3):
+            terminal.send(next(LETTERS))
+            time.sleep(seconds / 3)
+    finally:
+        blackout(False)
+    # the marker is typed when the network is back, and its echo is the sign of life. Anything
+    # else the client prints meanwhile (a status in the window title) does not count.
+    terminal.buffer = b""
+    began = time.monotonic()
+    terminal.send(MARKER)
+    while time.monotonic() - began < RECOVERY_LIMIT:
+        if MARKER in terminal.buffer:
+            return round(time.monotonic() - began, 2)
+        readable, _, _ = select.select([terminal.fd], [], [], 0.2)
+        if readable and not terminal.read_some():
+            return None
+    return None
+
+
+def train(argv: Sequence[str], outages: Sequence[int], quiet: float) -> dict[str, Any]:
+    """Types for `quiet` seconds, then goes through a blackout, for each of the `outages`."""
+    terminal = session(argv)
+    terminal.send("stty raw -echo; cat\n")
+    time.sleep(0.5)
+    terminal.buffer = b""
+    times: list[float] = []
+    lost = 0
+    recoveries: list[dict[str, Any]] = []
+    for seconds in outages:
+        lost += type_for(terminal, quiet, times)
+        recovery = go_through_blackout(terminal, seconds)
+        recoveries.append({"outage_s": seconds, "recovery_s": recovery})
+        if recovery is None:
+            break
+        time.sleep(0.5)
+        terminal.buffer = b""
+    terminal.close()
+    times.sort()
+    result: dict[str, Any] = {"outages": recoveries, "lost_echoes": lost, "samples": len(times)}
+    if times:
+        result["median_ms"] = round(statistics.median(times), 2)
+        result["p95_ms"] = round(times[max(0, int(len(times) * 0.95) - 1)], 2)
+        result["max_ms"] = round(times[-1], 2)
+    return result
+
+
+def print_train(results: dict[str, Any]) -> None:
+    """Prints the results of --train as a table."""
+    print(
+        f"{'':8} {'median ms':>10} {'p95 ms':>8} {'max ms':>8} {'lost':>5}"
+        "  seconds from the end of an outage to the first echo"
+    )
+    for name, r in results.items():
+        ends = "  ".join(
+            f"{o['outage_s']}s: {'never' if o['recovery_s'] is None else o['recovery_s']}"
+            for o in r["outages"]
+        )
+        print(
+            f"{name:8} {r.get('median_ms', '-'):>10} {r.get('p95_ms', '-'):>8}"
+            f" {r.get('max_ms', '-'):>8} {r['lost_echoes']:>5}  {ends}"
+        )
+
+
 def netem(args: Args, action: str) -> None:
     """Adds or removes the simulated link on the loopback device."""
     if not args.netem:
@@ -279,6 +404,21 @@ def netem(args: Args, action: str) -> None:
     # root (a container) needs no sudo
     prefix = [] if os.geteuid() == 0 else ["sudo", "-n"]
     subprocess.run(prefix + command, check=False)
+
+
+def measure(argv: Sequence[str], args: Args) -> dict[str, Any]:
+    """Runs the measurements that the options ask for on one client."""
+    if args.startup:
+        return startup(argv, args.startup)
+    if args.train:
+        return train(argv, [int(part) for part in args.outages.split(",")], args.quiet)
+    rounds = [bulk(argv, args.bulk_mb, args.raw_bulk, args.text_bulk) for _ in range(args.rounds)]
+    pastes = [paste(argv, args.paste_mb, args.text_bulk) for _ in range(args.rounds)]
+    return {
+        "bulk": max(rounds, key=lambda r: r["megabytes_per_second"]),
+        "latency": latency(argv, args.samples, args.jitter_ms),
+        "paste": max(pastes, key=lambda r: r["megabytes_per_second"]),
+    }
 
 
 def main() -> None:
@@ -309,6 +449,13 @@ def main() -> None:
     parser.add_argument(
         "--startup", type=int, metavar="RUNS", help="only time the start and the end, RUNS times"
     )
+    parser.add_argument("--train", action="store_true", help="a ride with blackouts (see above)")
+    parser.add_argument(
+        "--outages", default="5,15", help="seconds of the blackouts of --train, comma separated"
+    )
+    parser.add_argument(
+        "--quiet", type=float, default=10, help="seconds of typing before each blackout"
+    )
     parser.add_argument("--netem", help='for example "delay 40ms loss 1%%" (Linux, root)')
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(namespace=Args())
@@ -322,18 +469,7 @@ def main() -> None:
     try:
         for name, argv in chosen.items():
             print(f"{name} ...", file=sys.stderr)
-            if args.startup:
-                results[name] = startup(argv, args.startup)
-                continue
-            rounds = [
-                bulk(argv, args.bulk_mb, args.raw_bulk, args.text_bulk) for _ in range(args.rounds)
-            ]
-            pastes = [paste(argv, args.paste_mb, args.text_bulk) for _ in range(args.rounds)]
-            results[name] = {
-                "bulk": max(rounds, key=lambda r: r["megabytes_per_second"]),
-                "latency": latency(argv, args.samples, args.jitter_ms),
-                "paste": max(pastes, key=lambda r: r["megabytes_per_second"]),
-            }
+            results[name] = measure(argv, args)
     finally:
         netem(args, "del")
     if args.json:
@@ -343,6 +479,9 @@ def main() -> None:
         print(f"{'':6} {'ready s':>8} {'exit s':>8}")
         for name, r in results.items():
             print(f"{name:6} {r['ready_s']:>8} {r['exit_s']:>8}")
+        return
+    if args.train:
+        print_train(results)
         return
     print(
         f"{'':6} {'bulk MB/s':>10} {'median ms':>10} {'p95 ms':>8} {'max ms':>8}"

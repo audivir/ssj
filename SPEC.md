@@ -384,6 +384,19 @@ JSON of a clean and a lossy run against wide limits (UDP keystroke median under 
 `ssh` channel under 10 ms, at most 1 percent stalls, UDP at least three times as fast as `ssh` at
 1 percent loss); `bench.yml` runs both and the check on a GitHub runner.
 
+The train ride: `NETEM=train bench/docker-bench.sh --train --outages 5,15 --quiet 10` simulates
+the link of a train. `NETEM=train` is a delay of 80 ms with 40 ms of jitter and bursts of loss
+(`loss gemodel 1% 20% 70% 0.5%`, about 4 percent in all). `bench.py --train` types at the pace of
+a person and cuts a blackout into the typing for each of `--outages`: `iptables` drops every packet
+of `eth0` in both directions while the interface and its address stay, as in a tunnel, nothing
+tells the programs that the network is gone, and the keys typed meanwhile wait. At the end of the
+outage the script types a marker, and the time until its echo is the recovery. The table shows the
+keystroke latency outside the outages (median, 95th percentile, maximum), the echoes that did not
+arrive, and the recovery after each outage. A first run (5 and 12 s outages, one run each, so
+read it as a direction and not a result): `ssh` recovered in 0.9 to 1.8 s, `ssj` over UDP in 0.4 s,
+over TCP in 0.4 and 3.6 s, and over the `ssh` channel in 2.2 and 3.6 s. A stream gives up after 10
+s of silence and starts a new `ssh`, which costs the handshake.
+
 On a Mac (Darwin arm64, OpenSSH 10.3, `CLIENT=host`, 1500 keystrokes with random gaps, no link
 simulated): the released 0.1.0-rc5 needed a median of 45.4 ms per keystroke over TCP (every one
 of them waited for the acknowledgement timer), the working tree 2.9 ms (slowest 6.8 ms, no

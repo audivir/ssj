@@ -481,6 +481,9 @@ A client and a server talk only if they speak the same protocol version.
 - `bench/docker-bench.sh` runs it between two Docker containers with a simulated link
   (`NETEM="delay 40ms loss 1%" bench/docker-bench.sh`), which is the setup to believe. See the
   specification for the options and the numbers.
+- `NETEM=train bench/docker-bench.sh --train --outages 5,15` simulates a ride on a train: bursts of
+  loss, jitter, and blackouts of 5 and 15 seconds. It prints the keystroke latency and the time to
+  the first echo after each blackout, for `ssh` and for every transport of `ssj`.
 
 ## License
 
