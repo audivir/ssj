@@ -394,14 +394,19 @@ redraw.
   word after a command, the sessions after the host of a command that takes them, the options of a
   command after its host, and the values of options. After the destination of `connect` and after
   any other destination, the words belong to the command that runs on the host: files, since its
-  layout (`~/.local/share/...`) is mostly the one of this machine, and no options (`ssj host ls -l`). Zsh does it in the case of the commands that `build.rs` extends, Bash through the default
-  completion that follows an empty answer, Fish by its default for words that no rule takes.
-- One difference remains in Zsh: when nothing else fits after the destination of a command, its
-  `_arguments` offers the options even before a dash was typed, as it does for every command; Bash
-  and Fish wait for the dash. After `ssj attach --` Zsh offers hosts (the word is the end of the
-  options), where Bash and Fish offer files.
-- The tests run Bash and Fish with `COMP_WORDS` and `complete -C`, and Zsh with the completion
-  system in a pseudo terminal (`zpty`), so that the functions of `clap` run for real.
+  layout (`~/.local/share/...`) is mostly the one of this machine, and no options (`ssj host ls -l`), and so after `ssj attach --`. Zsh does it in the case that `build.rs` extends and with a rest
+  that completes nothing (so that its `_arguments` does not offer the options before a dash), Bash
+  through the default completion that follows an empty answer, Fish by its default for words that
+  no rule takes.
+- Options with a free text (`--ssh-command`, `--download-url`, and the like) complete files in all
+  three shells, which is what they do without a hint. An option that the command does not read
+  completes nothing, and no sessions are offered while the value of an option is being typed.
+- One table in `completions.rs` (`positions`) says for every position what it offers and what it
+  does not: the start, each command with its host, ids, options, and the values of every option,
+  `connect`, a host that is no command, and `--`. The same table runs in Bash (with `COMP_WORDS`),
+  Fish (with `complete -C`), and Zsh (with the completion system in a pseudo terminal, `zpty`, so
+  that the functions of `clap` run for real). The options that each command reads are written out
+  again there, from the code of the commands, and not taken from the table of the build script.
 - `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
   section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left

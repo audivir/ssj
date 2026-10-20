@@ -143,6 +143,8 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(hosts("ssj attach me@box --compress ''", 4), "off auto");
     assert_eq!(hosts("ssj --udp-host ''", 2), "boxa boxb");
     assert_eq!(hosts("ssj attach me@box --udp-host ''", 4), "boxa boxb");
+    // an option that the command does not read has no values
+    assert_eq!(hosts("ssj install me@box --udp-host ''", 4), "");
     assert_eq!(hosts("ssj connect me@box -l", 3), "");
     assert!(hosts("ssj list me@box -", 3).contains("--json"));
     assert_eq!(hosts("ssj me@box ''", 2), "");
@@ -152,7 +154,8 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
 }
 
 /// Completes each line in a zsh that runs the completion system in a pseudo terminal, as a
-/// person does: the line is typed, and the tab key pressed twice. What zsh shows is returned
+/// person does: the line is typed, and the tab key pressed once (a second press would complete the
+/// next word after a match that was inserted). What zsh shows is returned
 /// for each line. The fake `ssj` is found first, `_ssh_hosts` offers two hosts, and the working
 /// directory has one file. `None` when this zsh has no `zpty`.
 fn zsh_complete(lines: &[&str]) -> Option<Vec<String>> {
@@ -166,7 +169,7 @@ fn zsh_complete(lines: &[&str]) -> Option<Vec<String>> {
          fpath=('{}' $fpath)\n\
          autoload -U compinit; compinit -u -d '{}/zcompdump'\n\
          _ssh_hosts() {{ compadd -- boxa boxb }}\n\
-         LISTMAX=1000; setopt AUTO_LIST; unsetopt AUTO_MENU; PS1='> '\n",
+         LISTMAX=1000; setopt AUTO_LIST; unsetopt AUTO_MENU LIST_AMBIGUOUS; PS1='> '\n",
         dir.display(),
         completions.parent().unwrap().display(),
         dir.display(),
@@ -188,9 +191,9 @@ zpty -w z "cd '{}'; source '{}/inner.zsh'"
 drain 60
 for line in "$@"; do
   zpty -w -n z $'\025'; drain 8
-  zpty -w -n z "$line"$'\t\t'; drain
+  zpty -w -n z "$line"$'\t'; drain
   print -r -- "@@@ $line"
-  print -r -- "$buf" | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\r//g' | tr -s ' \n' ' '
+  print -r -- "$buf" | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' | tr '\r\010\007' '   ' | tr -s ' \n' ' '
 done
 "#,
         work.display(),
@@ -230,7 +233,7 @@ done
 }
 
 #[test]
-fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
+fn zsh_file_has_no_syntax_error_and_starts_with_compdef() {
     if !installed("zsh") {
         return;
     }
@@ -239,76 +242,6 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     run("zsh", &["-n", file.to_str().unwrap()], &fake_ssj());
     let first_line = std::fs::read_to_string(&file).unwrap();
     assert!(first_line.starts_with("#compdef ssj\n"));
-
-    let lines = [
-        "ssj ",
-        "ssj connect ",
-        "ssj connect me@box ",
-        "ssj list me@box -",
-        "ssj install me@box -",
-        "ssj attach me@box ",
-        "ssj kill me@box ",
-        "ssj detach me@box ",
-        "ssj install me@box --server-binary ",
-        "ssj attach me@box --transport ",
-        "ssj attach me@box --udp-host ",
-        "ssj install me@box --udp-host ",
-        "ssj me@box ls ",
-        "ssj me@box ls -",
-        "ssj --udp-host ",
-        "ssj --name ",
-        "ssj --compress ",
-        "ssj edit ",
-    ];
-    let Some(shown) = zsh_complete(&lines) else {
-        return;
-    };
-    let at = |line: &str| &shown[lines.iter().position(|l| *l == line).unwrap()];
-    let has = |line: &str, words: &[&str], absent: &[&str]| {
-        let text = at(line);
-        for word in words {
-            assert!(text.contains(word), "{line:?} lacks {word}: {text}");
-        }
-        for word in absent {
-            assert!(!text.contains(word), "{line:?} has {word}: {text}");
-        }
-    };
-    // the first word is a command or a host, and the word after `connect` a host
-    has("ssj ", &["attach", "connect", "edit", "boxa"], &[]);
-    has("ssj connect ", &["boxa"], &["attach", "afile"]);
-    // the words after the destination of `connect` are for the host: files
-    has("ssj connect me@box ", &["afile"], &["boxa"]);
-    // a command reads only its options
-    has(
-        "ssj list me@box -",
-        &["--json", "--log-file"],
-        &["--transport", "--force"],
-    );
-    has(
-        "ssj install me@box -",
-        &["--server-binary", "--download-url"],
-        &["--json"],
-    );
-    // the sessions of the host
-    has("ssj attach me@box ", &["work", "build"], &["afile"]);
-    has("ssj kill me@box ", &["work", "build"], &[]);
-    has("ssj detach me@box ", &["work"], &["build"]);
-    // the values of options: files, the fixed ones, the hosts of the ssh config, the sessions
-    has("ssj install me@box --server-binary ", &["afile"], &[]);
-    has(
-        "ssj attach me@box --transport ",
-        &["udp", "tcp", "stdio"],
-        &[],
-    );
-    has("ssj attach me@box --udp-host ", &["boxa", "boxb"], &[]);
-    has("ssj install me@box --udp-host ", &[], &["boxa"]);
-    has("ssj --udp-host ", &["boxa"], &[]);
-    has("ssj --name ", &["work", "build"], &[]);
-    has("ssj --compress ", &["off", "auto"], &[]);
-    // the words after any other destination are for the command on the host: files, no options
-    has("ssj me@box ls ", &["afile"], &[]);
-    has("ssj me@box ls -", &[], &["--json", "--transport"]);
-    has("ssj edit ", &["boxa"], &[]);
 }
 
 #[test]
@@ -500,4 +433,305 @@ fn zsh_lists_the_values_of_options_with_a_fixed_set() {
         listed.sort_unstable();
         assert_eq!(listed, sorted, "{option}");
     }
+}
+
+/// Every long option of `ssj`.
+const ALL_OPTIONS: &str = "verbose quiet force log-file name auto-attach no-auto-attach \
+    forward-agent no-forward-agent transport local-echo congestion compress ssh-command \
+    server-path server-arg port-range detached-timeout install no-install download-url \
+    server-binary udp-host escape-char detach-key send-env json";
+
+/// The options that each command reads, written out again from the code of the commands and not
+/// from the table that the build script reads.
+const READS: [(&str, &str); 6] = [
+    (
+        "list",
+        "verbose log-file ssh-command server-path server-arg json",
+    ),
+    (
+        "attach",
+        "verbose quiet log-file transport local-echo congestion compress ssh-command server-path \
+         server-arg port-range install no-install download-url server-binary udp-host \
+         escape-char detach-key",
+    ),
+    (
+        "kill",
+        "verbose log-file ssh-command server-path server-arg force",
+    ),
+    (
+        "detach",
+        "verbose log-file ssh-command server-path server-arg",
+    ),
+    (
+        "install",
+        "verbose log-file ssh-command download-url server-binary",
+    ),
+    (
+        "edit",
+        "verbose log-file ssh-command server-path server-arg",
+    ),
+];
+
+/// What a line must offer when the tab key is pressed at its end, and what it must not. `FILES`
+/// stands for the files of the directory (`afile`; for bash an empty answer, which bash
+/// completes with the files), and no word at all for nothing. The hosts are `boxa` and `boxb`,
+/// the sessions `work` and `build` (`work` when they have a client), and `other` is one more.
+struct Position {
+    line: String,
+    must: Vec<String>,
+    absent: Vec<String>,
+}
+
+fn dashed(names: &str) -> Vec<String> {
+    names.split(' ').map(|n| format!("--{n}")).collect()
+}
+
+fn positions() -> Vec<Position> {
+    let mut all = Vec::new();
+    // words that no position offers by accident
+    let stock = [
+        "boxa",
+        "boxb",
+        "work",
+        "build",
+        "other",
+        "afile",
+        "--json",
+        "--force",
+        "--verbose",
+        "--download-url",
+        "--transport",
+    ];
+    let mut add = |line: &str, must: Vec<String>| {
+        let absent = stock
+            .iter()
+            .map(|w| (*w).to_owned())
+            .filter(|w| !must.contains(w) && !line.contains(w.as_str()))
+            .collect();
+        all.push(Position {
+            line: line.to_owned(),
+            must,
+            absent,
+        });
+    };
+    let words = |text: &str| -> Vec<String> { text.split(' ').map(str::to_owned).collect() };
+    let hosts = || words("boxa boxb");
+    let files = || words("FILES");
+    let none = || Vec::new();
+    let commands = "list attach kill detach install edit connect";
+
+    // the start: a command or a host, the options only after a dash
+    add("ssj ", [words(commands), hosts()].concat());
+    add("ssj -", dashed(ALL_OPTIONS));
+    // the values of options at the start
+    add("ssj --name ", words("work build other"));
+    add("ssj --transport ", words("auto udp tcp stdio"));
+    add("ssj --local-echo ", words("off auto"));
+    add("ssj --congestion ", words("auto bbr cubic"));
+    add("ssj --compress ", words("off auto"));
+    add("ssj --udp-host ", hosts());
+    add("ssj --log-file ", files());
+    add("ssj --server-path ", files());
+    add("ssj --server-binary ", files());
+    // the options before the command word are skipped, and so are their values
+    add("ssj -v attach me@box ", words("work build"));
+    add("ssj --transport tcp list ", hosts());
+    // the plain connection: the host, the options before it, files for the command on the host
+    add("ssj connect ", hosts());
+    add("ssj connect -", dashed(ALL_OPTIONS));
+    add("ssj connect --transport ", words("auto udp tcp stdio"));
+    add("ssj connect --transport tcp ", hosts());
+    add("ssj connect me@box ", files());
+    add("ssj connect me@box ls ", files());
+    add("ssj connect me@box -", none());
+    // any other first word is the host, and the rest is the command on it, dashes included
+    add("ssj me@box ", files());
+    add("ssj me@box ls ", files());
+    add("ssj me@box ls -", none());
+    add("ssj me@box -", none());
+    // `--` ends the options: the host is called like the command
+    add("ssj attach -- ", files());
+    // each command: the host, the ids, its options and their values
+    for (command, reads) in READS {
+        add(&format!("ssj {command} "), hosts());
+        add(&format!("ssj {command} me@box -"), dashed(reads));
+        for (name, values) in [
+            ("transport", "auto udp tcp stdio"),
+            ("compress", "off auto"),
+            ("udp-host", "boxa boxb"),
+            ("log-file", "FILES"),
+            ("server-binary", "FILES"),
+            // free text: the shells fall back to the files
+            ("download-url", "FILES"),
+        ] {
+            let read = reads.split(' ').any(|r| r == name);
+            let offered = if read { words(values) } else { none() };
+            add(&format!("ssj {command} me@box --{name} "), offered);
+        }
+    }
+    // the ids
+    add("ssj attach me@box ", words("work build"));
+    add("ssj attach me@box work ", none());
+    add("ssj attach me@box work -", dashed(READS[1].1));
+    add("ssj attach other@host ", none());
+    add("ssj kill me@box ", words("work build"));
+    add("ssj kill me@box work ", words("build"));
+    add("ssj detach me@box ", words("work"));
+    add("ssj detach me@box work ", words("work"));
+    add("ssj list me@box ", none());
+    add("ssj install me@box ", none());
+    add("ssj edit ", hosts());
+    add("ssj edit me@box ", none());
+    all
+}
+
+/// The positions of `part` out of `parts`, so that slow shells can use several tests.
+fn some_positions(part: usize, parts: usize) -> Vec<Position> {
+    positions()
+        .into_iter()
+        .enumerate()
+        .filter(|(at, _)| at % parts == part)
+        .map(|(_, position)| position)
+        .collect()
+}
+
+/// Checks what a shell offered for a position: `offered` is the set of words, and `empty` says
+/// that it offered nothing of its own (bash completes the files then).
+fn check(shell: &str, position: &Position, offered: &[String], files_are_empty: bool) {
+    let line = &position.line;
+    let wants_files = position.must.iter().any(|w| w == "FILES");
+    let others: Vec<&String> = position.must.iter().filter(|w| *w != "FILES").collect();
+    // bash completes the files itself after an empty answer, and `clap` lists them after an
+    // option for a file: both are files, and neither is a host, a session, or an option
+    if files_are_empty && others.is_empty() && !wants_files {
+        assert!(
+            offered.is_empty(),
+            "{shell}: {line:?} offered {offered:?}, and should leave the files"
+        );
+        return;
+    }
+    for word in &others {
+        assert!(
+            offered.contains(word),
+            "{shell}: {line:?} lacks {word}, offered {offered:?}"
+        );
+    }
+    if wants_files && !files_are_empty {
+        assert!(
+            offered.iter().any(|w| w.as_str() == "afile"),
+            "{shell}: {line:?} lacks the files, offered {offered:?}"
+        );
+    }
+    for word in &position.absent {
+        if wants_files && word == "afile" {
+            continue;
+        }
+        assert!(
+            !offered.contains(word),
+            "{shell}: {line:?} has {word}, offered {offered:?}"
+        );
+    }
+}
+
+#[test]
+fn bash_offers_what_each_position_takes() {
+    if !installed("bash") {
+        return;
+    }
+    let file = generated("ssj.bash");
+    for position in positions() {
+        let words: Vec<String> = position.line.split(' ').map(|w| format!("'{w}'")).collect();
+        let code = format!(
+            "source '{}'\n_known_hosts_real() {{ COMPREPLY=(boxa boxb); }}\n\
+             COMP_WORDS=({}); COMP_CWORD={}; \
+             _ssj_sessions ssj \"${{COMP_WORDS[COMP_CWORD]}}\" \"${{COMP_WORDS[COMP_CWORD-1]}}\"; \
+             printf '%s\\n' \"${{COMPREPLY[@]}}\"",
+            file.display(),
+            words.join(" "),
+            words.len() - 1,
+        );
+        let out = run("bash", &["-c", &code], &fake_ssj());
+        let offered: Vec<String> = out
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect();
+        // an empty answer is what bash completes with the files, and the files are the answer
+        // for a position that wants them
+        check("bash", &position, &offered, true);
+    }
+}
+
+#[test]
+fn fish_offers_what_each_position_takes() {
+    if !installed("fish") {
+        return;
+    }
+    let file = generated("ssj.fish");
+    let dir = fake_ssj().join("work");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("afile"), "").unwrap();
+    for position in positions() {
+        let code = format!(
+            "function __fish_print_hostnames; printf 'boxa\\nboxb\\n'; end; source '{}'; \
+             complete -C '{}'",
+            file.display(),
+            position.line
+        );
+        let output = Command::new("fish")
+            .args(["-c", &code])
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    fake_ssj().display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&output.stdout).into_owned();
+        let offered: Vec<String> = out
+            .lines()
+            .filter_map(|l| l.split('\t').next())
+            .map(|n| n.trim_end_matches('/').to_owned())
+            .collect();
+        check("fish", &position, &offered, false);
+    }
+}
+
+fn zsh_offers(part: usize, parts: usize) {
+    if !installed("zsh") {
+        return;
+    }
+    let positions = some_positions(part, parts);
+    let lines: Vec<&str> = positions.iter().map(|p| p.line.as_str()).collect();
+    let Some(shown) = zsh_complete(&lines) else {
+        return;
+    };
+    for (position, text) in positions.iter().zip(&shown) {
+        let offered: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
+        check("zsh", position, &offered, false);
+    }
+}
+
+#[test]
+fn zsh_offers_what_each_position_takes_part_1() {
+    zsh_offers(0, 4);
+}
+
+#[test]
+fn zsh_offers_what_each_position_takes_part_2() {
+    zsh_offers(1, 4);
+}
+
+#[test]
+fn zsh_offers_what_each_position_takes_part_3() {
+    zsh_offers(2, 4);
+}
+
+#[test]
+fn zsh_offers_what_each_position_takes_part_4() {
+    zsh_offers(3, 4);
 }

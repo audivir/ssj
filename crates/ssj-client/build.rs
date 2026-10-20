@@ -189,7 +189,7 @@ fn main() {
         let text = String::from_utf8(text).expect("the completions are text");
         let text = match shell {
             Shell::Bash => bash(&text, &value_options),
-            Shell::Zsh => zsh(&text),
+            Shell::Zsh => zsh(&text, &value_options),
             Shell::Fish => fish(&text, &value_options),
             _ => text,
         };
@@ -277,6 +277,11 @@ fn completion_tree(command: &clap::Command) -> clap::Command {
                 }
                 _ => {}
             }
+            // nothing is left to say after them, which `_arguments` of zsh would answer with the
+            // options even before a dash is typed: a rest that completes nothing keeps them back
+            if word != "kill" && word != "detach" {
+                sub = sub.arg(clap::Arg::new("rest").value_name("NOTHING").num_args(0..));
+            }
         }
         tree = tree.subcommand(sub);
     }
@@ -287,10 +292,14 @@ fn completion_tree(command: &clap::Command) -> clap::Command {
 const ZSH_HELPERS: &str = r#"
 # the hosts of ~/.ssh/config are known to `_ssh_hosts`, not to `_hosts`
 _ssj_hosts() { if (( $+functions[_ssh_hosts] )); then _ssh_hosts; else _hosts; fi; }
+# a word that nothing completes
+_ssj_nothing() { return 1; }
 _ssj_sessions() { local -a s; s=(${(f)"$(ssj --complete 2>/dev/null)"}); compadd -a s; }
 # the sessions of the host that was typed: the first positional word of the command is it
 _ssj_session_ids() {
     local -a s extra
+    # the value of an option that the command does not read is not an id
+    [[ " __VALUE_OPTIONS__ " == *" $words[CURRENT-1] "* ]] && return 1
     # `detach` only acts on a session that has a client; the context names the command
     [[ $curcontext == *:ssj-command-detach:* ]] && extra=(--connected)
     s=(${(f)"$(ssj --complete $line[1] $extra 2>/dev/null)"}); compadd -a s
@@ -299,10 +308,14 @@ _ssj_session_ids() {
 
 /// The zsh file: the functions of `clap` with the hosts of the ssh config, the sessions, and the
 /// files for the words after a destination that is no command.
-fn zsh(text: &str) -> String {
+fn zsh(text: &str, value_options: &str) -> String {
     let mut text = text
         .replace(":_hosts'", ":_ssj_hosts'")
         .replace(":id:_default'", ":id:_ssj_session_ids'")
+        // one colon: the options may still stand among the ids
+        .replace("'*::id:", "'*:id:")
+        // one colon: the options may still stand among the words that this rest takes
+        .replace("'*::rest:_default'", "'*:rest:_ssj_nothing'")
         .replace(
             "--name=[Join the session of this name, or start it]:NAME:_default",
             "--name=[Join the session of this name, or start it]:NAME:_ssj_sessions",
@@ -312,6 +325,22 @@ fn zsh(text: &str) -> String {
             "_describe -t commands 'ssj commands' commands \"$@\"",
             "_describe -t commands 'ssj commands' commands \"$@\"; _ssj_hosts",
         );
+    // `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
+    let line = "    local context curcontext=\"$curcontext\" state line\n";
+    assert!(text.contains(line), "the declaration of the state");
+    let commands = ABOUT
+        .map(|(word, _)| word)
+        .into_iter()
+        .filter(|word| *word != "connect")
+        .collect::<Vec<_>>()
+        .join("|");
+    text = text.replacen(
+        line,
+        &format!(
+            "{line}    if (( CURRENT >= 4 )) && [[ $words[2] == ({commands}) && $words[3] == -- ]]; then\n        _files\n        return\n    fi\n"
+        ),
+        1,
+    );
     // any other first word is the destination, and the rest belongs to the command for the host,
     // dashes included (`ssj host ls -l`): files, since the layout of the host is mostly the same
     // (`~/.local/share/...`)
@@ -319,13 +348,14 @@ fn zsh(text: &str) -> String {
     assert!(text.contains(end), "the end of the case of the commands");
     text = text.replacen(
         end,
-        "            (*)\n_files\n;;\n        esac\n    ;;\nesac",
+        "            (*)\n[[ -n $line[1] ]] && _files\n;;\n        esac\n    ;;\nesac",
         1,
     );
     // `#compdef` must stay the first line, or the completion is not found.
+    let helpers = ZSH_HELPERS.replace("__VALUE_OPTIONS__", value_options);
     match text.split_once('\n') {
-        Some((first, rest)) => format!("{first}\n{ZSH_HELPERS}{rest}"),
-        None => format!("{ZSH_HELPERS}{text}"),
+        Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
+        None => format!("{helpers}{text}"),
     }
 }
 
@@ -378,6 +408,16 @@ _ssj_sessions() {
     [[ $first == connect && ${#pos[@]} -gt 1 ]] && is_command=
     if [[ -z $first || -n $is_command ]]; then
         if [[ $value_options == *" $previous "* ]]; then
+            # an option that the command does not read has no values: ask `clap` for its options
+            if [[ -n $first ]]; then
+                local saved=${COMP_WORDS[COMP_CWORD]}
+                COMP_WORDS[COMP_CWORD]=-
+                _ssj "$1" - ""
+                COMP_WORDS[COMP_CWORD]=$saved
+                local known=" ${COMPREPLY[*]} "
+                COMPREPLY=()
+                [[ $known == *" $previous "* ]] || return
+            fi
             if [[ $previous == --name ]]; then
                 COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
             elif [[ $previous == --udp-host ]] && declare -F _known_hosts_real >/dev/null; then
@@ -458,7 +498,16 @@ fn fish(text: &str, value_options: &str) -> String {
         )
         .collect::<Vec<_>>()
         .join("\n");
+    // the commands that keep their options after the destination, with the words after it
+    // for the parser, not for the host
+    let option_commands = ABOUT
+        .map(|(word, _)| word)
+        .into_iter()
+        .filter(|word| *word != "connect")
+        .collect::<Vec<_>>()
+        .join(" ");
     let rules = FISH_RULES
+        .replace("__OPTION_COMMANDS__", &option_commands)
         .replace("__VALUE_OPTIONS__", value_options)
         .replace("__COMMANDS__", &commands);
     format!("{text}{rules}")
@@ -500,12 +549,32 @@ function __ssj_at_start
     set -l tokens (commandline -opc)
     not contains -- $tokens[-1] __VALUE_OPTIONS__
 end
+# the word before the one being typed is an option that takes a value
+function __ssj_value_pending
+    set -l tokens (commandline -opc)
+    contains -- $tokens[-1] __VALUE_OPTIONS__
+end
 function __ssj_wants_host
     set -l words (__ssj_words)
-    test (count $words) -eq 1; and contains -- $words[1] __COMMANDS__
+    not __ssj_value_pending; and test (count $words) -eq 1; and contains -- $words[1] __COMMANDS__
+end
+# the option before the word being typed is not one that the command reads: fish is asked whether
+# the command completes the name of the option
+function __ssj_foreign_value
+    __ssj_value_pending; or return 1
+    set -l tokens (commandline -opc)
+    set -l offered (complete -C (string join ' ' -- $tokens[1..-2] $tokens[-1]) | string replace -r '\t.*' '')
+    not contains -- $tokens[-1] $offered
+end
+# in a command of ssj no file is wanted, but for the values of options and after `--`
+function __ssj_no_files
+    set -l words (__ssj_words)
+    test (count $words) -ge 1; and contains -- $words[1] __OPTION_COMMANDS__; and test "$words[2]" != --; or return 1
+    not __ssj_value_pending; or __ssj_foreign_value
 end
 function __ssj_wants_sessions
     set -l words (__ssj_words)
+    not __ssj_value_pending; or return 1
     test (count $words) -ge 2; and test $words[2] != --; or return 1
     switch $words[1]
         case attach
@@ -524,6 +593,7 @@ function __ssj_sessions_of_host
         ssj --complete $words[2] 2>/dev/null
     end
 end
+complete -c ssj -n '__ssj_no_files' -f
 complete -c ssj -n '__ssj_wants_sessions' -f -a '(__ssj_sessions_of_host)'
 complete -c ssj -n '__ssj_at_start' -f -a '(__fish_print_hostnames)'
 complete -c ssj -n '__ssj_wants_host' -f -a '(__fish_print_hostnames)'
