@@ -97,7 +97,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 
 | `auto_install` | Behavior |
 | -------------- | ------------------------------------------------------------------------ |
-| `ask` (default) | On a terminal you are asked, and only `y` or `yes` installs. Without a terminal nothing is installed, and the message tells you what to do. |
+| `ask` (default) | On a terminal you are asked `[Y/n]`: Enter, `y`, or `yes` installs, and anything else does not. Without a terminal nothing is installed, and the message tells you what to do. |
 | `always` | Installs without asking. |
 | `never` | Never installs. |
 

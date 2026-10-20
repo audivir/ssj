@@ -679,8 +679,8 @@ Two ways to get it there:
 1. On first use: when `ssj user@host` finds no server file for its protocol, the wrapper of the
    remote command reports `SSJ MISSING` with exit code 66, which the client tells apart from every
    other failure. What happens next follows the policy `auto_install`:
-   - `ask` (default): on a terminal, the client asks `Install it now? [y/N]` and only `y` or `yes`
-     counts. Without a terminal there is nobody to ask, so nothing is installed and the message
+   - `ask` (default): on a terminal, the client asks `Install it now? [Y/n]`: an empty answer, `y`, or
+     `yes` installs, and anything else, or a closed input, does not. Without a terminal there is nobody to ask, so nothing is installed and the message
      names `ssj install` and `--install`.
    - `always`: installs without asking. `never`: never installs and says how to do it by hand.
    - The flags `--install` and `--no-install` override the config file for one run.
@@ -822,9 +822,9 @@ Leaving (the shell keeps running):
     (or `[attached to session ...]` when the session ran already) once the first connection is up,
     and `[disconnected from <DESTINATION>]` after the shell has ended. The first goes to the
     terminal in raw mode, ahead of the output of the session, and the second to the standard error
-    output. They appear only when the standard input is a terminal, and `-q` (`--quiet`) turns
-    them and the detach line off. Errors are not affected, and a hangup prints nothing, since the
-    terminal is gone.
+    output. These two appear only when the standard input is a terminal (the detach line appears
+    always), and `-q` (`--quiet`) turns all three off. Errors are not affected, and a hangup prints
+    nothing, since the terminal is gone.
   - `~~` sends a literal `~`.
   - `~?` prints the list of escape sequences.
   - Any other character after `~` is sent as typed, including the `~`.

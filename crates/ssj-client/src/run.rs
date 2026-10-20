@@ -1027,7 +1027,7 @@ async fn connect_session(
         Ok(Finished::HungUp) => 129,
         Ok(Finished::Detached) => {
             let port = args.ssh_port.map(|p| format!(":{p}")).unwrap_or_default();
-            notice(
+            say(
                 &args,
                 &format!(
                     "[detached from session; it keeps running: ssj attach {}{port}]",
@@ -1043,15 +1043,21 @@ async fn connect_session(
     }
 }
 
-/// Prints a line about the session on the terminal, unless `-q` is given or the standard input is
-/// not a terminal (a script does not want it). After a hangup the terminal is gone, and
+/// Prints a line about the session, unless `-q` is given. After a hangup the terminal is gone, and
 /// `eprintln!` would panic on the error, so the write ignores errors.
+fn say(args: &Args, text: &str) {
+    if !args.quiet {
+        let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("{text}\n"));
+    }
+}
+
+/// Like [`say`], for the lines that only make sense for a person at a terminal: a script that
+/// reads the output of a command does not want them.
 fn notice(args: &Args, text: &str) {
     use std::io::IsTerminal;
-    if args.quiet || !std::io::stdin().is_terminal() {
-        return;
+    if std::io::stdin().is_terminal() {
+        say(args, text);
     }
-    let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("{text}\n"));
 }
 
 /// Bytes asked from the stream at a time.

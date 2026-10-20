@@ -1296,7 +1296,7 @@ fn on_a_terminal_the_user_is_asked_and_can_decline() {
         &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
     );
 
-    terminal.wait_for("Install it now? [y/N]");
+    terminal.wait_for("Install it now? [Y/n]");
     terminal.typed.write_all(b"n\n").unwrap();
 
     assert_eq!(terminal.exit_code(), Some(1));
@@ -1314,7 +1314,7 @@ fn on_a_terminal_the_user_can_agree_and_the_session_starts() {
         &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
     );
 
-    terminal.wait_for("Install it now? [y/N]");
+    terminal.wait_for("Install it now? [Y/n]");
     terminal.typed.write_all(b"y\n").unwrap();
     terminal.wait_for("installed ");
     terminal.typed.write_all(b"go\n").unwrap();
@@ -1324,10 +1324,32 @@ fn on_a_terminal_the_user_can_agree_and_the_session_starts() {
     assert!(host.installed().exists());
 }
 
-// only a clear yes counts, so that a stray key or an empty answer never uploads anything.
+// the default is yes: Enter alone installs, as the capital in `[Y/n]` says.
 #[test]
-fn only_yes_means_yes() {
-    for answer in ["\n", "yep\n", "no\n", "n\n", " \n"] {
+fn on_a_terminal_enter_alone_installs() {
+    let host = host();
+    let ssh = fake_ssh(FAKE_SSH);
+    let dir = server_binary();
+    let mut terminal = on_terminal(
+        &host,
+        &ssh,
+        &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
+    );
+
+    terminal.wait_for("Install it now? [Y/n]");
+    terminal.typed.write_all(b"\n").unwrap();
+    terminal.wait_for("installed ");
+    terminal.typed.write_all(b"go\n").unwrap();
+    terminal.wait_for("got:go");
+
+    assert_eq!(terminal.exit_code(), Some(3));
+    assert!(host.installed().exists());
+}
+
+// anything but a clear yes or an empty answer declines, so that a stray word uploads nothing.
+#[test]
+fn only_an_empty_answer_or_yes_means_yes() {
+    for answer in ["yep\n", "no\n", "n\n", "x\n"] {
         let host = host();
         let ssh = fake_ssh(FAKE_SSH);
         let dir = server_binary();
@@ -1336,7 +1358,7 @@ fn only_yes_means_yes() {
             &ssh,
             &host.session_words(&["--server-binary", dir.to_str().unwrap()]),
         );
-        terminal.wait_for("[y/N]");
+        terminal.wait_for("[Y/n]");
         terminal.typed.write_all(answer.as_bytes()).unwrap();
         assert_eq!(terminal.exit_code(), Some(1), "{answer:?}");
         assert!(!host.installed().exists(), "{answer:?}");

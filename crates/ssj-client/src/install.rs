@@ -187,7 +187,7 @@ pub fn decide(
         )),
         AutoInstall::Ask => {
             let question =
-                format!("ssj-server is not installed on {destination}. Install it now? [y/N] ");
+                format!("ssj-server is not installed on {destination}. Install it now? [Y/n] ");
             if ask(&question) {
                 Decision::Install
             } else {
@@ -202,12 +202,21 @@ pub fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
 }
 
-/// Asks on the terminal. Only `y` and `yes` count as consent.
+/// Asks on the terminal. An empty answer (just Enter) is yes, as the capital in `[Y/n]` says, and
+/// so are `y` and `yes`. Anything else is no, and so is a closed input, which is no answer at all.
 pub fn confirm(question: &str) -> bool {
     eprint!("{question}");
     let mut answer = String::new();
-    if std::io::stdin().lock().read_line(&mut answer).is_err() {
-        return false;
+    match std::io::stdin().lock().read_line(&mut answer) {
+        Ok(read) if read > 0 => accepts(&answer),
+        _ => false,
     }
-    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+/// Whether a line typed in reply to a `[Y/n]` question agrees.
+pub fn accepts(answer: &str) -> bool {
+    matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "" | "y" | "yes"
+    )
 }
