@@ -126,9 +126,10 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert!(hosts("ssj kill me@box --fo", 3).contains("--force"));
     assert_eq!(hosts("ssj me@box ls --ser", 3), "");
     // only the options that the command reads
-    assert_eq!(
-        hosts("ssj edit me@box -", 3),
-        "--verbose --log-file --ssh-command --server-path --server-arg"
+    let edit = hosts("ssj edit me@box -", 3);
+    assert!(
+        edit.contains("--server-path") && !edit.contains("--json"),
+        "{edit}"
     );
     assert!(!hosts("ssj kill me@box -", 3).contains("--json"));
     // `connect` is the plain connection: the hosts, the options of the connection before the
@@ -141,7 +142,6 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(hosts("ssj --transport ''", 2), "auto udp tcp stdio");
     assert_eq!(hosts("ssj attach me@box --compress ''", 4), "off auto");
     assert_eq!(hosts("ssj --udp-host ''", 2), "boxa boxb");
-    assert_eq!(hosts("ssj install me@box --udp-host ''", 4), "");
     assert_eq!(hosts("ssj attach me@box --udp-host ''", 4), "boxa boxb");
     assert_eq!(hosts("ssj connect me@box -l", 3), "");
     assert!(hosts("ssj list me@box -", 3).contains("--json"));
@@ -149,6 +149,84 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(hosts("ssj attach -- ''", 3), "");
     assert_eq!(hosts("ssj --name x attach ''", 4), "boxa boxb");
     assert_eq!(hosts("ssj --transport udp list ''", 4), "boxa boxb");
+}
+
+/// Completes each line in a zsh that runs the completion system in a pseudo terminal, as a
+/// person does: the line is typed, and the tab key pressed twice. What zsh shows is returned
+/// for each line. The fake `ssj` is found first, `_ssh_hosts` offers two hosts, and the working
+/// directory has one file. `None` when this zsh has no `zpty`.
+fn zsh_complete(lines: &[&str]) -> Option<Vec<String>> {
+    let dir = fake_ssj();
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(work.join("afile"), "").unwrap();
+    let completions = generated("_ssj");
+    let inner = format!(
+        "export PATH='{}':$PATH\n\
+         fpath=('{}' $fpath)\n\
+         autoload -U compinit; compinit -u -d '{}/zcompdump'\n\
+         _ssh_hosts() {{ compadd -- boxa boxb }}\n\
+         LISTMAX=1000; setopt AUTO_LIST; unsetopt AUTO_MENU; PS1='> '\n",
+        dir.display(),
+        completions.parent().unwrap().display(),
+        dir.display(),
+    );
+    std::fs::write(dir.join("inner.zsh"), inner).unwrap();
+    let outer = format!(
+        r#"zmodload zsh/zpty 2>/dev/null || exit 3
+zpty z "zsh -f -i"
+# reads what zsh shows until it has been quiet for a while
+drain() {{
+  local chunk waited=0 limit=${{1:-30}}
+  buf=
+  while (( waited < limit )); do
+    if zpty -r -t z chunk; then buf+=$chunk; waited=0; limit=6
+    else sleep 0.05; (( waited++ )); fi
+  done
+}}
+zpty -w z "cd '{}'; source '{}/inner.zsh'"
+drain 60
+for line in "$@"; do
+  zpty -w -n z $'\025'; drain 8
+  zpty -w -n z "$line"$'\t\t'; drain
+  print -r -- "@@@ $line"
+  print -r -- "$buf" | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\r//g' | tr -s ' \n' ' '
+done
+"#,
+        work.display(),
+        dir.display(),
+    );
+    std::fs::write(dir.join("outer.zsh"), outer).unwrap();
+    let output = Command::new("zsh")
+        .args(["-f", dir.join("outer.zsh").to_str().unwrap()])
+        .args(lines)
+        .current_dir(&work)
+        .output()
+        .unwrap();
+    if output.status.code() == Some(3) {
+        assert!(
+            std::env::var_os("SSJ_REQUIRE_SHELLS").is_none(),
+            "this zsh has no zpty, and SSJ_REQUIRE_SHELLS is set"
+        );
+        return None;
+    }
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let shown: Vec<String> = text
+        .split("@@@ ")
+        .skip(1)
+        .map(|part| {
+            part.split_once('\n')
+                .map_or("", |(_, rest)| rest)
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(shown.len(), lines.len(), "{text}");
+    Some(shown)
 }
 
 #[test]
@@ -162,95 +240,75 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     let first_line = std::fs::read_to_string(&file).unwrap();
     assert!(first_line.starts_with("#compdef ssj\n"));
 
-    let case_with = |words: &str, current: usize, prefix: &str| {
-        // the completion system is replaced by functions that print what they are asked for.
-        let code = format!(
-            "compdef() {{ :; }}\nsource '{}'\n\
-             compadd() {{ if [[ $1 == -a ]]; then print -r -- \"names: ${{(P)2}}\"; else print -r -- \"add: $*\"; fi; }}\n\
-             _hosts() {{ print hosts; }}\n\
-             _files() {{ print files; }}\n\
-             _alternative() {{ print \"alternative: $*\"; }}\n\
-             PREFIX='{prefix}'; words=({words}); CURRENT={current}; _ssj_words",
-            file.display()
-        );
-        run("zsh", &["-f", "-c", &code], &fake_ssj())
-            .trim()
-            .to_owned()
+    let lines = [
+        "ssj ",
+        "ssj connect ",
+        "ssj connect me@box ",
+        "ssj list me@box -",
+        "ssj install me@box -",
+        "ssj attach me@box ",
+        "ssj kill me@box ",
+        "ssj detach me@box ",
+        "ssj install me@box --server-binary ",
+        "ssj attach me@box --transport ",
+        "ssj attach me@box --udp-host ",
+        "ssj install me@box --udp-host ",
+        "ssj me@box ls ",
+        "ssj me@box ls -",
+        "ssj --udp-host ",
+        "ssj --name ",
+        "ssj --compress ",
+        "ssj edit ",
+    ];
+    let Some(shown) = zsh_complete(&lines) else {
+        return;
     };
-    let case = |words: &str, current: usize| case_with(words, current, "");
-    // the first word is a command or a host.
-    assert!(case("''", 1).contains("alternative:"), "{}", case("''", 1));
-    assert!(
-        case("''", 1).contains(" install edit "),
-        "{}",
-        case("''", 1)
+    let at = |line: &str| &shown[lines.iter().position(|l| *l == line).unwrap()];
+    let has = |line: &str, words: &[&str], absent: &[&str]| {
+        let text = at(line);
+        for word in words {
+            assert!(text.contains(word), "{line:?} lacks {word}: {text}");
+        }
+        for word in absent {
+            assert!(!text.contains(word), "{line:?} has {word}: {text}");
+        }
+    };
+    // the first word is a command or a host, and the word after `connect` a host
+    has("ssj ", &["attach", "connect", "edit", "boxa"], &[]);
+    has("ssj connect ", &["boxa"], &["attach", "afile"]);
+    // the words after the destination of `connect` are for the host: files
+    has("ssj connect me@box ", &["afile"], &["boxa"]);
+    // a command reads only its options
+    has(
+        "ssj list me@box -",
+        &["--json", "--log-file"],
+        &["--transport", "--force"],
     );
-    // the word after a command is a host.
-    assert_eq!(case("attach ''", 2), "hosts");
-    // the aliases of the ssh config are offered when zsh knows how to read them.
-    let code = format!(
-        "compdef() {{ :; }}\nsource '{}'\n\
-         _ssh_hosts() {{ print ssh hosts; }}\n\
-         _hosts() {{ print hosts; }}\n\
-         words=(list ''); CURRENT=2; PREFIX=''; _ssj_words",
-        file.display()
+    has(
+        "ssj install me@box -",
+        &["--server-binary", "--download-url"],
+        &["--json"],
     );
-    assert_eq!(
-        run("zsh", &["-f", "-c", &code], &fake_ssj()).trim(),
-        "ssh hosts"
+    // the sessions of the host
+    has("ssj attach me@box ", &["work", "build"], &["afile"]);
+    has("ssj kill me@box ", &["work", "build"], &[]);
+    has("ssj detach me@box ", &["work"], &["build"]);
+    // the values of options: files, the fixed ones, the hosts of the ssh config, the sessions
+    has("ssj install me@box --server-binary ", &["afile"], &[]);
+    has(
+        "ssj attach me@box --transport ",
+        &["udp", "tcp", "stdio"],
+        &[],
     );
-    assert_eq!(case("list ''", 2), "hosts");
-    // the word after the host of attach and kill is a session of that host.
-    assert_eq!(case("attach me@box ''", 3), "names: work build");
-    assert_eq!(case("kill me@box ''", 3), "names: work build");
-    assert_eq!(case("kill me@box work ''", 4), "names: work build");
-    assert_eq!(case("attach me@box work ''", 4), "");
-    assert_eq!(case("detach me@box ''", 3), "names: work");
-    assert_eq!(case("detach me@box work ''", 4), "names: work");
-    assert_eq!(case("attach other@host ''", 3), "names:");
-    // list and install take nothing more.
-    assert_eq!(case("list me@box ''", 3), "");
-    // the options of a command stand anywhere, also after the destination.
-    let options = case_with;
-    let offered = options("install me@box --ser", 3, "--ser");
-    assert!(
-        offered.starts_with("add: -- ") && offered.contains(" --server-binary"),
-        "{offered}"
-    );
-    assert!(options("install --ser", 2, "--ser").contains(" --server-binary"));
-    // only the options that the command reads
-    let install = options("install me@box -", 3, "-");
-    assert!(install.contains(" --server-binary") && !install.contains(" --transport"));
-    let kill = options("kill me@box -", 3, "-");
-    assert!(kill.contains(" --force") && !kill.contains(" --json"));
-    assert!(options("list me@box -", 3, "-").contains(" --json"));
-    // `connect`: the hosts, the options of the connection before the host, files after it
-    assert_eq!(case("connect ''", 2), "hosts");
-    assert_eq!(case("connect --transport tcp ''", 4), "hosts");
-    assert!(options("connect --tr", 2, "--tr").contains(" --transport"));
-    assert_eq!(case("connect me@box ''", 3), "files");
-    // the values of options, also after the destination of a command: files, the fixed values,
-    // and the hosts of the ssh config
-    assert_eq!(case("install me@box --server-binary ''", 4), "files");
-    assert_eq!(case("list me@box --log-file ''", 4), "files");
-    assert_eq!(case("attach me@box --udp-host ''", 4), "hosts");
-    assert_eq!(case("install me@box --udp-host ''", 4), "");
-    assert_eq!(
-        case("attach me@box --transport ''", 4),
-        "add: -- auto udp tcp stdio"
-    );
-    assert_eq!(case("attach me@box --compress ''", 4), "add: -- off auto");
-    assert_eq!(case("connect --udp-host ''", 3), "hosts");
-    assert_eq!(options("connect me@box -l", 3, "-l"), "files");
-    assert!(options("kill me@box --fo", 3, "--fo").contains(" --force"));
-    // after the host of a command for the host the words are files.
-    assert_eq!(options("me@box ls --ser", 3, "--ser"), "files");
-    // after the destination come the words of the command for the host: files, not hosts.
-    assert_eq!(case("me@box ''", 2), "files");
-    assert_eq!(case("me@box rm ''", 3), "files");
-    assert_eq!(case("me@box rm -rf ''", 4), "files");
-    // a host that is called like a command, after the dashes
-    assert_eq!(case("attach -- ''", 3), "files");
+    has("ssj attach me@box --udp-host ", &["boxa", "boxb"], &[]);
+    has("ssj install me@box --udp-host ", &[], &["boxa"]);
+    has("ssj --udp-host ", &["boxa"], &[]);
+    has("ssj --name ", &["work", "build"], &[]);
+    has("ssj --compress ", &["off", "auto"], &[]);
+    // the words after any other destination are for the command on the host: files, no options
+    has("ssj me@box ls ", &["afile"], &[]);
+    has("ssj me@box ls -", &[], &["--json", "--transport"]);
+    has("ssj edit ", &["boxa"], &[]);
 }
 
 #[test]

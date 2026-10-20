@@ -379,22 +379,29 @@ redraw.
   three shells offer the values after a space and after `=`, and clap rejects anything else with
   the list. The sets are written again in the `parse_*` functions of `cli.rs`, which turn the text
   into the types, and in the test table of `completions.rs`.
-- After the destination the shells complete files, not hosts: the words belong to the command that
-  runs on the host, and its layout (`~/.local/share/...`) is mostly the one of this machine. Zsh
-  does it in `_ssj_words`, Bash through the default completion that follows an empty answer, Fish
-  by its default for words that no rule takes.
-- The three shells complete the same: the commands (`list`, `attach`, `kill`, `detach`, `install`,
-  `edit`) and the hosts for the first word, the hosts for the word after a command, the sessions of
-  the host for `attach` (one), `kill`, and `detach` (any number), and the sessions for `--name`. The
-  hosts are those of `~/.ssh/config` (`_ssh_hosts` in Zsh, `_known_hosts_real` of bash-completion in
-  Bash when it is loaded, `__fish_print_hostnames` in Fish). The options are offered before the
-  destination and after a command word, never after another destination (`ssj host ls -l`), and a
-  value of an option such as `--name work` is not a destination.
-- The values of options are completed from what `clap` knows (the fixed values of `--transport`,
-  `--local-echo`, `--congestion`, and `--compress`, and the hints for files and hosts): files for
-  `--log-file`, `--server-path`, and `--server-binary`, the hosts of the ssh config for
-  `--udp-host`, and the sessions for `--name`. After the destination of a command only the options
-  that the command reads have their values completed.
+- The completions come from a `clap` command that only `build.rs` sees (`completion_tree`): the
+  options, and a subcommand for each command word with the options it reads (`COMMAND_OPTIONS` in
+  `options.rs`, the same table that makes the parser refuse the others), a destination, and the
+  ids of sessions. `clap_complete` writes from it the options of each command, their values (the
+  fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and files for
+  `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first word. The
+  parser does not use the tree. What `clap` cannot know is added by the build script to each file:
+  the hosts of `~/.ssh/config` for the destination and for `--udp-host` (`_ssh_hosts` in Zsh,
+  `_known_hosts_real` of bash-completion in Bash when it is loaded, `__fish_print_hostnames` in
+  Fish), the sessions of the host for `attach` (one), `kill`, and `detach` (any number), and the
+  sessions for `--name`.
+- The shells complete the same: the commands and the hosts for the first word, the hosts for the
+  word after a command, the sessions after the host of a command that takes them, the options of a
+  command after its host, and the values of options. After the destination of `connect` and after
+  any other destination, the words belong to the command that runs on the host: files, since its
+  layout (`~/.local/share/...`) is mostly the one of this machine, and no options (`ssj host ls -l`). Zsh does it in the case of the commands that `build.rs` extends, Bash through the default
+  completion that follows an empty answer, Fish by its default for words that no rule takes.
+- One difference remains in Zsh: when nothing else fits after the destination of a command, its
+  `_arguments` offers the options even before a dash was typed, as it does for every command; Bash
+  and Fish wait for the dash. After `ssj attach --` Zsh offers hosts (the word is the end of the
+  options), where Bash and Fish offer files.
+- The tests run Bash and Fish with `COMP_WORDS` and `complete -C`, and Zsh with the completion
+  system in a pseudo terminal (`zpty`), so that the functions of `clap` run for real.
 - `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
   section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left

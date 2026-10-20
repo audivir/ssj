@@ -479,7 +479,7 @@ fn the_man_page_and_the_completions_are_built() {
         zsh.starts_with("#compdef ssj\n"),
         "compdef stays the first line"
     );
-    assert!(zsh.contains("ssj --complete $words[2]"));
+    assert!(zsh.contains("ssj --complete $line[1]"));
     let bash = std::fs::read_to_string(found("ssj.bash")).unwrap();
     assert!(bash.contains("ssj --complete \"${pos[1]}\""));
     let fish = std::fs::read_to_string(found("ssj.fish")).unwrap();
