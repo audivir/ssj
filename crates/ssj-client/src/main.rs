@@ -1,3 +1,5 @@
+//! Entry point of `ssj`.
+
 use std::process::ExitCode;
 
 use ssj_client::{cli, run};

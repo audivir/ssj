@@ -45,6 +45,7 @@ pub struct Connect {
     pub fingerprint: [u8; 32],
 }
 
+/// Failure to read a line of the bootstrap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootstrapError {
     /// A line starts with the prefix but has wrong fields.

@@ -37,6 +37,7 @@ pub enum LocalEcho {
     Auto,
 }
 
+/// Parses the value of `--local-echo`.
 pub fn parse_local_echo(text: &str) -> Result<LocalEcho, String> {
     match text {
         "off" => Ok(LocalEcho::Off),
@@ -45,6 +46,7 @@ pub fn parse_local_echo(text: &str) -> Result<LocalEcho, String> {
     }
 }
 
+/// Parses the value of `--compress`.
 pub fn parse_compress(text: &str) -> Result<bool, String> {
     match text {
         "auto" => Ok(true),
@@ -53,6 +55,7 @@ pub fn parse_compress(text: &str) -> Result<bool, String> {
     }
 }
 
+/// Parses the value of `--transport`.
 pub fn parse_transport(text: &str) -> Result<Transport, String> {
     match text {
         "auto" => Ok(Transport::Auto),
@@ -90,6 +93,7 @@ pub enum Command {
     },
 }
 
+/// Container for the parsed command line of `ssj`.
 #[derive(Clone, Debug)]
 pub struct Args {
     pub command: Command,
@@ -146,6 +150,7 @@ pub struct Args {
     pub explicit: Explicit,
 }
 
+/// Marks the options that the command line set, so that the config file does not replace them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Explicit {
     pub ssh_command: bool,
@@ -279,6 +284,7 @@ pub fn parse_detach_key(text: &str) -> Result<Option<u8>, String> {
     Ok(Some(byte))
 }
 
+/// Parses the arguments of the command line.
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let parsed = crate::options::command()
         .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(args))

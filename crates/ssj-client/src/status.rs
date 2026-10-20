@@ -12,6 +12,7 @@ pub trait Status: Send {
     fn clear(&mut self, title: Option<&str>) -> Vec<u8>;
 }
 
+/// Status that shows its message in the title of the terminal.
 #[derive(Debug, Default)]
 pub struct TitleStatus {
     active: bool,

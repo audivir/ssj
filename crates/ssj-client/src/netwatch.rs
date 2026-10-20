@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::{interval, timeout_at};
 
+/// Reason why the watcher reports a change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Cause {
     NetworkChanged,

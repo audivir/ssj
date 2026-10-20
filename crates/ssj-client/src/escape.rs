@@ -39,6 +39,7 @@ impl EscapeFilter {
         self
     }
 
+    /// Filters typed bytes, and returns what to send and which escape commands were typed.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Action> {
         if self.escape.is_none() && self.detach_key.is_none() {
             return vec![Action::Send(bytes.to_vec())];

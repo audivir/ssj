@@ -9,6 +9,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+/// Value of a key in a config file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Text(String),

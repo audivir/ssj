@@ -53,6 +53,7 @@ pub fn parse_target(stdout: &[u8]) -> Result<Target, String> {
     }
 }
 
+/// Asks the host for its system and CPU, and returns the matching release target.
 pub async fn detect_target(args: &Args) -> Result<Target, String> {
     let command = sh_command(r#"printf 'SSJ TARGET %s\n' "$(uname -sm)""#, &[]);
     let remote = run_remote_command(args, &command, Vec::new()).await?;
@@ -93,6 +94,7 @@ pub fn find_server_binary(args: &Args, target: Target) -> Result<Option<PathBuf>
     }
 }
 
+/// Returns the SHA-256 digest of `bytes` as lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()

@@ -1,3 +1,5 @@
+//! Buffer of the output and input that the peer has not acknowledged.
+
 use std::collections::VecDeque;
 
 /// Bytes sent but not yet acknowledged, addressed by their absolute offset in the stream.
@@ -13,6 +15,7 @@ pub struct ReplayBuffer {
     capacity: usize,
 }
 
+/// Failure to read from the replay buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplayError {
     /// The requested offset was acknowledged and dropped already.

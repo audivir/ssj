@@ -75,6 +75,7 @@ pub enum SlowClient {
     Wait,
 }
 
+/// Container for the settings that a session starts with.
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
     pub id: SessionId,

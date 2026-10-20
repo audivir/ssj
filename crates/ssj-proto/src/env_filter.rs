@@ -9,6 +9,7 @@ use crate::env::Env;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnvFilter(Vec<String>);
 
+/// Failure to accept a list of patterns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PatternError {
     TooMany,
@@ -19,7 +20,9 @@ pub enum PatternError {
 }
 
 impl EnvFilter {
+    /// Most patterns in a list.
     pub const MAX_PATTERNS: usize = 64;
+    /// Longest pattern, in bytes.
     pub const MAX_PATTERN_LEN: usize = 256;
 
     pub fn new(patterns: Vec<String>) -> Result<Self, PatternError> {

@@ -125,6 +125,7 @@ enum Parse {
     OscEsc,
 }
 
+/// Predictor of the local echo for typed characters.
 #[derive(Debug)]
 pub struct Echo {
     enabled: bool,

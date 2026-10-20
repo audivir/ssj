@@ -1,3 +1,5 @@
+//! Entry point of `ssj-server`.
+
 use std::process::ExitCode;
 
 use ssj_server::cli::{self, Mode};

@@ -27,6 +27,7 @@ pub fn shell_quote(text: &str) -> String {
 
 /// Text that the wrapper prints, and the exit code it uses, when the server file is missing.
 pub const MISSING_MARKER: &str = "SSJ MISSING";
+/// Exit code of the wrapper when the server file is missing.
 pub const MISSING_EXIT_CODE: i32 = 66;
 
 /// Starts the server file of this protocol if it exists. The arguments follow in `"$@"`.

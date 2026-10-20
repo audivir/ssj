@@ -9,6 +9,7 @@ use crate::types::{SessionId, SessionName};
 /// Longest line in either direction.
 pub const MAX_LINE: usize = 512;
 
+/// Failure to read a line of the control socket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlError {
     Malformed,
@@ -20,6 +21,7 @@ impl From<BootstrapError> for ControlError {
     }
 }
 
+/// Request that a client of the control socket sends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     /// Replaces the pinned client and opens a new endpoint.
@@ -34,6 +36,7 @@ pub enum Request {
     Detach,
 }
 
+/// State of a session in a listing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionState {
     /// A client is connected.
@@ -63,6 +66,7 @@ impl SessionState {
     }
 }
 
+/// Container for one session in a listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionInfo {
     pub id: SessionId,
@@ -72,6 +76,7 @@ pub struct SessionInfo {
     pub protocol: u16,
 }
 
+/// Answer of the server on the control socket.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
     Connect(Connect),
@@ -81,6 +86,7 @@ pub enum Reply {
     Error(String),
 }
 
+/// Formats a request as a line of the control socket.
 pub fn format_request(request: &Request) -> String {
     match request {
         Request::Attach(pin) => crate::bootstrap::format_pin(pin).replace("SSJ PIN ", "ATTACH "),
@@ -116,6 +122,7 @@ pub fn parse_request(line: &[u8]) -> Result<Request, ControlError> {
     }
 }
 
+/// Formats a reply as a line of the control socket.
 pub fn format_reply(reply: &Reply) -> String {
     match reply {
         Reply::Connect(connect) => format_connect(connect),

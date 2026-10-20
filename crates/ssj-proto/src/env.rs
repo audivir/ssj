@@ -1,3 +1,5 @@
+//! Variables that the client sends to the shell of a new session.
+
 use std::collections::HashSet;
 
 /// Variable list of the client that passed the size and syntax checks of the protocol.
@@ -17,9 +19,13 @@ pub enum EnvError {
 }
 
 impl Env {
+    /// Most variables that a client sends.
     pub const MAX_VARS: usize = 64;
+    /// Longest name of a variable, in bytes.
     pub const MAX_NAME: usize = 256;
+    /// Longest value of a variable, in bytes.
     pub const MAX_VALUE: usize = 8 * 1024;
+    /// Most bytes of all names and values together.
     pub const MAX_TOTAL: usize = 64 * 1024;
     /// Longest value of `TERM`, `LANG`, and `LC_*`.
     pub const MAX_PLAIN_VALUE: usize = 64;

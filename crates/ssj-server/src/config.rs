@@ -30,6 +30,7 @@ use crate::cli::{
 };
 use crate::session::SlowClient;
 
+/// Container for the settings of the server config file.
 #[derive(Clone, Debug, Default)]
 pub struct Config {
     pub port_range: Option<RangeInclusive<u16>>,

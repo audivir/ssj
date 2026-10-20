@@ -7,6 +7,7 @@
 use std::fmt;
 use std::net::Ipv6Addr;
 
+/// Container for the parts of `[user@]host[:port]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Destination {
     pub user: Option<String>,
@@ -15,6 +16,7 @@ pub struct Destination {
     pub port: Option<u16>,
 }
 
+/// Failure to read a destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DestinationError {
     Empty,
@@ -69,6 +71,7 @@ impl fmt::Display for Destination {
     }
 }
 
+/// Parses `[user@]host[:port]`, `ssh://[user@]host[:port]`, or an IPv6 address.
 pub fn parse(text: &str) -> Result<Destination, DestinationError> {
     if text.is_empty() {
         return Err(DestinationError::Empty);

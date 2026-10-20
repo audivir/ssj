@@ -1,3 +1,5 @@
+//! Backend that runs the program on a pseudo terminal of its own.
+
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};

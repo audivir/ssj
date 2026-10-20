@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 pub use tokio_rustls::client::TlsStream as ClientStream;
 pub use tokio_rustls::{TlsAcceptor, TlsConnector};
 
+/// SHA-256 digest of a certificate.
 pub type Fingerprint = [u8; 32];
 
 /// Name sent as SNI. Not validated, since trust comes from the pinned fingerprint.
@@ -56,10 +57,12 @@ impl Identity {
     }
 }
 
+/// Returns the SHA-256 fingerprint of a certificate.
 pub fn fingerprint(cert: &CertificateDer<'_>) -> Fingerprint {
     Sha256::digest(cert.as_ref()).into()
 }
 
+/// Returns the crypto provider that every TLS and QUIC configuration uses.
 pub fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
@@ -252,6 +255,7 @@ pub enum Congestion {
 }
 
 impl Congestion {
+    /// Parses the value of `--congestion`.
     pub fn parse(text: &str) -> Result<Self, String> {
         match text {
             "cubic" => Ok(Self::Cubic),
@@ -338,6 +342,7 @@ pub const SERVER_SEND_WINDOW: u64 = 1024 * 1024;
 /// Receive limits of the client, which gets the (large) output of the shell.
 pub const CLIENT_RECEIVE_WINDOW: u32 = 4 * 1024 * 1024;
 
+/// Wraps a TLS configuration of the server into a QUIC one with the limits of ssj.
 pub fn quic_server(tls: rustls::ServerConfig) -> quinn::ServerConfig {
     quic_server_with_send_window(tls, SERVER_SEND_WINDOW)
 }
@@ -363,6 +368,7 @@ pub fn quic_server_with_send_window(
     config
 }
 
+/// Wraps a TLS configuration of the client into a QUIC one with the limits of ssj.
 pub fn quic_client(tls: rustls::ClientConfig) -> quinn::ClientConfig {
     let crypto = QuicClientConfig::try_from(tls).expect("QUIC-compatible TLS config");
     let mut config = quinn::ClientConfig::new(Arc::new(crypto));

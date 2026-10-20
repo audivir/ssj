@@ -25,6 +25,7 @@ enum State {
     },
 }
 
+/// Follower of the output of the remote side, for the title and the cursor.
 #[derive(Debug)]
 pub struct Tracker {
     state: State,

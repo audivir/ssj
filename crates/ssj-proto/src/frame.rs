@@ -12,6 +12,7 @@ pub const MAX_FRAME_LEN: usize = 128 * 1024;
 /// Largest chunk of terminal data in one frame.
 pub const MAX_DATA_LEN: usize = 32 * 1024;
 
+/// Failure to decode a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodeError {
     /// Header announces a length of zero or more than [`MAX_FRAME_LEN`].
@@ -26,6 +27,7 @@ pub enum DecodeError {
     Env(EnvError),
 }
 
+/// Failure to encode a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodeError {
     /// Data chunk is empty or larger than [`MAX_DATA_LEN`].
@@ -97,6 +99,7 @@ pub struct Welcome {
     pub output_offset: u64,
 }
 
+/// Frame that the client sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientFrame {
     Hello(Hello),
@@ -125,6 +128,7 @@ pub enum ClientFrame {
     AgentClose(u32),
 }
 
+/// Frame that the server sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerFrame {
     Welcome(Welcome),

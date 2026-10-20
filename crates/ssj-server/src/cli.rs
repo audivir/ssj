@@ -13,6 +13,7 @@ use crate::session::SlowClient;
 /// Bounds for the output buffer: a size below the lower one cannot hold a screenful of output, and
 /// the upper one keeps a runaway setting from using all the memory of a shared host.
 pub const MIN_REPLAY_CAPACITY: usize = 64 * 1024;
+/// Largest size of the replay buffer that a setting may ask for.
 pub const MAX_REPLAY_CAPACITY: usize = 1 << 30;
 
 /// Lowest port the server may use, so that it never needs privileges.
@@ -42,6 +43,7 @@ pub enum Mode {
     Stdio(Option<String>),
 }
 
+/// Container for the parsed command line of `ssj-server`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Args {
     pub mode: Mode,
@@ -81,6 +83,7 @@ pub struct Args {
     pub explicit: Explicit,
 }
 
+/// Marks the options that the command line set, so that the config file does not replace them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Explicit {
     pub port_range: bool,

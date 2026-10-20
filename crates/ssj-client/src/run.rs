@@ -116,7 +116,9 @@ pub enum Finished {
 pub type Resolver =
     Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<SocketAddr, String>> + Send>> + Send>;
 
+/// Read half of a byte stream.
 pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
+/// Write half of a byte stream.
 pub type Writer = Box<dyn AsyncWrite + Send + Unpin>;
 
 /// An open byte stream to the server on a transport other than QUIC.
@@ -197,6 +199,7 @@ pub struct Io {
     pub hangups: mpsc::UnboundedReceiver<()>,
 }
 
+/// Runs the client for a parsed command line and returns the exit code.
 pub fn run(args: Args) -> ExitCode {
     if let Err(err) = crate::log::init(args.verbose, args.log_file.as_deref()) {
         eprintln!("ssj: cannot open the log file: {err}");
@@ -1340,6 +1343,7 @@ struct Client {
     status_blocked_since: Option<Instant>,
 }
 
+/// Runs one session until it ends, and returns how it ended.
 pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
     if params.tiers.is_empty() {
         return Err("no way to reach the server".to_owned());

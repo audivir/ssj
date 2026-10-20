@@ -36,6 +36,7 @@ pub enum AutoInstall {
     Never,
 }
 
+/// Container for the settings of the client config file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub auto_install: AutoInstall,
@@ -73,6 +74,7 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Parses the text of a config file and rejects unknown keys and bad values.
     pub fn from_text(text: &str) -> Result<Self, String> {
         let mut table = ssj_config::parse(text)?;
         let mut config = Self::default();

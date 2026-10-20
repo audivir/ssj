@@ -1,3 +1,5 @@
+//! Small validated types of the protocol: window size, session id, and session name.
+
 /// Terminal dimensions in character cells, always between 1 and [`WindowSize::MAX`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowSize {
@@ -6,6 +8,7 @@ pub struct WindowSize {
 }
 
 impl WindowSize {
+    /// Largest number of rows or columns.
     pub const MAX: u16 = 4096;
 
     /// Returns `None` if a dimension is zero or larger than [`WindowSize::MAX`].
@@ -30,6 +33,7 @@ impl WindowSize {
 pub struct SessionName(String);
 
 impl SessionName {
+    /// Longest session name, in characters.
     pub const MAX_LEN: usize = 32;
 
     /// Accepts 1 to 32 characters of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-`.
