@@ -418,9 +418,9 @@ fn the_man_page_and_the_completions_are_built() {
     );
     assert!(zsh.contains("ssj --complete $words[2]"));
     let bash = std::fs::read_to_string(found("ssj.bash")).unwrap();
-    assert!(bash.contains("ssj --complete \"${COMP_WORDS[2]}\""));
+    assert!(bash.contains("ssj --complete \"${pos[1]}\""));
     let fish = std::fs::read_to_string(found("ssj.fish")).unwrap();
-    assert!(fish.contains("-eq 3"));
+    assert!(fish.contains("ssj --complete $words[2]"));
 }
 
 #[test]

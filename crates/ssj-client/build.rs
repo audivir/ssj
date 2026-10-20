@@ -10,6 +10,9 @@ use clap_complete::Shell;
 mod options;
 
 /// What the options cannot show: the config files and the cache.
+/// The words that are commands when they stand first, and not hosts.
+const COMMANDS: &str = "list attach kill detach install edit";
+
 const COMMAND: &str = r#".SH RUNNING A COMMAND
 \fBssj\fR \fIDESTINATION\fR \fICOMMAND\fR... runs the command in the session instead of the shell,
 as \fBssh\fR does, and ends with its exit code. The login shell of the host runs it, so pipes,
@@ -156,6 +159,17 @@ fn main() {
         .map(|long| format!("--{long}"))
         .collect::<Vec<_>>()
         .join(" ");
+    // the options that take a value: the word after one of them is not a destination
+    let value_options = command
+        .get_arguments()
+        .filter(|arg| arg.get_action().takes_values())
+        .flat_map(|arg| {
+            let long = arg.get_long().map(|long| format!("--{long}"));
+            let short = arg.get_short().map(|short| format!("-{short}"));
+            long.into_iter().chain(short)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
     for (shell, file) in [
         (Shell::Bash, "ssj.bash"),
         (Shell::Zsh, "_ssj"),
@@ -164,7 +178,24 @@ fn main() {
         let mut text = Vec::new();
         clap_complete::generate(shell, &mut command, "ssj", &mut text);
         let mut text = String::from_utf8(text).expect("the completions are text");
-        text.push_str(dynamic(shell));
+        if shell == Shell::Fish {
+            // the options belong to the command words, and to the start
+            text = text
+                .lines()
+                .map(|line| match line.strip_prefix("complete -c ssj ") {
+                    Some(rest) => format!("complete -c ssj -n __ssj_options_allowed {rest}"),
+                    None => line.to_owned(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+        }
+        text.push_str(
+            &dynamic(shell)
+                .replace("__VALUE_OPTIONS__", &value_options)
+                .replace("__COMMANDS__", COMMANDS)
+                .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|")),
+        );
         if shell == Shell::Zsh {
             // the names of the sessions for `--name`.
             text = text.replace(
@@ -182,10 +213,15 @@ fn main() {
 _ssj_hosts() { if (( $+functions[_ssh_hosts] )); then _ssh_hosts; else _hosts; fi; }
 _ssj_words() {
     if (( CURRENT == 1 )); then
-        _alternative 'commands:command:compadd list attach kill detach install' 'hosts:host:_ssj_hosts'
-    elif [[ $words[1] == (list|attach|kill|detach|install|edit) ]]; then
-        # `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
-        if (( CURRENT >= 3 )) && [[ $words[2] == -- ]]; then _files; return; fi
+        _alternative 'commands:command:compadd __COMMANDS__' 'hosts:host:_ssj_hosts'
+        return
+    fi
+    # `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
+    if [[ $words[1] == (__COMMAND_PATTERN__) ]] && (( CURRENT >= 3 )) && [[ $words[2] == -- ]]; then
+        _files
+        return
+    fi
+    if [[ $words[1] == (__COMMAND_PATTERN__) ]]; then
         # the options of a command may stand after the destination (`ssj install host --server-binary`)
         if [[ $PREFIX == -* ]]; then compadd -- __OPTIONS__; return; fi
         if (( CURRENT == 2 )); then
@@ -195,14 +231,18 @@ _ssj_words() {
             local -a s extra; [[ $words[1] == detach ]] && extra=(--connected)
             s=(${(f)"$(ssj --complete $words[2] $extra 2>/dev/null)"}); compadd -a s
         fi
-    elif (( CURRENT >= 2 )); then
+    else
         # any other first word is the destination, and the rest belongs to the command for the
-        # host: files, since the layout of the host is mostly the same (`~/.local/share/...`)
+        # host, dashes included (`ssj host ls -l`): files, since the layout of the host is mostly
+        # the same (`~/.local/share/...`)
         _files
     fi
 }
 "#;
-            let helpers = helpers.replace("__OPTIONS__", &long_options);
+            let helpers = helpers
+                .replace("__OPTIONS__", &long_options)
+                .replace("__COMMANDS__", COMMANDS)
+                .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|"));
             // `#compdef` must stay the first line, or the completion is not found.
             text = match text.split_once('\n') {
                 Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
@@ -223,6 +263,7 @@ fn dynamic(shell: Shell) -> &'static str {
 _ssj_sessions() {
     local current=${COMP_WORDS[COMP_CWORD]}
     local previous=${COMP_WORDS[COMP_CWORD-1]}
+    local value_options=" __VALUE_OPTIONS__ "
     # `--option=value`: bash splits the word at the `=`, and the value is a word of its own
     if [[ $current == = ]]; then
         current=
@@ -231,36 +272,81 @@ _ssj_sessions() {
     elif [[ $previous == = ]]; then
         previous=${COMP_WORDS[COMP_CWORD-2]}
     fi
-    # ssj attach|kill|detach HOST <name>: the sessions of that host
-    case ${COMP_WORDS[1]} in
-        attach|kill|detach)
-            # `kill` and `detach` take any number of sessions
-            if [[ $COMP_CWORD -eq 3 || ( $COMP_CWORD -gt 3 && ${COMP_WORDS[1]} != attach ) ]]; then
-                # `detach` only acts on a session that has a client
-                local only=; [[ ${COMP_WORDS[1]} == detach ]] && only=--connected
-                COMPREPLY=($(compgen -W "$(ssj --complete "${COMP_WORDS[2]}" $only 2>/dev/null)" -- "$current"))
-                [[ ${#COMPREPLY[@]} -gt 0 ]] && return
+    # the words before this one that are neither options nor the values of options
+    local -a pos=()
+    local word skip= i
+    for ((i = 1; i < COMP_CWORD; i++)); do
+        word=${COMP_WORDS[i]}
+        if [[ -n $skip ]]; then
+            [[ $word == = ]] || skip=
+        elif [[ $word == -- ]]; then
+            pos+=("$word")
+        elif [[ $word == -* ]]; then
+            [[ $value_options == *" $word "* ]] && skip=1
+        else
+            pos+=("$word")
+        fi
+    done
+    COMPREPLY=()
+    # the value of an option: the names of the sessions for `--name`, else what the options know
+    case ${pos[0]-} in
+        ''|__COMMAND_PATTERN__)
+            if [[ $value_options == *" $previous "* ]]; then
+                if [[ $previous == --name ]]; then
+                    COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
+                else
+                    _ssj "$1" "$current" "$previous"
+                fi
+                return
             fi
             ;;
     esac
-    case $previous in
-        --name)
-            COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
-            [[ ${#COMPREPLY[@]} -gt 0 ]] && return
+    # the options stand before the destination, or after a command word: the words after any other
+    # destination are for the command on the host (`ssj host ls -l`)
+    if [[ $current == -* ]]; then
+        case ${pos[0]-} in
+            ''|__COMMAND_PATTERN__) _ssj "$1" "$current" "$previous" ;;
+        esac
+        return
+    fi
+    local hosts=
+    case ${#pos[@]} in
+        0)
+            COMPREPLY=($(compgen -W "__COMMANDS__" -- "$current"))
+            hosts=1
+            ;;
+        *)
+            case ${pos[0]} in
+                __COMMAND_PATTERN__)
+                    if [[ ${#pos[@]} -eq 1 ]]; then
+                        hosts=1
+                    elif [[ ${pos[1]} == -- ]]; then
+                        # `ssj attach -- ls`: the rest is the command for the host
+                        return
+                    else
+                        # `kill` and `detach` take any number of sessions, `attach` one
+                        local only=
+                        case ${pos[0]} in
+                            attach) [[ ${#pos[@]} -eq 2 ]] || only=none ;;
+                            kill) ;;
+                            # `detach` only acts on a session that has a client
+                            detach) only=--connected ;;
+                            *) only=none ;;
+                        esac
+                        if [[ $only != none ]]; then
+                            COMPREPLY=($(compgen -W "$(ssj --complete "${pos[1]}" $only 2>/dev/null)" -- "$current"))
+                        fi
+                        # no file names where nothing is to be said
+                        [[ ${#COMPREPLY[@]} -gt 0 ]] || compopt +o default 2>/dev/null
+                    fi
+                    ;;
+                # any other first word is the destination, and the rest is files
+                *) return ;;
+            esac
             ;;
     esac
-    # a command or a host as the first word, a host after a command: the aliases of the ssh
-    # config are known to `_known_hosts_real` of bash-completion, as for ssh
-    local hosts=
-    if [[ $current != -* ]] && declare -F _known_hosts_real >/dev/null; then
-        if [[ $COMP_CWORD -eq 1 ]]; then
-            hosts=1
-        elif [[ $COMP_CWORD -eq 2 ]]; then
-            case ${COMP_WORDS[1]} in list|attach|kill|detach|install|edit) hosts=1 ;; esac
-        fi
-    fi
-    _ssj "$1" "$current" "$previous"
-    if [[ -n $hosts ]]; then
+    # the aliases of the ssh config are known to `_known_hosts_real` of bash-completion, as for ssh
+    if [[ -n $hosts ]] && declare -F _known_hosts_real >/dev/null; then
         local others=("${COMPREPLY[@]}")
         _known_hosts_real -- "$current"
         COMPREPLY=("${others[@]}" "${COMPREPLY[@]}")
@@ -271,13 +357,64 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
         }
         Shell::Fish => {
             r#"
-complete -c ssj -n '__fish_seen_subcommand_from detach; and test (count (commandline -opc | string match -v -- "-*")) -ge 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] --connected 2>/dev/null)'
-complete -c ssj -n '__fish_seen_subcommand_from kill; and test (count (commandline -opc | string match -v -- "-*")) -ge 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
-complete -c ssj -n '__fish_seen_subcommand_from attach; and test (count (commandline -opc | string match -v -- "-*")) -eq 3' -f -a '(ssj --complete (commandline -opc | string match -v -- "-*")[3] 2>/dev/null)'
-complete -c ssj -l name -x -a '(ssj --complete 2>/dev/null)'
-complete -c ssj -n 'test (count (commandline -opc | string match -v -- "-*")) -eq 1' -f -a 'list attach kill detach install edit'
-complete -c ssj -n 'test (count (commandline -opc | string match -v -- "-*")) -eq 1' -f -a '(__fish_print_hostnames)'
-complete -c ssj -n '__fish_seen_subcommand_from list attach kill detach install edit; and test (count (commandline -opc | string match -v -- "-*")) -eq 2' -f -a '(__fish_print_hostnames)'
+# the words that are neither options nor the values of options, without the one being typed
+function __ssj_words
+    set -l tokens (commandline -opc)
+    set -e tokens[1]
+    set -l skip 0
+    for word in $tokens
+        if test $skip = 1
+            set skip 0
+            continue
+        end
+        if test "$word" = --
+            printf '%s\n' $word
+            continue
+        end
+        switch $word
+            case __VALUE_OPTIONS__
+                set skip 1
+            case '-*'
+            case '*'
+                printf '%s\n' $word
+        end
+    end
+end
+# the options stand before the destination, or after a command word: the words after any other
+# destination are for the command on the host (`ssj host ls -l`)
+function __ssj_options_allowed
+    set -l words (__ssj_words)
+    test (count $words) -eq 0; or contains -- $words[1] __COMMANDS__
+end
+function __ssj_wants_host
+    set -l words (__ssj_words)
+    test (count $words) -eq 1; and contains -- $words[1] __COMMANDS__
+end
+function __ssj_wants_sessions
+    set -l words (__ssj_words)
+    test (count $words) -ge 2; and test $words[2] != --; or return 1
+    switch $words[1]
+        case attach
+            test (count $words) -eq 2
+        case kill detach
+            true
+        case '*'
+            false
+    end
+end
+function __ssj_sessions_of_host
+    set -l words (__ssj_words)
+    if test $words[1] = detach
+        ssj --complete $words[2] --connected 2>/dev/null
+    else
+        ssj --complete $words[2] 2>/dev/null
+    end
+end
+complete -c ssj -n '__ssj_wants_sessions' -f -a '(__ssj_sessions_of_host)'
+complete -c ssj -n 'test (count (__ssj_words)) -eq 0' -f -a '__COMMANDS__'
+complete -c ssj -n 'test (count (__ssj_words)) -eq 0' -f -a '(__fish_print_hostnames)'
+complete -c ssj -n '__ssj_wants_host' -f -a '(__fish_print_hostnames)'
+complete -c ssj -n '__ssj_options_allowed' -l name -x -a '(ssj --complete 2>/dev/null)'
 "#
         }
         _ => "",

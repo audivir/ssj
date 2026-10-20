@@ -383,6 +383,13 @@ redraw.
   runs on the host, and its layout (`~/.local/share/...`) is mostly the one of this machine. Zsh
   does it in `_ssj_words`, Bash through the default completion that follows an empty answer, Fish
   by its default for words that no rule takes.
+- The three shells complete the same: the commands (`list`, `attach`, `kill`, `detach`, `install`,
+  `edit`) and the hosts for the first word, the hosts for the word after a command, the sessions of
+  the host for `attach` (one), `kill`, and `detach` (any number), and the sessions for `--name`. The
+  hosts are those of `~/.ssh/config` (`_ssh_hosts` in Zsh, `_known_hosts_real` of bash-completion in
+  Bash when it is loaded, `__fish_print_hostnames` in Fish). The options are offered before the
+  destination and after a command word, never after another destination (`ssj host ls -l`), and a
+  value of an option such as `--name work` is not a destination.
 - `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
   section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left

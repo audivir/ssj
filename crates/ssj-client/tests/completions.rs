@@ -102,7 +102,9 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     let hosts = |words: &str, cword: usize| {
         let code = format!(
             "source '{}'\n_known_hosts_real() {{ COMPREPLY=(boxa boxb); }}\n\
-             COMP_WORDS=({words}); COMP_CWORD={cword}; _ssj_sessions; echo \"${{COMPREPLY[*]}}\"",
+             COMP_WORDS=({words}); COMP_CWORD={cword}; \
+             _ssj_sessions ssj \"${{COMP_WORDS[COMP_CWORD]}}\" \"${{COMP_WORDS[COMP_CWORD-1]}}\"; \
+             echo \"${{COMPREPLY[*]}}\"",
             file.display()
         );
         run("bash", &["-c", &code], &fake_ssj()).trim().to_owned()
@@ -117,6 +119,16 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     // not for the session, nor for a second word after a host, nor for an option.
     assert_eq!(hosts("ssj attach me@box ''", 3), "work build");
     assert!(!hosts("ssj --na", 1).contains("boxa"));
+    // the same as in zsh: the commands, the options of a command after its host, nothing of ssj
+    // after any other host, and the values of options are not destinations.
+    assert!(hosts("ssj ''", 1).starts_with("list attach kill detach install edit "));
+    assert!(hosts("ssj install me@box --ser", 3).contains("--server-binary"));
+    assert!(hosts("ssj kill me@box --fo", 3).contains("--force"));
+    assert_eq!(hosts("ssj me@box ls --ser", 3), "");
+    assert_eq!(hosts("ssj me@box ''", 2), "");
+    assert_eq!(hosts("ssj attach -- ''", 3), "");
+    assert_eq!(hosts("ssj --name x attach ''", 4), "boxa boxb");
+    assert_eq!(hosts("ssj --transport udp list ''", 4), "boxa boxb");
 }
 
 #[test]
@@ -148,6 +160,11 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     let case = |words: &str, current: usize| case_with(words, current, "");
     // the first word is a command or a host.
     assert!(case("''", 1).contains("alternative:"), "{}", case("''", 1));
+    assert!(
+        case("''", 1).contains(" install edit "),
+        "{}",
+        case("''", 1)
+    );
     // the word after a command is a host.
     assert_eq!(case("attach ''", 2), "hosts");
     // the aliases of the ssh config are offered when zsh knows how to read them.
@@ -254,6 +271,19 @@ fn fish_offers_the_commands_and_the_hosts() {
     assert_eq!(case("ssj -v list "), "boxa boxb");
     // after the host the sessions follow, not the hosts.
     assert_eq!(case("ssj attach me@box "), "");
+    // the values of options are not destinations.
+    assert_eq!(case("ssj --name x attach "), "boxa boxb");
+    assert_eq!(case("ssj --transport udp "), "attach boxa boxb list");
+    // the dashes after another destination are for the command on the host.
+    let options = |line: &str| {
+        let code = format!("source '{}'; complete -C '{line}'", file.display());
+        run("fish", &["-c", &code], &fake_ssj())
+            .lines()
+            .any(|l| l.starts_with("--server-binary"))
+    };
+    assert!(options("ssj install me@box --ser"));
+    assert!(options("ssj --ser"));
+    assert!(!options("ssj me@box ls --ser"));
 }
 
 /// Options with a fixed set of values, and the values.
