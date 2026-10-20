@@ -721,11 +721,11 @@ fn zsh_offers(part: usize, parts: usize) {
         let offered: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
         check("zsh", position, &offered, false);
         // the `matcher-list` of oh-my-zsh has three matchers, and a completion that ends with a
-        // failure is run for each of them, so that its words are shown three times
+        // failure is run for each of them, so that its words are shown three times: each option is shown once
         for word in position.must.iter().filter(|w| w.starts_with('-')) {
             let times = offered.iter().filter(|w| *w == word).count();
-            assert!(
-                times <= 2,
+            assert_eq!(
+                times, 1,
                 "zsh: {:?} shows {word} {times} times",
                 position.line
             );

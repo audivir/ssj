@@ -405,7 +405,7 @@ redraw.
   is run again for each further matcher of the `matcher-list` style, as oh-my-zsh sets it, and the
   words of all runs are shown: `ssj -` listed every option three times, and hosts with a dash,
   which the later matchers take for the typed `-`. The Zsh tests use that style and a host
-  `box-c`, and refuse a word that is shown more than twice.
+  `box-c`, and require that each option is shown exactly once.
 - One table in `completions.rs` (`positions`) says for every position what it offers and what it
   does not: the start, each command with its host, ids, options, and the values of every option,
   `connect`, a host that is no command, and `--`. The same table runs in Bash (with `COMP_WORDS`),
