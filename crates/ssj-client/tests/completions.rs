@@ -128,9 +128,22 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     // only the options that the command reads
     assert_eq!(
         hosts("ssj edit me@box -", 3),
-        "--verbose --log-file --ssh-command"
+        "--verbose --log-file --ssh-command --server-path --server-arg"
     );
     assert!(!hosts("ssj kill me@box -", 3).contains("--json"));
+    // `connect` is the plain connection: the hosts, the options of the connection before the
+    // host, and files for the command on the host after it.
+    assert_eq!(hosts("ssj connect ''", 2), "boxa boxb");
+    assert_eq!(hosts("ssj connect --transport tcp ''", 4), "boxa boxb");
+    assert!(hosts("ssj connect --tr", 2).contains("--transport"));
+    assert_eq!(hosts("ssj connect me@box ''", 3), "");
+    // the values of options: the fixed ones, files, and the hosts of the ssh config
+    assert_eq!(hosts("ssj --transport ''", 2), "auto udp tcp stdio");
+    assert_eq!(hosts("ssj attach me@box --compress ''", 4), "off auto");
+    assert_eq!(hosts("ssj --udp-host ''", 2), "boxa boxb");
+    assert_eq!(hosts("ssj install me@box --udp-host ''", 4), "");
+    assert_eq!(hosts("ssj attach me@box --udp-host ''", 4), "boxa boxb");
+    assert_eq!(hosts("ssj connect me@box -l", 3), "");
     assert!(hosts("ssj list me@box -", 3).contains("--json"));
     assert_eq!(hosts("ssj me@box ''", 2), "");
     assert_eq!(hosts("ssj attach -- ''", 3), "");
@@ -211,6 +224,24 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     let kill = options("kill me@box -", 3, "-");
     assert!(kill.contains(" --force") && !kill.contains(" --json"));
     assert!(options("list me@box -", 3, "-").contains(" --json"));
+    // `connect`: the hosts, the options of the connection before the host, files after it
+    assert_eq!(case("connect ''", 2), "hosts");
+    assert_eq!(case("connect --transport tcp ''", 4), "hosts");
+    assert!(options("connect --tr", 2, "--tr").contains(" --transport"));
+    assert_eq!(case("connect me@box ''", 3), "files");
+    // the values of options, also after the destination of a command: files, the fixed values,
+    // and the hosts of the ssh config
+    assert_eq!(case("install me@box --server-binary ''", 4), "files");
+    assert_eq!(case("list me@box --log-file ''", 4), "files");
+    assert_eq!(case("attach me@box --udp-host ''", 4), "hosts");
+    assert_eq!(case("install me@box --udp-host ''", 4), "");
+    assert_eq!(
+        case("attach me@box --transport ''", 4),
+        "add: -- auto udp tcp stdio"
+    );
+    assert_eq!(case("attach me@box --compress ''", 4), "add: -- off auto");
+    assert_eq!(case("connect --udp-host ''", 3), "hosts");
+    assert_eq!(options("connect me@box -l", 3, "-l"), "files");
     assert!(options("kill me@box --fo", 3, "--fo").contains(" --force"));
     // after the host of a command for the host the words are files.
     assert_eq!(options("me@box ls --ser", 3, "--ser"), "files");
@@ -296,6 +327,16 @@ fn fish_offers_the_commands_and_the_hosts() {
     };
     assert!(options("ssj install me@box --ser"));
     assert!(!options("ssj list me@box --ser"));
+    // `connect`: the hosts, the options before the host, and the command for the host after it
+    assert_eq!(case("ssj connect "), "boxa boxb");
+    assert_eq!(case("ssj connect --transport tcp "), "boxa boxb");
+    assert!(options("ssj connect --ser"));
+    // the values of options
+    assert_eq!(case("ssj --udp-host "), "boxa boxb");
+    assert_eq!(case("ssj attach me@box --udp-host "), "boxa boxb");
+    // the values of an option that the command does not read are not completed
+    assert_eq!(case("ssj install me@box --udp-host "), "");
+    assert!(!options("ssj connect me@box --ser"));
     assert!(options("ssj --ser"));
     assert!(!options("ssj me@box ls --ser"));
 }

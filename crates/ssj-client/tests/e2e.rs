@@ -50,6 +50,33 @@ fn no_config() -> &'static Path {
     })
 }
 
+/// The options that the command of `words` reads, among those that the helpers give every line:
+/// a command refuses the options of the connection, so each line gets only its own.
+fn reads(words: &[&str], option: &str) -> bool {
+    let id = option.trim_start_matches("--").replace('-', "_");
+    match words.iter().find(|w| {
+        matches!(
+            **w,
+            "list" | "attach" | "kill" | "detach" | "install" | "edit"
+        )
+    }) {
+        Some(word) => ssj_client::options::COMMAND_OPTIONS
+            .iter()
+            .any(|(name, ids)| name == word && ids.contains(&id.as_str())),
+        None => true,
+    }
+}
+
+/// The options of the helpers that the command of `words` reads.
+fn given(words: &[&str], options: &[&str]) -> Vec<String> {
+    options
+        .chunks(2)
+        .filter(|pair| reads(words, pair[0]))
+        .flatten()
+        .map(|w| (*w).to_owned())
+        .collect()
+}
+
 fn fake_ssh(script: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     // the first build of the server takes a minute on a slow machine, and a test that times itself
@@ -451,10 +478,18 @@ fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
         .env("XDG_CONFIG_HOME", no_config())
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", runtime)
-        .args(["--ssh-command", ssh.to_str().unwrap()])
-        .args(["--server-path", server_binary().to_str().unwrap()])
-        .args(["--udp-host", "127.0.0.1"])
-        .args(LEAK_GUARD)
+        .args(given(
+            words,
+            &[
+                "--ssh-command",
+                ssh.to_str().unwrap(),
+                "--server-path",
+                server_binary().to_str().unwrap(),
+                "--udp-host",
+                "127.0.0.1",
+            ],
+        ))
+        .args(given(words, &LEAK_GUARD))
         .args(words)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -865,13 +900,16 @@ impl Host {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
             .env("XDG_CACHE_HOME", &self.runtime)
-            .args([
-                "--ssh-command",
-                ssh.to_str().unwrap(),
-                "--udp-host",
-                "127.0.0.1",
-            ])
-            .args(LEAK_GUARD)
+            .args(given(
+                words,
+                &[
+                    "--ssh-command",
+                    ssh.to_str().unwrap(),
+                    "--udp-host",
+                    "127.0.0.1",
+                ],
+            ))
+            .args(given(words, &LEAK_GUARD))
             .args(words)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1276,12 +1314,15 @@ fn on_terminal(host: &Host, ssh: &Path, words: &[String]) -> OnTerminal {
         .env("XDG_CONFIG_HOME", &host.config)
         .env("XDG_RUNTIME_DIR", &host.runtime)
         .env("XDG_CACHE_HOME", &host.runtime)
-        .args([
-            "--ssh-command",
-            ssh.to_str().unwrap(),
-            "--udp-host",
-            "127.0.0.1",
-        ])
+        .args(given(
+            &words.iter().map(String::as_str).collect::<Vec<_>>(),
+            &[
+                "--ssh-command",
+                ssh.to_str().unwrap(),
+                "--udp-host",
+                "127.0.0.1",
+            ],
+        ))
         .args(words)
         .spawn(pts)
         .unwrap();
@@ -1873,8 +1914,15 @@ fn ssj_edit(config: &Path, editor: &Path, words: &[&str], input: &str) -> Output
         .env("XDG_CACHE_HOME", config)
         .env("EDITOR", editor)
         .env_remove("VISUAL")
-        .args(["--ssh-command", ssh.to_str().unwrap()])
-        .args(["--server-path", server_binary().to_str().unwrap()])
+        .args(given(
+            words,
+            &[
+                "--ssh-command",
+                ssh.to_str().unwrap(),
+                "--server-path",
+                server_binary().to_str().unwrap(),
+            ],
+        ))
         .args(words);
     let mut child = command
         .stdin(Stdio::piped())

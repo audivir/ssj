@@ -346,11 +346,35 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         println!("{text}");
         std::process::exit(0);
     }
-    let mut tail = Vec::new();
     let mut head = args;
+    let (mut first, mut second) = (first, second);
+    // `ssj connect HOST [COMMAND]...` is the plain connection, for a host that is named like a
+    // command and without the warning of a lone command word
+    let mut explicit = false;
+    if let Some(at) = first
+        && head[at] == "connect"
+    {
+        if second.is_none() {
+            return Err("usage: ssj connect user@host [COMMAND]...".to_owned());
+        }
+        head.remove(at);
+        [first, second] = positionals(&head);
+        explicit = true;
+    }
+    if !explicit
+        && second.is_none()
+        && let Some(at) = first
+        && let Some(hint) = lone_command_hint(&head[at])
+    {
+        eprintln!("ssj: warning: {hint}");
+    }
+    let mut tail = Vec::new();
+    let mut word = None;
     if let Some(first) = first {
-        let is_command = is_command_word(&head[first]) && second.is_some();
-        if !is_command {
+        let is_command = !explicit && is_command_word(&head[first]) && second.is_some();
+        if is_command {
+            word = Some(head[first].clone());
+        } else {
             tail = head.split_off(first + 1);
             if tail.first().is_some_and(|word| word == "--") {
                 tail.remove(0);
@@ -359,17 +383,22 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             }
         }
     }
-    let parsed = crate::options::command()
+    let command = crate::options::command();
+    let matches = match command
+        .clone()
         .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(head))
-        .and_then(|matches| Options::from_arg_matches(&matches));
-    let options = match parsed {
-        Ok(options) => options,
+    {
+        Ok(matches) => matches,
         Err(error) if error.use_stderr() => {
             return Err(error.render().to_string().trim_end().to_owned());
         }
         // help and version go to the output and end the program.
         Err(error) => error.exit(),
     };
+    if let Some(word) = &word {
+        foreign_option(&command, &matches, word)?;
+    }
+    let options = Options::from_arg_matches(&matches).map_err(|e| e.to_string())?;
     from_options(options, &tail)
 }
 
@@ -383,6 +412,12 @@ Lists the sessions on the host: id, state, age, protocol, and name. A terminal g
 
 Options:
       --json  print a JSON array instead"
+        }
+        "connect" => {
+            "Usage: ssj connect [OPTIONS] DESTINATION [COMMAND]...
+
+Connects to the host, as `ssj DESTINATION [COMMAND]...` does. The word is for a host that is
+named like a command of ssj (`ssj connect list`); it is no different otherwise."
         }
         "attach" => {
             "Usage: ssj attach [OPTIONS] DESTINATION [ID]
@@ -450,6 +485,49 @@ pub fn misplaced_option(word: &str) -> Option<String> {
              before the destination, or after `--` to run it on the host on purpose"
         )
     })
+}
+
+/// A hint for a command word that stands alone: it is the name of a host then, which is what
+/// someone who wanted the command does not mean.
+pub fn lone_command_hint(word: &str) -> Option<String> {
+    // `ssj edit` alone is the editor of `client.toml`
+    matches!(word, "list" | "attach" | "kill" | "detach" | "install").then(|| {
+        format!(
+            "`{word}` is taken as the name of a host, since no destination follows it; the command \
+             is `ssj {word} user@host`, and `ssj connect {word}` is the host without this warning"
+        )
+    })
+}
+
+/// The error for an option that the command does not read, as `--send-env` before `list`: the
+/// settings of the connection belong in `client.toml`.
+fn foreign_option(
+    command: &clap::Command,
+    matches: &clap::ArgMatches,
+    word: &str,
+) -> Result<(), String> {
+    use clap::parser::ValueSource;
+    let allowed = crate::options::COMMAND_OPTIONS
+        .iter()
+        .find(|(name, _)| *name == word)
+        .map_or(&[][..], |(_, ids)| *ids);
+    for arg in command.get_arguments() {
+        let id = arg.get_id().as_str();
+        // the positional words, the options that ssj gives itself, and the ones for help
+        if (arg.get_long().is_none() && arg.get_short().is_none())
+            || matches!(id, "complete" | "connected" | "batch" | "help" | "version")
+        {
+            continue;
+        }
+        if matches.value_source(id) == Some(ValueSource::CommandLine) && !allowed.contains(&id) {
+            return Err(format!(
+                "--{} is not an option of `ssj {word}` (a setting for every connection belongs in \
+                 client.toml, which `ssj edit` opens)",
+                id.replace('_', "-")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Words that are commands of `ssj` when a destination follows them.

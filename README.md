@@ -120,6 +120,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 | Command | What it does |
 | ---------------------------------------- | ---------------------------------------------------------------- |
 | `ssj user@host` | Starts a session. |
+| `ssj connect user@host` | The same, for a host that is named like a command (`ssj connect list`). |
 | `ssj --name work user@host` | Joins the session `work`, or starts it. |
 | `ssj attach user@host [ID]` | Joins a running session, for example after a restart. `ID` is an id or a name. |
 | `ssj list user@host` | Lists sessions with state, age, and name, under a header on a terminal. `--json` prints JSON. |
@@ -250,14 +251,17 @@ has no history: the shell shows its prompt again, and a full-screen program draw
   `ssj host ls -l`, `ssj host make -j4`. Options of `ssj` go before the host
   (`ssj --local-echo auto host make -j4`). A `--` after the host is optional.
 - The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) keep their options
-  after the host: `ssj list host --json`.
+  after the host: `ssj list host --json`. A command takes only the options that it reads (`ssj kill --help`, and the man page lists them); another option is an error, so that a setting for
+  every connection, such as `--send-env`, is not given to `list` by a wrapper but set in
+  `client.toml` (`ssj edit`).
 - The command has a terminal, as with `ssh -t`: its output has carriage returns, and a program
   can ask for the terminal size. Standard input goes to it as typed.
 - `--name` and `--auto-attach` are refused with a command, since a session that runs already
   would not run it.
 - A host named like one of the commands (`attach`, `list`, `kill`, `install`, `edit`) is written
-  before the dashes: `ssj attach -- ls` runs `ls` on the host `attach`, and `ssj attach ls`
-  attaches to a session on the host `ls`.
+  `ssj connect list` (with a command: `ssj connect list uptime`), or before the dashes: `ssj attach -- ls` runs `ls` on the host `attach`, and `ssj attach ls` attaches to a session on the host
+  `ls`. A command word with nothing after it, `ssj list`, is the host as well, and `ssj` warns
+  that it took it as one.
 
 ## Connection
 

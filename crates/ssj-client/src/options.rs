@@ -3,7 +3,7 @@
 //! here, and `cli::parse` checks it.
 
 use clap::builder::PossibleValuesParser;
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, ValueHint};
 
 /// The flags that have a counterpart which turns them off: the id of each, its name, and the
 /// line that the help shows for both.
@@ -97,7 +97,17 @@ pub const COMMAND_OPTIONS: [(&str, &[&str]); 6] = [
             "server_binary",
         ],
     ),
-    ("edit", &["verbose", "log_file", "ssh_command"]),
+    // the host runs the server to check `server.toml`
+    (
+        "edit",
+        &[
+            "verbose",
+            "log_file",
+            "ssh_command",
+            "server_path",
+            "server_arg",
+        ],
+    ),
 ];
 
 /// The command for parsing and for `--help`. The help shows a flag and its counterpart on one line
@@ -120,7 +130,7 @@ pub fn command() -> clap::Command {
     version,
     about = "A roaming remote shell that survives jumps",
     override_usage = "ssj [OPTIONS] [COMMAND] DESTINATION [ID]\n       ssj [OPTIONS] DESTINATION REMOTE-COMMAND...",
-    after_help = "Commands: list, attach DESTINATION [ID], kill DESTINATION [ID], detach DESTINATION [ID], install, edit [DESTINATION]. A word is a command only when a \
+    after_help = "Commands: connect DESTINATION [COMMAND]..., list, attach DESTINATION [ID], kill DESTINATION [ID], detach DESTINATION [ID], install, edit [DESTINATION]. A word is a command only when a \
                   destination follows it.\n\
                   DESTINATION is [user@]host[:port], ssh://[user@]host[:port], or an IPv6 address."
 )]
@@ -146,7 +156,7 @@ pub struct Options {
     pub force: bool,
 
     /// Write the -v output to this file and not to the terminal
-    #[arg(long, value_name = "FILE", overrides_with = "log_file")]
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, overrides_with = "log_file")]
     pub log_file: Option<String>,
 
     /// Join the session of this name, or start it
@@ -215,7 +225,7 @@ pub struct Options {
     pub ssh_command: Option<String>,
 
     /// Path of the server file on the host
-    #[arg(long, value_name = "PATH", overrides_with = "server_path")]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::AnyPath, overrides_with = "server_path")]
     pub server_path: Option<String>,
 
     /// Extra argument for ssj-server (repeatable)
@@ -243,11 +253,11 @@ pub struct Options {
     pub download_url: Option<String>,
 
     /// The server file to upload instead of the one from the release
-    #[arg(long, value_name = "FILE", overrides_with = "server_binary")]
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, overrides_with = "server_binary")]
     pub server_binary: Option<String>,
 
     /// Host name or address for UDP when it differs from the destination
-    #[arg(long, value_name = "HOST", overrides_with = "udp_host")]
+    #[arg(long, value_name = "HOST", value_hint = ValueHint::Hostname, overrides_with = "udp_host")]
     pub udp_host: Option<String>,
 
     /// One printable character, or none

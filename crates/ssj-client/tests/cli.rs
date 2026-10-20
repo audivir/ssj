@@ -177,8 +177,10 @@ fn subcommands_need_a_destination_after_them() {
             Command::Detach(vec!["work".to_owned(), "other".to_owned()]),
             "host",
         ),
+        // the options that the command reads may stand before it too
+        (vec!["-v", "list", "host", "--json"], Command::List, "host"),
         (
-            vec!["--escape-char", "none", "list", "host"],
+            vec!["--ssh-command", "ssh -J x", "list", "host"],
             Command::List,
             "host",
         ),
@@ -196,6 +198,61 @@ fn subcommands_need_a_destination_after_them() {
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
+}
+
+#[test]
+fn a_command_refuses_the_options_of_the_connection() {
+    // the setting belongs in client.toml, not before a command that does not read it
+    let message = args(&["--send-env=LC_THEME", "list", "host"]).unwrap_err();
+    assert!(
+        message.contains("--send-env is not an option of `ssj list`")
+            && message.contains("client.toml"),
+        "{message}"
+    );
+    assert!(args(&["--escape-char", "none", "list", "host"]).is_err());
+    assert!(args(&["kill", "host", "--json"]).is_err());
+    assert!(args(&["list", "host", "--force"]).is_err());
+    // the connection reads them
+    assert!(args(&["--send-env=LC_THEME", "host"]).is_ok());
+    assert!(args(&["--escape-char", "none", "attach", "host"]).is_ok());
+    assert!(args(&["--force", "kill", "host"]).is_ok());
+}
+
+#[test]
+fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
+    use ssj_client::cli::Command;
+
+    let parsed = args(&["connect", "list"]).unwrap();
+    assert_eq!(parsed.command, Command::Connect);
+    assert_eq!(parsed.destination, "list");
+    let parsed = args(&["connect", "host", "ls", "-l"]).unwrap();
+    assert_eq!(parsed.command, Command::Connect);
+    assert_eq!(parsed.destination, "host");
+    assert_eq!(parsed.remote_command.as_deref(), Some("ls -l"));
+    // the options of the connection, before the destination
+    let parsed = args(&["connect", "--send-env=LC_THEME", "host"]).unwrap();
+    assert_eq!(parsed.command, Command::Connect);
+    // a destination is needed
+    assert!(
+        args(&["connect"])
+            .unwrap_err()
+            .contains("usage: ssj connect")
+    );
+}
+
+#[test]
+fn a_lone_command_word_is_a_host_with_a_warning_that_names_the_way_out() {
+    use ssj_client::cli::lone_command_hint;
+    for word in ["list", "attach", "kill", "detach", "install"] {
+        let hint = lone_command_hint(word).unwrap();
+        assert!(hint.contains(&format!("ssj connect {word}")), "{hint}");
+        // the word alone is still the host
+        assert_eq!(args(&[word]).unwrap().destination, word);
+    }
+    // `ssj edit` alone is the editor, and other words are hosts
+    assert!(lone_command_hint("edit").is_none());
+    assert!(lone_command_hint("host").is_none());
+    assert!(lone_command_hint("connect").is_none());
 }
 
 #[test]

@@ -390,6 +390,11 @@ redraw.
   Bash when it is loaded, `__fish_print_hostnames` in Fish). The options are offered before the
   destination and after a command word, never after another destination (`ssj host ls -l`), and a
   value of an option such as `--name work` is not a destination.
+- The values of options are completed from what `clap` knows (the fixed values of `--transport`,
+  `--local-echo`, `--congestion`, and `--compress`, and the hints for files and hosts): files for
+  `--log-file`, `--server-path`, and `--server-binary`, the hosts of the ssh config for
+  `--udp-host`, and the sessions for `--name`. After the destination of a command only the options
+  that the command reads have their values completed.
 - `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
   section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left
@@ -1093,8 +1098,15 @@ The session starts the command and not an interactive shell, and ends with its e
   as asked; after an explicit `--` it does not warn.
 - The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) are the
   exception: when a second word follows a command word, the line is one of those commands, and
-  its options may stand anywhere (`ssj list host --json`). A host with the name of a command is
-  written `ssj attach -- ls` (a command word with nothing after it but the dashes).
+  its options may stand anywhere (`ssj list host --json`). A command takes only the options that
+  it reads (`COMMAND_OPTIONS` in `options.rs`): any other, such as `--send-env` before `list`, is
+  an error that points to `client.toml`. Before the command word the options are not known yet
+  to the completions, and the error comes when the line is parsed.
+- A host with the name of a command is written `ssj connect list`, the plain connection (`ssj connect HOST [COMMAND]...`, whose words after the destination are for the host, as without
+  `connect`), or `ssj attach -- ls` (a command word with nothing after it but the dashes). A
+  command word alone, `ssj list`, is the host as well, with a warning on the standard error that
+  names `ssj connect list`; `edit` alone is the editor and has none, and `connect` alone is a
+  usage error.
 - `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
   `attach`, since the shell of a session that runs already is not started again.
 

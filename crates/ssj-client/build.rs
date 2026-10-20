@@ -10,7 +10,17 @@ use clap_complete::Shell;
 mod options;
 
 /// The words that are commands when they stand first, and not hosts.
-const COMMANDS: &str = "list attach kill detach install edit";
+const COMMANDS: &str = "list attach kill detach install edit connect";
+
+/// The commands that keep their options after the destination: `connect` is the plain connection,
+/// whose words after the destination are for the command on the host.
+fn option_commands() -> String {
+    COMMANDS
+        .split(' ')
+        .filter(|word| *word != "connect")
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// What the options cannot show: the config files and the cache.
 const COMMAND: &str = r#".SH RUNNING A COMMAND
@@ -24,8 +34,9 @@ As with \fBssh\fR, everything after the destination belongs to the command, opti
 (\fBssj \-\-local\-echo auto host make \-j4\fR). A \fB\-\-\fR right after the destination is optional.
 .PP
 The commands of \fBssj\fR (\fBlist\fR, \fBattach\fR, \fBkill\fR, \fBdetach\fR, \fBinstall\fR, \fBedit\fR)
-keep their options after the destination: \fBssj list host \-\-json\fR. A host with the name of one
-of them is written \fBssj attach \-\- ls\fR.
+keep their options after the destination: \fBssj list host \-\-json\fR, and take only the options
+listed under COMMANDS. A host with the name of one of them is written \fBssj connect list\fR, or
+\fBssj attach \-\- ls\fR.
 "#;
 
 const FILES: &str = r#".SH FILES
@@ -201,6 +212,39 @@ fn main() {
     page.extend_from_slice(commands_page.as_bytes());
     page.extend_from_slice(FILES.as_bytes());
     fs::write(out.join("ssj.1"), page).expect("write the man page");
+    // the options before the destination of `ssj connect`: all of them but those of the commands
+    let all_options = dashed(
+        &command
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(str::to_owned))
+            .collect::<Vec<_>>(),
+    );
+    // what completes the value of each option, for the words after the destination of a command
+    let zsh_values = command
+        .get_arguments()
+        .filter(|arg| arg.get_action().takes_values())
+        .filter_map(|arg| {
+            let long = arg.get_long()?;
+            let possible: Vec<String> = arg
+                .get_possible_values()
+                .iter()
+                .map(|value| value.get_name().to_owned())
+                .collect();
+            let action = if long == "name" {
+                "_ssj_sessions".to_owned()
+            } else if !possible.is_empty() {
+                format!("compadd -- {}", possible.join(" "))
+            } else {
+                match arg.get_value_hint() {
+                    clap::ValueHint::FilePath | clap::ValueHint::AnyPath => "_files".to_owned(),
+                    clap::ValueHint::Hostname => "_ssj_hosts".to_owned(),
+                    _ => return None,
+                }
+            };
+            Some(format!("        --{long}) {action}; return 0 ;;"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     // the arms of the `case` of Bash and of the `switch` of Fish
     let bash_cases = command_longs
         .iter()
@@ -248,11 +292,13 @@ fn main() {
             &dynamic(shell)
                 .replace("__VALUE_OPTIONS__", &value_options)
                 .replace("__COMMANDS__", COMMANDS)
-                .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|"))
+                .replace("__COMMAND_PATTERN__", &option_commands().replace(' ', "|"))
                 .replace("__BASH_OPTION_CASES__", &bash_cases)
                 .replace("__FISH_OPTION_CASES__", &fish_cases),
         );
         if shell == Shell::Zsh {
+            // the hosts of the ssh config for the hosts of options
+            text = text.replace(":HOST:_hosts'", ":HOST:_ssj_hosts'");
             // the names of the sessions for `--name`.
             text = text.replace(
                 "--name=[Join the session of this name, or start it]:NAME:_default",
@@ -267,9 +313,30 @@ fn main() {
             let helpers = r#"_ssj_sessions() { local -a s; s=(${(f)"$(ssj --complete 2>/dev/null)"}); compadd -a s; }
 # the aliases of `~/.ssh/config` (`Host merk-c1-mac5`) are known to `_ssh_hosts`, not to `_hosts`
 _ssj_hosts() { if (( $+functions[_ssh_hosts] )); then _ssh_hosts; else _hosts; fi; }
+# the value of the option before the word being completed, which stands after the destination
+_ssj_option_value() {
+    case $words[CURRENT-1] in
+__VALUE_CASES__
+        *) return 1 ;;
+    esac
+}
 _ssj_words() {
     if (( CURRENT == 1 )); then
         _alternative 'commands:command:compadd __COMMANDS__' 'hosts:host:_ssj_hosts'
+        return
+    fi
+    # `ssj connect [OPTIONS] HOST COMMAND...`: the options and the host, and then the command for it
+    if [[ $words[1] == connect ]]; then
+        _ssj_option_value && return
+        local -a pos; local skip= w
+        for w in ${words[2,CURRENT-1]}; do
+            if [[ -n $skip ]]; then skip=
+            elif [[ $w == -* ]]; then [[ " __VALUE_OPTIONS__ " == *" $w "* ]] && skip=1
+            else pos+=($w); fi
+        done
+        if (( $#pos > 0 )); then _files
+        elif [[ $PREFIX == -* ]]; then compadd -- __ALL_OPTIONS__
+        else _ssj_hosts; fi
         return
     fi
     # `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
@@ -280,6 +347,8 @@ _ssj_words() {
     if [[ $words[1] == (__COMMAND_PATTERN__) ]]; then
         # the options of a command may stand after the destination (`ssj install host --server-binary`)
         local -A opts=(__OPTION_TABLE__)
+        # the value of an option that the command reads
+        [[ " ${opts[$words[1]]} " == *" $words[CURRENT-1] "* ]] && _ssj_option_value && return
         if [[ $PREFIX == -* ]]; then compadd -- ${=opts[$words[1]]}; return; fi
         if (( CURRENT == 2 )); then
             _ssj_hosts
@@ -303,8 +372,11 @@ _ssj_words() {
                 .join(" ");
             let helpers = helpers
                 .replace("__OPTION_TABLE__", &table)
+                .replace("__ALL_OPTIONS__", &all_options)
+                .replace("__VALUE_CASES__", &zsh_values)
+                .replace("__VALUE_OPTIONS__", &value_options)
                 .replace("__COMMANDS__", COMMANDS)
-                .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|"));
+                .replace("__COMMAND_PATTERN__", &option_commands().replace(' ', "|"));
             // `#compdef` must stay the first line, or the completion is not found.
             text = match text.split_once('\n') {
                 Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
@@ -350,12 +422,25 @@ _ssj_sessions() {
         fi
     done
     COMPREPLY=()
+    # `ssj connect [OPTIONS] HOST COMMAND...`: the plain connection, for the host and its command
+    local connect=
+    if [[ ${pos[0]-} == connect ]]; then
+        connect=1
+        pos=("${pos[@]:1}")
+    fi
+    # the options that the command reads
+    local opts=
+    case ${pos[0]-} in
+__BASH_OPTION_CASES__
+    esac
     # the value of an option: the names of the sessions for `--name`, else what the options know
     case ${pos[0]-} in
         ''|__COMMAND_PATTERN__)
-            if [[ $value_options == *" $previous "* ]]; then
+            if [[ $value_options == *" $previous "* && ( -z ${pos[0]-} || " $opts " == *" $previous "* ) ]]; then
                 if [[ $previous == --name ]]; then
                     COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
+                elif [[ $previous == --udp-host ]] && declare -F _known_hosts_real >/dev/null; then
+                    _known_hosts_real -- "$current"
                 else
                     _ssj "$1" "$current" "$previous"
                 fi
@@ -366,22 +451,25 @@ _ssj_sessions() {
     # the options stand before the destination, or after a command word: the words after any other
     # destination are for the command on the host (`ssj host ls -l`)
     if [[ $current == -* ]]; then
-        local opts=
-        case ${pos[0]-} in
-            '') _ssj "$1" "$current" "$previous"; return ;;
-__BASH_OPTION_CASES__
-            *) return ;;
-        esac
+        # after the destination of `connect` the dashes are for the host
+        [[ -z $connect || ${#pos[@]} -eq 0 ]] || return
+        [[ -z $connect ]] || { _ssj "$1" "$current" "$previous"; return; }
+        if [[ -z ${pos[0]-} ]]; then
+            _ssj "$1" "$current" "$previous"
+            return
+        fi
         COMPREPLY=($(compgen -W "$opts" -- "$current"))
         return
     fi
     local hosts=
     case ${#pos[@]} in
         0)
-            COMPREPLY=($(compgen -W "__COMMANDS__" -- "$current"))
+            [[ -n $connect ]] || COMPREPLY=($(compgen -W "__COMMANDS__" -- "$current"))
             hosts=1
             ;;
         *)
+            # the words after the destination of `connect` are for the host
+            [[ -z $connect ]] || return
             case ${pos[0]} in
                 __COMMAND_PATTERN__)
                     if [[ ${#pos[@]} -eq 1 ]]; then
@@ -424,7 +512,7 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
         Shell::Fish => {
             r#"
 # the words that are neither options nor the values of options, without the one being typed
-function __ssj_words
+function __ssj_raw_words
     set -l tokens (commandline -opc)
     set -e tokens[1]
     set -l skip 0
@@ -446,6 +534,21 @@ function __ssj_words
         end
     end
 end
+# `ssj connect [OPTIONS] HOST COMMAND...` is the plain connection: the word is left out, and the
+# destination is the first word then
+function __ssj_connect
+    set -l words (__ssj_raw_words)
+    test (count $words) -ge 1; and test "$words[1]" = connect
+end
+function __ssj_words
+    set -l words (__ssj_raw_words)
+    if test (count $words) -ge 1; and test "$words[1]" = connect
+        set -e words[1]
+    end
+    if test (count $words) -gt 0
+        printf '%s\n' $words
+    end
+end
 # the options stand anywhere before the destination, and after a command word only those that the
 # command reads: the words after any other destination are for the command on the host
 # (`ssj host ls -l`)
@@ -453,6 +556,9 @@ function __ssj_option_allowed
     set -l words (__ssj_words)
     if test (count $words) -eq 0
         return 0
+    end
+    if __ssj_connect
+        return 1
     end
     switch $words[1]
 __FISH_OPTION_CASES__
@@ -462,10 +568,11 @@ __FISH_OPTION_CASES__
 end
 function __ssj_wants_host
     set -l words (__ssj_words)
-    test (count $words) -eq 1; and contains -- $words[1] __COMMANDS__
+    not __ssj_connect; and test (count $words) -eq 1; and contains -- $words[1] __COMMANDS__
 end
 function __ssj_wants_sessions
     set -l words (__ssj_words)
+    not __ssj_connect; or return 1
     test (count $words) -ge 2; and test $words[2] != --; or return 1
     switch $words[1]
         case attach
@@ -485,7 +592,7 @@ function __ssj_sessions_of_host
     end
 end
 complete -c ssj -n '__ssj_wants_sessions' -f -a '(__ssj_sessions_of_host)'
-complete -c ssj -n 'test (count (__ssj_words)) -eq 0' -f -a '__COMMANDS__'
+complete -c ssj -n 'test (count (__ssj_words)) -eq 0; and not __ssj_connect' -f -a '__COMMANDS__'
 complete -c ssj -n 'test (count (__ssj_words)) -eq 0' -f -a '(__fish_print_hostnames)'
 complete -c ssj -n '__ssj_wants_host' -f -a '(__fish_print_hostnames)'
 complete -c ssj -n '__ssj_option_allowed name' -l name -x -a '(ssj --complete 2>/dev/null)'
