@@ -79,7 +79,7 @@ repos:
     hooks:
       - id: shellcheck
         files: ^(\.zshrc|\.bashrc|\.env|.*\.sh)$
-  # python (bench/): lint and format with ruff.toml, types with mypy.ini
+  # python (bench/): lint and format with bench/ruff.toml, types with bench/mypy.ini
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.1
     hooks:
@@ -90,6 +90,7 @@ repos:
     rev: v2.4.0
     hooks:
       - id: mypy
+        args: [--config-file=bench/mypy.ini]
   - repo: local
     hooks:
       - id: clippy

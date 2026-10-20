@@ -50,4 +50,4 @@ ban-relative-imports = "all"
 # The scripts of bench/ are command line tools (they print with `# ruff: noqa: T201`): they start
 # the programs they measure, and the jitter between keystrokes does not need a secure random number.
 # S603/S606/S607: starting programs, S311: random, INP001: not a package
-"bench/*.py" = ["INP001", "S311", "S603", "S606", "S607"]
+"*.py" = ["INP001", "S311", "S603", "S606", "S607"]
