@@ -582,7 +582,10 @@ impl<B: Backend> Session<B> {
                         }
                         Control::Resize(size) => pending_resize = Some(size),
                         Control::OutputAck(offset) => {
-                            if output.ack(offset).is_err() {
+                            // output that this connection has not sent cannot be acknowledged,
+                            // and dropping it would leave the send position behind the buffer.
+                            let unsent = active.as_ref().is_some_and(|a| offset > a.output_sent);
+                            if unsent || output.ack(offset).is_err() {
                                 violation(&mut active, &events, ErrorCode::Violation);
                                 detached_since = Some(Instant::now());
                             }

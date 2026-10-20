@@ -244,6 +244,8 @@ pub fn run_parent(args: &Args) -> ExitCode {
         return report_child_failure(&mut child);
     };
     if parse_connect(&reply).ok().flatten().is_none() {
+        // a child that printed something else may still run, and waiting for it would hang.
+        let _ = child.kill();
         return report_child_failure(&mut child);
     }
     let mut out = std::io::stdout();

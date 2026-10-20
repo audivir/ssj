@@ -91,6 +91,9 @@ impl Remote {
 }
 
 /// Runs `command` through `ssh` with `stdin` as its input and collects the output.
+/// Most error output of `ssh` that is read.
+const MAX_ERROR_OUTPUT: usize = 4096;
+
 pub async fn run_remote_command(
     args: &Args,
     command: &str,
@@ -131,8 +134,15 @@ pub async fn run_remote_command(
 
     let mut input = child.stdin.take().expect("piped");
     let mut stdout = child.stdout.take().expect("piped").take(MAX_OUTPUT as u64);
-    let mut stderr = child.stderr.take().expect("piped").take(4096);
+    let mut stderr = child
+        .stderr
+        .take()
+        .expect("piped")
+        .take(MAX_ERROR_OUTPUT as u64);
     let (mut out, mut err) = (Vec::new(), Vec::new());
+    // a process that has more to say than is read blocks on its full pipe and never ends, so
+    // the end of the reading that is cut short stops it.
+    let too_much = tokio::sync::Notify::new();
     let finished = timeout(BOOTSTRAP_TIMEOUT, async {
         // writing and reading run side by side, so that a large upload cannot block on output.
         let write = async move {
@@ -140,11 +150,27 @@ pub async fn run_remote_command(
             let _ = input.write_all(&stdin).await;
             drop(input);
         };
-        let _ = tokio::join!(
-            write,
-            stdout.read_to_end(&mut out),
-            stderr.read_to_end(&mut err)
-        );
+        let read_out = async {
+            let _ = stdout.read_to_end(&mut out).await;
+            if out.len() >= MAX_OUTPUT {
+                too_much.notify_one();
+            }
+        };
+        let read_err = async {
+            let _ = stderr.read_to_end(&mut err).await;
+            if err.len() >= MAX_ERROR_OUTPUT {
+                too_much.notify_one();
+            }
+        };
+        let reading = async { tokio::join!(write, read_out, read_err) };
+        tokio::pin!(reading);
+        tokio::select! {
+            _ = &mut reading => {}
+            () = too_much.notified() => {
+                let _ = child.start_kill();
+                (&mut reading).await;
+            }
+        }
         child.wait().await
     })
     .await;

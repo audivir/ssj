@@ -29,6 +29,9 @@
 #   PROBE=1                       no ssj: measure what `ssh -W` does to two small writes in a row
 #                                 (bench/wprobe.py), at several gaps
 #   CPUS=1                        limit each container to this many CPUs (a small cloud machine)
+#   SERVER_SYSCTL=net.ipv4.tcp_congestion_control=bbr
+#                                 sysctl of the server container (the sender of the output, so the
+#                                 congestion control of the TCP that `ssh` carries)
 #   UDPSTAT=1                     print the UDP counters of the client container before and after
 #                                 (RcvbufErrors counts datagrams that a full socket buffer dropped)
 #   TRACE=1                       print the socket options that sshd sets (TCP_NODELAY and such)
@@ -44,7 +47,10 @@ CAPTURE=${CAPTURE:-0}
 TRACE=${TRACE:-0}
 UDPSTAT=${UDPSTAT:-0}
 CPUS=${CPUS:-}
+SERVER_SYSCTL=${SERVER_SYSCTL:-}
 cpu_args=
+server_args=
+[ -n "$SERVER_SYSCTL" ] && server_args="--sysctl $SERVER_SYSCTL"
 [ -n "$CPUS" ] && cpu_args="--cpus $CPUS"
 CLIENT_LOG=${CLIENT_LOG:-0}
 PROBE=${PROBE:-0}
@@ -93,7 +99,7 @@ sshd='/usr/sbin/sshd -D -e'
 publish=
 [ "$CLIENT" = host ] && publish='-p 127.0.0.1::22'
 # shellcheck disable=SC2086
-docker run -d --name "$name-server" $cpu_args $publish --network "$name" --hostname server --cap-add NET_ADMIN --cap-add SYS_PTRACE -v "$PWD":/src:ro \
+docker run -d --name "$name-server" $cpu_args $server_args $publish --network "$name" --hostname server --cap-add NET_ADMIN --cap-add SYS_PTRACE -v "$PWD":/src:ro \
     -e NETEM="$NETEM" -v "$TARGET_VOLUME":/target:ro -v "$keys/id.pub":/id.pub:ro "$IMAGE" sh -c "
 $install
 mkdir -p /run/sshd /root/.ssh

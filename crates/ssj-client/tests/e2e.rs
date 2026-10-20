@@ -1144,6 +1144,19 @@ fn unsupported_systems_and_a_missing_server_file_are_explained() {
 }
 
 #[test]
+fn a_host_that_prints_without_end_does_not_hang_the_client() {
+    let host = host();
+    let ssh = fake_ssh("#!/bin/sh\nexec yes\n");
+    let began = std::time::Instant::now();
+    let output = host.ssj(&ssh, &["list", "user@localhost"], "");
+    assert_ne!(output.status.code(), Some(0));
+    assert!(
+        began.elapsed() < Duration::from_secs(60),
+        "the client waited for a process that never ends"
+    );
+}
+
+#[test]
 fn listing_and_attaching_to_a_host_without_the_server_say_so() {
     let host = host();
     let ssh = fake_ssh(FAKE_SSH);

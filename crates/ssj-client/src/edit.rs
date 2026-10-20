@@ -35,7 +35,7 @@ pub const CLIENT_TEMPLATE: &str = "\
 # auto_attach = false             # join the only session without a client
 # local_echo = \"off\"              # \"off\" or \"auto\": show typed characters at once
 # compress = \"off\"                # \"off\" or \"auto\": compress while the link is the limit
-# congestion = \"bbr\"              # \"bbr\" or \"cubic\"
+# congestion = \"auto\"             # \"auto\", \"bbr\", or \"cubic\"
 # forward_agent = false           # let programs on the host use your ssh agent
 ";
 
@@ -48,7 +48,7 @@ pub const SERVER_TEMPLATE: &str = "\
 # replay_capacity = 4194304        # bytes of output kept for a client that is away
 # slow_client = \"drop\"             # \"drop\" or \"wait\"
 # compress = \"off\"                 # \"off\" or \"auto\"
-# congestion = \"bbr\"               # \"bbr\" or \"cubic\"
+# congestion = \"auto\"              # \"auto\", \"bbr\", or \"cubic\"
 # live_backlog = 1048576           # bytes that may wait for a connected client (drop)
 # away_after = 10                  # seconds a silent client may block the output (wait)
 # shell = \"/bin/zsh\"               # default: $SHELL

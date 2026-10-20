@@ -878,6 +878,31 @@ async fn a_job_runs_to_its_end_while_no_client_is_connected() {
     let _ = std::fs::remove_file(&marker);
 }
 
+// an acknowledgement of output that the connection has not sent yet is a violation of the
+// connection, and must not make the session fail when it sends on.
+#[tokio::test]
+async fn an_ack_of_output_that_was_not_sent_ends_the_connection_and_not_the_session() {
+    let marker = marker();
+    let harness = start(job_config(&marker, 1024 * 1024));
+    let mut client = harness.connect().await;
+    client.start().await;
+
+    // the client reads nothing, so little is sent while the buffer fills up.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    client.send(ClientFrame::OutputAck(512 * 1024)).await;
+    let seen = client.read_until(|_| false).await;
+    assert_eq!(seen.error, Some(ErrorCode::Violation));
+    assert!(seen.closed);
+
+    // the session lives: a new client attaches and gets output.
+    let mut again = harness.connect().await;
+    again
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    let seen = again.read_until(|s| !s.output.is_empty()).await;
+    assert!(!seen.output.is_empty());
+}
+
 // while somebody acknowledges, nothing may be forgotten, however slow that client is.
 #[tokio::test]
 async fn a_connected_client_gets_backpressure_and_loses_nothing() {
