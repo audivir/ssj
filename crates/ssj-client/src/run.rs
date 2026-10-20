@@ -102,6 +102,10 @@ const SPARE_AFTER: Duration = Duration::from_secs(3);
 /// path has lost its first packets and retries them with growing pauses, so a fresh one finds a
 /// returning network sooner than an old one does.
 const SPARE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Spares that open at the same time. A connection started on a dead path loses its first packets
+/// and may not open for seconds, so a new one starts every second while the stream lags, and the
+/// first to open wins (the same idea as asking two servers and taking the faster answer).
+const SPARES_AT_ONCE: usize = 3;
 /// Pause after a spare that failed outright, so that a broken login does not become a loop.
 const SPARE_PAUSE: Duration = Duration::from_secs(2);
 /// A change of network produces many notifications. One reaction follows when they stop.
@@ -2105,7 +2109,9 @@ impl Client {
         // QUIC tried again on a new network while the session runs over a stream.
         let mut upgrade: Option<Upgrade> = None;
         // a second connection over the same stream transport, opened while the stream is silent.
-        let mut spare: Option<Upgrade> = None;
+        let mut spares: tokio::task::JoinSet<
+            Result<Result<Link, String>, tokio::time::error::Elapsed>,
+        > = tokio::task::JoinSet::new();
         let mut spare_not_before = Instant::now();
         // when to make the program draw again, after debug lines were written over the screen.
         let mut redraw_at: Option<tokio::time::Instant> = None;
@@ -2319,25 +2325,26 @@ impl Client {
                         ),
                     }
                 }
-                result = async { spare.as_mut().expect("guarded").await }, if spare.is_some() => {
-                    spare = None;
-                    match result {
-                        Ok(Ok(better)) => {
+                Some(joined) = spares.join_next(), if !spares.is_empty() => {
+                    match joined {
+                        Ok(Ok(Ok(better))) => {
                             // the stream may have come back while the spare was opening, and then
                             // it is the better one: nothing is in flight on it that a move
                             // would have to repeat.
                             if self.lag(link) < SPARE_AFTER / 2 {
-                                vlog!(1, "the spare connection is open, but the stream answers again: keeping the stream");
+                                vlog!(1, "a spare connection is open, but the stream answers again: keeping the stream");
+                                spares.abort_all();
                             } else {
-                                vlog!(1, "the spare connection is open: moving to it");
+                                vlog!(1, "a spare connection is open: moving to it");
                                 return Ok(Pumped::Switch(better, self.current));
                             }
                         }
-                        Ok(Err(error)) => {
-                            vlog!(1, "the spare connection failed: {error}");
+                        Ok(Ok(Err(error))) => {
+                            vlog!(1, "a spare connection failed: {error}");
                             spare_not_before = Instant::now() + SPARE_PAUSE;
                         }
-                        Err(_) => vlog!(1, "the spare connection did not open in time: trying a new one"),
+                        Ok(Err(_)) => vlog!(1, "a spare connection did not open in time"),
+                        Err(_) => {}
                     }
                 }
                 () = async { tokio::time::sleep_until(redraw_at.expect("guarded")).await }, if redraw_at.is_some() => {
@@ -2366,7 +2373,7 @@ impl Client {
                     // would hang, so a long silence ends it and a new one is made.
                     // not while a spare is opening, which would lose its progress, but not for ever:
                     // a transport that never opens has to give way to the next one.
-                    let patience = if spare.is_some() {
+                    let patience = if !spares.is_empty() {
                         self.params.stream_dead_after * 3
                     } else {
                         self.params.stream_dead_after
@@ -2377,16 +2384,21 @@ impl Client {
                     }
                     if link.quic.is_none() {
                         if lag > SPARE_AFTER
-                            && spare.is_none()
+                            && spares.len() < SPARES_AT_ONCE
                             && upgrade.is_none()
                             && Instant::now() >= spare_not_before
                         {
-                            vlog!(1, "no answer for {lag:?} on a stream: opening a spare connection");
+                            vlog!(
+                                1,
+                                "no answer for {lag:?} on a stream: opening a spare connection ({} open)",
+                                spares.len()
+                            );
                             let attempt = self.prepare_link(self.current);
-                            spare = Some(Box::pin(timeout(SPARE_TIMEOUT, attempt)));
-                        } else if lag < SPARE_AFTER / 2 && spare.is_some() {
-                            vlog!(1, "the stream answers again: dropping the spare connection");
-                            spare = None;
+                            spares.spawn(timeout(SPARE_TIMEOUT, attempt));
+                        } else if lag < SPARE_AFTER / 2 && !spares.is_empty() {
+                            vlog!(1, "the stream answers again: dropping the spare connections");
+                            spares.abort_all();
+                            while spares.try_join_next().is_some() {}
                         }
                     }
                     if silent > stall_after {
