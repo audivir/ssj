@@ -112,7 +112,10 @@ pub struct Args {
     pub remote_command: Option<String>,
     /// Host name or address for the UDP connection when it differs from the destination.
     pub udp_host: Option<String>,
+    /// The patterns of the config file, or the default ones.
     pub send_env: EnvFilter,
+    /// The patterns of `--send-env`. They come on top of `send_env` and of the `SendEnv` of `ssh`.
+    pub send_env_add: Vec<String>,
     /// Overrides the setting of the config file.
     pub auto_install: Option<AutoInstall>,
     /// Where the release files are; the default comes from the repository of the package.
@@ -145,8 +148,8 @@ pub struct Args {
     pub log_file: Option<PathBuf>,
     /// Never prompt and give up early: for refreshes that nobody waits for.
     pub batch: bool,
-    /// Which of `ssh_command`, `escape`, and `send_env` the command line set, since the config
-    /// file only fills in the others.
+    /// Which of `ssh_command` and `escape` (and the others below) the command line set, since the
+    /// config file only fills in the rest.
     pub explicit: Explicit,
 }
 
@@ -156,7 +159,6 @@ pub struct Explicit {
     pub ssh_command: bool,
     pub escape: bool,
     pub detach_key: bool,
-    pub send_env: bool,
     pub transport: bool,
     pub auto_attach: bool,
     pub forward_agent: bool,
@@ -177,6 +179,7 @@ impl Args {
             remote_command: None,
             udp_host: None,
             send_env: EnvFilter::default_patterns(),
+            send_env_add: Vec::new(),
             auto_install: None,
             download_url: None,
             server_binary: None,
@@ -227,9 +230,7 @@ impl Args {
         if !self.explicit.transport {
             self.transport = config.transport;
         }
-        if !self.explicit.send_env {
-            self.send_env = config.send_env.clone();
-        }
+        self.send_env = config.send_env.clone();
         if self.auto_install.is_none() {
             self.auto_install = Some(config.auto_install);
         }
@@ -616,12 +617,8 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
             .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
         (parsed.target(), parsed.port)
     };
-    let send_env_set = !options.send_env.is_empty();
-    let send_env = if send_env_set {
-        EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?
-    } else {
-        EnvFilter::default_patterns()
-    };
+    // only checked here: the patterns are added to the others when the session starts.
+    EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?;
     Ok(Args {
         command,
         destination: target,
@@ -631,7 +628,6 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
             ssh_command: options.ssh_command.is_some(),
             escape: options.escape_char.is_some(),
             detach_key: options.detach_key.is_some(),
-            send_env: send_env_set,
             transport: transport.is_some(),
             auto_attach: auto_attach.is_some(),
             forward_agent: forward_agent.is_some(),
@@ -644,7 +640,8 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
         server_args,
         remote_command,
         udp_host: options.udp_host,
-        send_env,
+        send_env: EnvFilter::default_patterns(),
+        send_env_add: options.send_env.clone(),
         auto_install,
         download_url: options.download_url,
         server_binary: options.server_binary.map(PathBuf::from),

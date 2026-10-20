@@ -117,7 +117,9 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     flags.apply_config(&config);
     assert_eq!(flags.ssh_command, ["other-ssh"]);
     assert_eq!(flags.escape, None);
-    assert!(flags.send_env.matches("X") && !flags.send_env.matches("ONLY"));
+    // --send-env comes on top of the file and does not replace it.
+    assert!(flags.send_env.matches("ONLY") && !flags.send_env.matches("X"));
+    assert_eq!(flags.send_env_add, ["X"]);
     assert_eq!(flags.auto_install, Some(AutoInstall::Never));
 
     let mut one = args(&["--escape-char", "!", "host"]);

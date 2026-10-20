@@ -631,3 +631,11 @@ fn an_option_after_the_destination_gets_a_hint_and_a_command_does_not() {
     let parsed = args(&["host", "--install"]).unwrap();
     assert_eq!(parsed.remote_command.as_deref(), Some("--install"));
 }
+
+#[test]
+fn send_env_adds_to_the_default_patterns_and_does_not_replace_them() {
+    let parsed = args(&["--send-env", "LC_THEME", "--send-env", "EDITOR", "host"]).unwrap();
+    assert_eq!(parsed.send_env_add, ["LC_THEME", "EDITOR"]);
+    assert!(parsed.send_env.matches("TERM") && parsed.send_env.matches("LANG"));
+    assert!(args(&["--send-env", "A-B", "host"]).is_err());
+}

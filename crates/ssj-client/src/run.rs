@@ -264,11 +264,21 @@ fn agent_socket(args: &Args) -> Result<Option<PathBuf>, String> {
     }
 }
 
-/// Selected variables of the local environment.
-fn local_env(args: &Args) -> Result<Env, String> {
+/// Selected variables of the local environment: the configured or default patterns, those of
+/// `--send-env`, and those of `SendEnv` in the config of `ssh`, which sends them too.
+async fn local_env(args: &Args) -> Result<Env, String> {
+    let from_ssh = crate::bootstrap::ssh_send_env(args).await;
+    vlog!(2, "SendEnv of ssh: {from_ssh:?}");
+    let own = args.send_env_add.iter().cloned();
+    let filter = args
+        .send_env
+        .extended(own.clone().chain(from_ssh))
+        // too many patterns with those of ssh: the own ones are the user's choice.
+        .or_else(|_| args.send_env.extended(own))
+        .map_err(|e| format!("--send-env: {e:?}"))?;
     let vars = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
-    selected_env(vars, &args.send_env)
+    selected_env(vars, &filter)
 }
 
 /// The variables that `filter` selects, and always `TERM`: the shell needs the terminal type
@@ -1067,7 +1077,7 @@ async fn connect_session(
     let identity = Identity::generate();
     let prepared = async {
         let fingerprint = identity.fingerprint();
-        let env = local_env(&args)?;
+        let env = local_env(&args).await?;
         let agent = agent_socket(&args)?;
         let prestart = fresh.then(|| Prestart {
             size: window_size(),

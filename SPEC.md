@@ -1159,11 +1159,18 @@ always draws over a clean place.
 Works like `SendEnv` and `AcceptEnv` in `ssh`: the client selects variables, the server filters
 them.
 
-- Client: `--send-env PATTERN` (repeatable, shell-style `*` and `?`) selects variables from the
-  local environment. The default is `TERM`, `LANG`, and `LC_*`. `TERM` is always sent, whatever
-  the patterns say, as `ssh` sends it with the request for the terminal: a shell without it takes
-  the terminal for a dumb one, and the prompt and the line editor draw wrongly. A pattern list
-  (`--send-env LC_THEME`, or `send_env` in `client.toml`) replaces `LANG` and `LC_*`, not `TERM`.
+- Client: the variables sent are those that match any of these patterns (shell-style `*` and `?`),
+  and `TERM`:
+  - `send_env` of `client.toml`, or `TERM`, `LANG`, and `LC_*` when the file has none (the file
+    replaces this default, so `send_env = []` sends nothing but `TERM`);
+  - every `--send-env PATTERN` of the command line (repeatable), which comes on top, as `SendEnv`
+    does in `ssh`;
+  - the `SendEnv` patterns that `ssh` has for the destination, from its command line,
+    `~/.ssh/config`, and the system files, read with `ssh -G` (2 seconds at most, only when the
+    command is `ssh`, and an answer that fails is no patterns). So a variable that `ssh` would send
+    is sent by `ssj` too.
+    `TERM` is always sent, as `ssh` sends it with the request for the terminal: a shell without it
+    takes the terminal for a dumb one, and the prompt and the line editor draw wrongly.
 - Server: the accepted names come from the server config file (`server.toml` in the config
   directory below, key `accept_env`), with the same default. They are never taken from the command line that the
   client passes through `ssh`, since that would let the client override the filter.

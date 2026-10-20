@@ -46,6 +46,17 @@ impl EnvFilter {
         Ok(Self(patterns))
     }
 
+    /// This list followed by `more`, without a pattern twice.
+    pub fn extended(&self, more: impl IntoIterator<Item = String>) -> Result<Self, PatternError> {
+        let mut patterns = self.0.clone();
+        for pattern in more {
+            if !patterns.contains(&pattern) {
+                patterns.push(pattern);
+            }
+        }
+        Self::new(patterns)
+    }
+
     /// `TERM`, `LANG`, and `LC_*`.
     pub fn default_patterns() -> Self {
         Self(vec!["TERM".into(), "LANG".into(), "LC_*".into()])
