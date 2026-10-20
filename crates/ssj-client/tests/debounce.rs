@@ -15,7 +15,7 @@ fn a_burst_gives_one_size_after_it_stops_and_it_is_the_last() {
     let start = Instant::now();
     assert_eq!(debounce.due(), None);
 
-    // a new size every 20 ms keeps pushing the due time out
+    // a new size every 20 ms keeps pushing the due time out.
     for i in 0..10u64 {
         let now = start + Duration::from_millis(20 * i);
         debounce.push(size(30 + i as u16), now);

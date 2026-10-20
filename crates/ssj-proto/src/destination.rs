@@ -74,7 +74,7 @@ pub fn parse(text: &str) -> Result<Destination, DestinationError> {
         return Err(DestinationError::Empty);
     }
     let rest = text.strip_prefix("ssh://").unwrap_or(text);
-    // the address form of a URI may end with a slash
+    // the address form of a URI may end with a slash.
     let rest = if rest.len() < text.len() {
         rest.strip_suffix('/').unwrap_or(rest)
     } else {
@@ -119,7 +119,7 @@ fn split_host_port(text: &str) -> Result<(String, Option<u16>), DestinationError
             }
             Ok((host.to_owned(), Some(parse_port(port)?)))
         }
-        // more colons: an IPv6 address without brackets, which has no room for a port
+        // more colons: an IPv6 address without brackets, which has no room for a port.
         _ => valid_v6(text)
             .then(|| (text.to_owned(), None))
             .ok_or(DestinationError::BadHost),

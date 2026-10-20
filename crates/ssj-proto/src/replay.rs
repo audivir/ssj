@@ -103,7 +103,7 @@ impl ReplayBuffer {
         let skip = (offset - self.start) as usize;
         let len = max.min(self.data.len() - skip);
         let mut out = Vec::with_capacity(len);
-        // the ring is at most two slices, which are copied as blocks and not byte by byte
+        // the ring is at most two slices, which are copied as blocks and not byte by byte.
         let (front, back) = self.data.as_slices();
         if skip < front.len() {
             let take = len.min(front.len() - skip);

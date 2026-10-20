@@ -69,7 +69,7 @@ fn the_session_id_travels_to_the_daemon_and_is_checked() {
     assert!(args(&[]).unwrap().session_id.is_none());
 }
 
-// The daemon must behave exactly like the bootstrap process that started it.
+// the daemon must behave exactly like the bootstrap process that started it.
 #[test]
 fn child_arguments_carry_every_setting() {
     let original = args(&[
@@ -120,7 +120,7 @@ fn names_and_selectors_are_checked_and_carried_to_the_daemon() {
     }
     assert!(args(&["--name"]).is_err());
 
-    // a selector is an id or a name
+    // a selector is an id or a name.
     assert_eq!(
         args(&["--attach", "work"]).unwrap().mode,
         ssj_server::cli::Mode::Attach(Some("work".to_owned()))

@@ -1,11 +1,11 @@
-// Fuzz target. The first line is a comment, so that the file does not look like a script.
+// fuzz target. The first line is a comment, so that the file does not look like a script.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use ssj_proto::{ReplayBuffer, ReplayError};
 
-// Runs random operations against the buffer and a plain `Vec` that holds all bytes ever written.
+// runs random operations against the buffer and a plain `Vec` that holds all bytes ever written.
 fuzz_target!(|ops: &[u8]| {
     const CAPACITY: usize = 64;
     let mut buf = ReplayBuffer::new(CAPACITY);

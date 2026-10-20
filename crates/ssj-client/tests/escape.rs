@@ -31,24 +31,24 @@ fn merged(actions: Vec<Action>) -> Vec<Action> {
 #[test]
 fn escape_needs_the_start_of_a_line() {
     let cases: Vec<(&[u8], Vec<Action>)> = vec![
-        // at the start of the session
+        // at the start of the session.
         (b"~.", vec![Action::Detach]),
         (b"~?", vec![Action::Help]),
         (b"~~", vec![send(b"~")]),
         (b"~x", vec![send(b"~x")]),
-        // after a newline of either kind
+        // after a newline of either kind.
         (b"ls\r~.", vec![send(b"ls\r"), Action::Detach]),
         (b"ls\n~.", vec![send(b"ls\n"), Action::Detach]),
-        // in the middle of a line the tilde is just a tilde
+        // in the middle of a line the tilde is just a tilde.
         (b"ls ~.", vec![send(b"ls ~.")]),
         (b"a~.", vec![send(b"a~.")]),
-        // a literal tilde ends the line start
+        // a literal tilde ends the line start.
         (b"~~.", vec![send(b"~.")]),
-        // after the help the line start is over as well
+        // after the help the line start is over as well.
         (b"~?~.", vec![Action::Help, send(b"~.")]),
-        // an unknown character is passed on together with the tilde
+        // an unknown character is passed on together with the tilde.
         (b"~\r~.", vec![send(b"~\r"), Action::Detach]),
-        // nothing after a detach is looked at
+        // nothing after a detach is looked at.
         (b"~.ls\r", vec![Action::Detach]),
         (b"", vec![]),
     ];
@@ -92,22 +92,22 @@ fn another_escape_character_works_and_none_turns_it_off() {
 #[test]
 fn the_detach_key_detaches_anywhere_and_keeps_what_came_before() {
     let mut filter = EscapeFilter::new(Some(b'~')).with_detach_key(Some(0x1d));
-    // in the middle of a line, which the escape character cannot do
+    // in the middle of a line, which the escape character cannot do.
     assert_eq!(
         filter.feed(b"ls -l\x1dmore"),
         vec![send(b"ls -l"), Action::Detach]
     );
 
-    // also with the escape character off, and when the key comes first
+    // also with the escape character off, and when the key comes first.
     let mut only_key = EscapeFilter::new(None).with_detach_key(Some(0x1d));
     assert_eq!(only_key.feed(b"abc"), vec![send(b"abc")]);
     assert_eq!(only_key.feed(b"\x1d"), vec![Action::Detach]);
 
-    // the escape character still works next to it
+    // the escape character still works next to it.
     let mut both = EscapeFilter::new(Some(b'~')).with_detach_key(Some(0x1d));
     assert_eq!(both.feed(b"~."), vec![Action::Detach]);
 
-    // without a key every byte is for the shell
+    // without a key every byte is for the shell.
     let mut none = EscapeFilter::new(Some(b'~'));
     assert_eq!(none.feed(b"a\x1db"), vec![send(b"a\x1db")]);
 }

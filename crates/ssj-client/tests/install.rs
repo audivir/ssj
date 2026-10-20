@@ -39,14 +39,14 @@ fn everything_else_is_refused_with_a_readable_message() {
     ] {
         assert!(parse_target(output.as_bytes()).is_err(), "{output:?}");
     }
-    // two answers could be an attempt to mislead
+    // two answers could be an attempt to mislead.
     assert!(parse_target(b"SSJ TARGET Linux x86_64\nSSJ TARGET Darwin arm64\n").is_err());
-    // noise from a login script around the answer is fine
+    // noise from a login script around the answer is fine.
     assert_eq!(
         parse_target(b"welcome!\nSSJ TARGET Linux x86_64\nbye\n"),
         Ok(Target::LinuxX86_64)
     );
-    // text of the host is not shown raw
+    // text of the host is not shown raw.
     let error = parse_target(b"SSJ TARGET \x1b[2JLinux\n").unwrap_err();
     assert!(!error.chars().any(char::is_control), "{error:?}");
 }
@@ -85,7 +85,7 @@ fn the_policy_decides_whether_and_whom_to_ask() {
         assert!(message.contains("ssj install me@host"), "{message}");
     }
 
-    // without a terminal there is nobody to ask, and the message says what to do
+    // without a terminal there is nobody to ask, and the message says what to do.
     let Decision::Skip(message) = decide(AutoInstall::Ask, host, false, never_asked) else {
         panic!("cannot ask without a terminal");
     };

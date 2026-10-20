@@ -127,7 +127,7 @@ mod tests {
         assert!(base_url(&args(Some("http://example.org/r"))).is_err());
         assert!(base_url(&args(Some("ftp://example.org/r"))).is_err());
         assert!(base_url(&args(Some("file:///tmp"))).is_err());
-        // no repository is known to this build, so there is no default
+        // no repository is known to this build, so there is no default.
         if env!("CARGO_PKG_REPOSITORY").is_empty() {
             assert!(
                 base_url(&args(None))

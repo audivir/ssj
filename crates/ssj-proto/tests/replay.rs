@@ -14,7 +14,7 @@ fn full_buffer_takes_partial_writes_until_acknowledged() {
     assert_eq!(buf.read_from(5, 100).unwrap(), b"fghijklm");
 }
 
-// Many fill and drain cycles move the data around inside the ring.
+// many fill and drain cycles move the data around inside the ring.
 #[test]
 fn content_stays_correct_over_many_wraparounds() {
     let mut buf = ReplayBuffer::new(13);
@@ -76,12 +76,12 @@ fn evicting_push_forgets_the_oldest_bytes_and_reports_how_many() {
     assert_eq!(buf.push_evicting(b"abcdef"), 0);
     assert_eq!((buf.start(), buf.end()), (0, 6));
 
-    // two bytes of the old content go
+    // two bytes of the old content go.
     assert_eq!(buf.push_evicting(b"ghij"), 2);
     assert_eq!((buf.start(), buf.end()), (2, 10));
     assert_eq!(buf.read_from(2, 100).unwrap(), b"cdefghij");
 
-    // bytes before the start are gone, with the right reason
+    // bytes before the start are gone, with the right reason.
     assert_eq!(buf.read_from(1, 1), Err(ReplayError::Gone));
 }
 
@@ -89,7 +89,7 @@ fn evicting_push_forgets_the_oldest_bytes_and_reports_how_many() {
 fn evicting_push_of_more_than_the_capacity_keeps_the_newest_bytes() {
     let mut buf = ReplayBuffer::new(4);
     buf.push(b"ab");
-    // all old bytes and the first six new ones are lost
+    // all old bytes and the first six new ones are lost.
     assert_eq!(buf.push_evicting(b"0123456789"), 8);
     assert_eq!((buf.start(), buf.end()), (8, 12));
     assert_eq!(buf.read_from(8, 100).unwrap(), b"6789");
@@ -107,7 +107,7 @@ impl Rng {
     }
 }
 
-// Whatever mix of the three ways to add bytes is used, the buffer holds exactly the newest bytes
+// whatever mix of the three ways to add bytes is used, the buffer holds exactly the newest bytes
 // that fit and agrees with a plain vector about every offset.
 #[test]
 fn evicting_and_waiting_pushes_agree_with_a_plain_vector() {

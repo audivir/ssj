@@ -145,7 +145,7 @@ pub fn parse_reply(line: &[u8]) -> Result<Reply, ControlError> {
     if !complete.ends_with(b"\n") {
         complete.push(b'\n');
     }
-    // exactly one line, so that nothing can be hidden behind it
+    // exactly one line, so that nothing can be hidden behind it.
     if complete[..complete.len() - 1]
         .iter()
         .any(|b| matches!(b, b'\n' | b'\r'))

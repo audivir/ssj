@@ -170,13 +170,13 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
         agent: Some(local.clone()),
     };
     let client = tokio::spawn(run_session(params, io));
-    // nobody reads the terminal here, so keep it from filling up
+    // nobody reads the terminal here, so keep it from filling up.
     tokio::spawn(
         async move { while shown_rx.read(&mut [0u8; 4096]).await.is_ok_and(|n| n > 0) {} },
     );
 
     let mut program = wait_for_socket(&remote).await;
-    // listing the keys reaches the agent
+    // listing the keys reaches the agent.
     program.write_all(&request(11)).await.unwrap();
     let mut answer = [0u8; 9];
     timeout(Duration::from_secs(10), program.read_exact(&mut answer))
@@ -186,7 +186,7 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
     assert_eq!(answer, IDENTITIES_ANSWER);
     assert_eq!(requests.load(Ordering::SeqCst), 1);
 
-    // removing all keys (type 19) never reaches it
+    // removing all keys (type 19) never reaches it.
     program.write_all(&request(19)).await.unwrap();
     let mut refused = [0u8; 5];
     timeout(Duration::from_secs(10), program.read_exact(&mut refused))
@@ -196,7 +196,7 @@ async fn a_program_in_the_session_reaches_the_agent_of_the_client_but_only_for_s
     assert_eq!(refused, FAILURE);
     assert_eq!(requests.load(Ordering::SeqCst), 1);
 
-    // a second program has its own channel
+    // a second program has its own channel.
     let mut other = UnixStream::connect(&remote).await.unwrap();
     other.write_all(&request(13)).await.unwrap();
     timeout(Duration::from_secs(10), other.read_exact(&mut answer))

@@ -8,7 +8,7 @@ fn accepts_lowercase_alphanumeric_ids() {
     );
 }
 
-// the id becomes part of socket paths and multiplexer commands
+// the id becomes part of socket paths and multiplexer commands.
 #[test]
 fn rejects_ids_that_could_escape_a_path_or_a_command() {
     for id in [

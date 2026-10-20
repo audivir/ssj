@@ -168,8 +168,8 @@ mod platform {
                     let _ = ready_tx.send(Err("cannot create a run loop source".to_owned()));
                     return;
                 };
-                // the run loop finds a mode by the text of its name, so the name of the default mode
-                // works without touching the extern static that holds it.
+                // the run loop finds a mode by the text of its name, so the name of the default
+                // mode works without touching the extern static that holds it.
                 let mode = CFString::new("kCFRunLoopDefaultMode");
                 CFRunLoop::get_current().add_source(&source, mode.as_concrete_TypeRef());
                 let _ = ready_tx.send(Ok(()));
@@ -212,7 +212,7 @@ mod platform {
                 loop {
                     match socket.recv(&mut &mut buffer[..], 0) {
                         Ok(0) => return,
-                        // an overflow of the socket also means that something changed
+                        // an overflow of the socket also means that something changed.
                         Ok(_) | Err(_) if tx.send(Cause::NetworkChanged).is_err() => return,
                         Ok(_) => {}
                         Err(err) if err.raw_os_error() == Some(libc_enobufs()) => {}

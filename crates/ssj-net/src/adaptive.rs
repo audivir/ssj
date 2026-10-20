@@ -198,7 +198,7 @@ impl Controller for Adaptive {
             .on_congestion_event(now, sent, is_persistent_congestion, lost_bytes);
         self.bbr
             .on_congestion_event(now, sent, is_persistent_congestion, lost_bytes);
-        // lost_bytes is 0 for a mark of congestion by the network (ECN), which is a queue
+        // lost_bytes is 0 for a mark of congestion by the network (ECN), which is a queue.
         if lost_bytes > 0
             && let Some((smoothed, min)) = self.rtt
             && self.policy.on_loss(now, smoothed, min)

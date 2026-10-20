@@ -167,7 +167,7 @@ impl Stderr {
 
 /// What an `ssh` process shows when it fails, or the reason given.
 async fn explain(stderr: &Stderr, fallback: &str) -> String {
-    // the text may still be on its way from the pipe
+    // the text may still be on its way from the pipe.
     tokio::time::sleep(Duration::from_millis(100)).await;
     let text = stderr.text();
     if text.is_empty() {
@@ -241,7 +241,7 @@ async fn dial_tcp(
         out: child.stdout.take().expect("piped"),
         stdin: child.stdin.take().expect("piped"),
     };
-    // the handshake fails at once when `ssh` ends because forwarding is not allowed
+    // the handshake fails at once when `ssh` ends because forwarding is not allowed.
     match timeout(limit, connector.connect(ssj_net::server_name(), pipes)).await {
         Ok(Ok(tls)) => {
             let (reader, writer) = tokio::io::split(tls);
@@ -283,7 +283,7 @@ async fn dial_stdio(args: &Args, id: &SessionId, limit: Duration) -> Result<Stre
     let mut stdout: ChildStdout = child.stdout.take().expect("piped");
     let stdin = child.stdin.take().expect("piped");
 
-    // shell startup files may print text first, so the stream starts at the sync header
+    // shell startup files may print text first, so the stream starts at the sync header.
     let found = timeout(limit, async {
         let mut seen = Vec::new();
         let mut chunk = [0u8; 4096];

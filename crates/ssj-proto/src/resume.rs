@@ -48,7 +48,7 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
             if !view.shell_started {
                 return Err(ErrorCode::NotStarted);
             }
-            // a client cannot have seen bytes that were never produced
+            // a client cannot have seen bytes that were never produced.
             if output_offset > view.output.end() {
                 return Err(ErrorCode::ReplayGap);
             }
@@ -65,7 +65,7 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
             if !view.shell_started {
                 return Err(ErrorCode::NotStarted);
             }
-            // a client without history gets everything the server still holds
+            // a client without history gets everything the server still holds.
             let welcome = Welcome {
                 input_offset: view.input_received,
                 output_offset: character_boundary(view.output),
@@ -106,7 +106,7 @@ pub fn check_welcome(
             welcome.output_offset >= *output_offset
                 && (input_acked..=input_sent).contains(&welcome.input_offset)
         }
-        // a client without history adopts the offsets of the server
+        // a client without history adopts the offsets of the server.
         Hello::Attach { .. } => true,
     };
     if ok { Ok(()) } else { Err(BadWelcome) }

@@ -19,7 +19,7 @@ fn plain_text_is_never_inside_a_sequence() {
 
 #[test]
 fn a_sequence_is_open_from_its_first_to_its_last_byte() {
-    // each byte of the sequence leaves the tracker inside, except the final one
+    // each byte of the sequence leaves the tracker inside, except the final one.
     for sequence in [
         &b"\x1b[38;2;255;128;64m"[..],
         &b"\x1b[?1049h"[..],
@@ -38,14 +38,14 @@ fn a_sequence_is_open_from_its_first_to_its_last_byte() {
 
 #[test]
 fn multi_byte_characters_are_not_split() {
-    // two, three, and four bytes
+    // two, three, and four bytes.
     for text in ["é", "€", "😀"] {
         let seen = states(text.as_bytes());
         let (last, inner) = seen.split_last().unwrap();
         assert!(inner.iter().all(|s| *s), "{text}");
         assert!(!last, "{text}");
     }
-    // a broken character does not leave the tracker stuck
+    // a broken character does not leave the tracker stuck.
     let mut tracker = Tracker::new();
     tracker.feed(b"\xe2\x82a");
     assert!(!tracker.in_sequence());
@@ -93,15 +93,15 @@ fn the_last_title_is_remembered_and_only_when_it_is_complete() {
     assert_eq!(tracker.title(), Some("first"));
     tracker.feed(b"\x1b]2;second\x1b\\");
     assert_eq!(tracker.title(), Some("second"));
-    // other sequences and unfinished titles change nothing
+    // other sequences and unfinished titles change nothing.
     tracker.feed(b"\x1b]7;file:///x\x07\x1b]1;icon\x07\x1b]0;unfinished");
     assert_eq!(tracker.title(), Some("second"));
     tracker.feed(b"\x18");
     assert_eq!(tracker.title(), Some("second"));
-    // a title with control characters is cleaned
+    // a title with control characters is cleaned.
     tracker.feed(b"\x1b]0;a\x01b\x07");
     assert_eq!(tracker.title(), Some("ab"));
-    // a huge title is ignored, and the tracker still finds the end of it
+    // a huge title is ignored, and the tracker still finds the end of it.
     let mut huge = b"\x1b]0;".to_vec();
     huge.extend(std::iter::repeat_n(b'x', 5000));
     huge.push(0x07);
@@ -116,29 +116,29 @@ fn the_rest_of_a_cancelled_sequence_is_skipped_and_nothing_else() {
     tracker.feed(b"text \x1b]52;c;AAAA");
     assert!(tracker.in_sequence());
     tracker.cancel_sequence();
-    // the rest of the clipboard sequence is dropped, up to and including its end
+    // the rest of the clipboard sequence is dropped, up to and including its end.
     assert_eq!(tracker.skip_prefix(b"BBBB\x07after"), 5);
     assert!(!tracker.in_sequence());
-    // later output is not touched
+    // later output is not touched.
     assert_eq!(tracker.skip_prefix(b"BBBB\x07"), 0);
-    // a sequence that goes on for several chunks
+    // a sequence that goes on for several chunks.
     tracker.feed(b"\x1b[3");
     tracker.cancel_sequence();
     assert_eq!(tracker.skip_prefix(b"1;"), 2);
     assert_eq!(tracker.skip_prefix(b"4mX"), 2);
     assert!(!tracker.in_sequence());
-    // a half title does not become the title
+    // a half title does not become the title.
     let mut tracker = Tracker::new();
     tracker.feed(b"\x1b]2;half");
     tracker.cancel_sequence();
     tracker.skip_prefix(b" title\x07");
     assert_eq!(tracker.title(), None);
-    // a character cut in two is dropped as well
+    // a character cut in two is dropped as well.
     let mut tracker = Tracker::new();
     tracker.feed(&"é".as_bytes()[..1]);
     tracker.cancel_sequence();
     assert_eq!(tracker.skip_prefix(&"é".as_bytes()[1..]), 1);
-    // without a sequence, cancelling does nothing
+    // without a sequence, cancelling does nothing.
     let mut tracker = Tracker::new();
     tracker.cancel_sequence();
     assert_eq!(tracker.skip_prefix(b"abc"), 0);

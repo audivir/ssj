@@ -77,18 +77,18 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
         );
         run("bash", &["-c", &code], &fake_ssj()).trim().to_owned()
     };
-    // the sessions of that host, filtered by what is typed
+    // the sessions of that host, filtered by what is typed.
     assert_eq!(case("ssj attach me@box w", 3), "work");
     assert_eq!(case("ssj kill me@box ''", 3), "work build");
-    // kill takes more than one, the others do not
+    // kill takes more than one, the others do not.
     assert_eq!(case("ssj kill me@box work ''", 4), "work build");
     assert_eq!(case("ssj attach me@box work ''", 4), "");
-    // detach offers only the sessions that have a client, and more than one
+    // detach offers only the sessions that have a client, and more than one.
     assert_eq!(case("ssj detach me@box ''", 3), "work");
     assert_eq!(case("ssj detach me@box work ''", 4), "work");
-    // another host has none
+    // another host has none.
     assert_eq!(case("ssj attach other@host ''", 3), "");
-    // --name offers the names of all hosts
+    // --name offers the names of all hosts.
     assert_eq!(case("ssj --name ''", 2), "work build other");
 }
 
@@ -98,13 +98,13 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
         return;
     }
     let file = generated("_ssj");
-    // zsh -n finds a syntax error in the whole file
+    // zsh -n finds a syntax error in the whole file.
     run("zsh", &["-n", file.to_str().unwrap()], &fake_ssj());
     let first_line = std::fs::read_to_string(&file).unwrap();
     assert!(first_line.starts_with("#compdef ssj\n"));
 
     let case = |words: &str, current: usize| {
-        // the completion system is replaced by functions that print what they are asked for
+        // the completion system is replaced by functions that print what they are asked for.
         let code = format!(
             "compdef() {{ :; }}\nsource '{}'\n\
              compadd() {{ if [[ $1 == -a ]]; then print -r -- \"names: ${{(P)2}}\"; else print -r -- \"add: $*\"; fi; }}\n\
@@ -117,12 +117,12 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
             .trim()
             .to_owned()
     };
-    // the first word is a command or a host
+    // the first word is a command or a host.
     assert!(case("''", 1).contains("alternative:"), "{}", case("''", 1));
-    // the word after a command is a host
+    // the word after a command is a host.
     assert_eq!(case("attach ''", 2), "hosts");
     assert_eq!(case("list ''", 2), "hosts");
-    // the word after the host of attach and kill is a session of that host
+    // the word after the host of attach and kill is a session of that host.
     assert_eq!(case("attach me@box ''", 3), "names: work build");
     assert_eq!(case("kill me@box ''", 3), "names: work build");
     assert_eq!(case("kill me@box work ''", 4), "names: work build");
@@ -130,7 +130,7 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     assert_eq!(case("detach me@box ''", 3), "names: work");
     assert_eq!(case("detach me@box work ''", 4), "names: work");
     assert_eq!(case("attach other@host ''", 3), "names:");
-    // list and install take nothing more
+    // list and install take nothing more.
     assert_eq!(case("list me@box ''", 3), "");
 }
 
@@ -154,17 +154,17 @@ fn fish_offers_the_sessions_of_the_host_after_attach_and_kill() {
     };
     assert_eq!(case("ssj attach me@box "), "build work");
     assert_eq!(case("ssj kill me@box w"), "work");
-    // kill takes more than one, the others do not
+    // kill takes more than one, the others do not.
     assert_eq!(case("ssj kill me@box work "), "build work");
     assert_eq!(case("ssj attach me@box work "), "");
     assert_eq!(case("ssj detach me@box "), "work");
     assert_eq!(case("ssj detach me@box work "), "work");
-    // options in front do not count as words
+    // options in front do not count as words.
     assert_eq!(case("ssj -v attach me@box "), "build work");
-    // no sessions after the other commands, or for another host, or before the host
+    // no sessions after the other commands, or for another host, or before the host.
     assert_eq!(case("ssj list me@box "), "");
     assert_eq!(case("ssj attach other@host "), "");
     assert_eq!(case("ssj attach "), "");
-    // --name offers the names of all hosts
+    // --name offers the names of all hosts.
     assert_eq!(case("ssj --name "), "build other work");
 }

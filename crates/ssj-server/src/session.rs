@@ -216,7 +216,7 @@ struct Active {
 
 impl Drop for Active {
     fn drop(&mut self) {
-        // frames already queued get a few seconds to leave, then the task is stopped
+        // frames already queued get a few seconds to leave, then the task is stopped.
         if let Some(writer) = self.writer.take() {
             tokio::spawn(async move {
                 let abort = writer.abort_handle();
@@ -272,7 +272,7 @@ impl<B: Backend> Session<B> {
         let (control_tx, mut control_rx) = mpsc::channel::<Tagged>(64);
         let mut output = ReplayBuffer::new(config.replay_capacity);
         let mut input_received = 0u64;
-        // since when input has been consumed without an acknowledgement
+        // since when input has been consumed without an acknowledgement.
         let mut ack_since: Option<Instant> = None;
         let mut pending_input: Vec<u8> = Vec::new();
         let mut pending_offset = 0usize;
@@ -283,18 +283,18 @@ impl<B: Backend> Session<B> {
         let mut detached_since = Some(Instant::now());
         // the newest size of a burst of resizes, applied when no other message is queued.
         let mut pending_resize: Option<WindowSize> = None;
-        // a deliberate detach disables the timeout until the next connection
+        // a deliberate detach disables the timeout until the next connection.
         let mut detached_on_purpose = false;
-        // since when the connection is gone although the exit status was sent
+        // since when the connection is gone although the exit status was sent.
         let mut exit_lost: Option<Instant> = None;
-        // since when a connected client has left the output buffer full
+        // since when a connected client has left the output buffer full.
         let mut full_since: Option<Instant> = None;
         let mut buf = vec![0u8; READ_CHUNK];
         let mut compressor = Compressor::new();
-        // the socket of the forwarded agent, once the client has asked for it
+        // the socket of the forwarded agent, once the client has asked for it.
         let mut agent_listener: Option<(UnixListener, SocketFile)> = None;
         let mut next_channel = 0u32;
-        // whether a client ever completed its handshake
+        // whether a client ever completed its handshake.
         let mut ever_connected = false;
         if let Some(start) = config.prestart.clone() {
             match start_shell(
@@ -383,7 +383,7 @@ impl<B: Backend> Session<B> {
                 && (data_pending || ack_big || ack_deadline.is_some_and(|d| d <= Instant::now()));
             let send_due = data_pending || ack_due;
             let want_input = pending_offset >= pending_input.len();
-            // a deliberate detach waits for max_detached, a lost connection for detached_timeout
+            // a deliberate detach waits for max_detached, a lost connection for detached_timeout.
             let limit = if detached_on_purpose {
                 config.max_detached
             } else {
@@ -454,7 +454,7 @@ impl<B: Backend> Session<B> {
                         let a = active.take().expect("checked above");
                         let _ = a.out.try_send(ServerFrame::Detached);
                         // the transport closes the endpoint right after the event, and the frame
-                        // needs a moment to leave first
+                        // needs a moment to leave first.
                         sleep(Duration::from_millis(300)).await;
                         drop(a);
                         detached_since = Some(Instant::now());
@@ -478,7 +478,7 @@ impl<B: Backend> Session<B> {
                     detached_on_purpose = false;
                 }
                 Event::DetachedTimeout => return SessionEnd::DetachedTimeout,
-                // the next turn of the loop sees that the client is away now
+                // the next turn of the loop sees that the client is away now.
                 Event::AwayTimer | Event::AckTimer => {}
                 Event::Control(None) => unreachable!("the actor holds a sender"),
                 Event::Control(Some(Tagged {
@@ -565,7 +565,7 @@ impl<B: Backend> Session<B> {
                                             }
                                         }
                                     }
-                                    // the size of the hello is newer than any waiting one
+                                    // the size of the hello is newer than any waiting one.
                                     pending_resize = None;
                                     a.hello_done = true;
                                     ever_connected = true;
@@ -598,7 +598,7 @@ impl<B: Backend> Session<B> {
                             }
                             if let Some(s) = shell.as_mut().filter(|_| finished) {
                                 // the status may not have arrived: it goes out again to the next
-                                // connection, and a close confirms it
+                                // connection, and a close confirms it.
                                 s.exit_queued = false;
                                 exit_lost = Some(Instant::now());
                             }
@@ -648,11 +648,11 @@ impl<B: Backend> Session<B> {
                     }
                 }
                 Event::AgentConnected(Err(_)) => {
-                    // for example out of descriptors: do not spin on it
+                    // for example out of descriptors: do not spin on it.
                     sleep(Duration::from_millis(100)).await;
                 }
                 Event::AgentConnected(Ok(stream)) => {
-                    // without a client that serves the agent, the program sees a closed socket
+                    // without a client that serves the agent, the program sees a closed socket.
                     if let Some(a) = active.as_mut()
                         && let Some(channels) = a.agent.as_mut()
                     {
@@ -678,7 +678,7 @@ impl<B: Backend> Session<B> {
                     pending_budget = active.as_ref().map(|a| a.budget.clone());
                 }
                 Event::InputWritten(Err(_)) => {
-                    // the shell closed its input, so the output side will report the end
+                    // the shell closed its input, so the output side will report the end.
                     release_input(&mut pending_input, &mut pending_offset, &mut pending_budget);
                 }
                 Event::InputWritten(Ok(n)) => {
@@ -714,11 +714,11 @@ impl<B: Backend> Session<B> {
                                 "output dropped under backpressure"
                             );
                             // a connection that was still owed the forgotten bytes cannot go on:
-                            // its client resumes on a new connection and learns what it missed
+                            // its client resumes on a new connection and learns what it missed.
                             let owed = active
                                 .as_ref()
                                 .is_some_and(|a| a.hello_done && a.output_sent < output.start());
-                            // with `Drop` the connection goes on and is told about the gap
+                            // with `Drop` the connection goes on and is told about the gap.
                             if forgotten > 0 && owed && config.slow_client == SlowClient::Wait {
                                 lose(&mut active, &events);
                                 detached_since = Some(Instant::now());
@@ -735,7 +735,7 @@ impl<B: Backend> Session<B> {
                     }
                 }
                 Event::ExitGrace => {
-                    // nobody came back for the status: the client has it or never will
+                    // nobody came back for the status: the client has it or never will.
                     let status = shell
                         .and_then(|s| s.status)
                         .expect("the grace period starts after the status is known");
@@ -802,7 +802,7 @@ fn skip_ahead(sent: &mut u64, replay_end: u64, output: &ReplayBuffer, live: usiz
         target = end - live as u64;
     }
     if target > *sent {
-        // do not start inside a character of several bytes
+        // do not start inside a character of several bytes.
         let head = output.read_from(target, 3).unwrap_or_default();
         target += head.iter().take_while(|b| **b & 0xc0 == 0x80).count() as u64;
         let skipped = target - *sent;
@@ -816,7 +816,7 @@ fn skip_ahead(sent: &mut u64, replay_end: u64, output: &ReplayBuffer, live: usiz
 fn read_ready<R: AsyncRead + Unpin>(reader: &mut R, buf: &mut [u8]) -> Option<io::Result<usize>> {
     use std::task::{Context, Poll, Waker};
     let mut read_buf = tokio::io::ReadBuf::new(buf);
-    // the waker is not needed: the select loop polls the reader again with its own
+    // the waker is not needed: the select loop polls the reader again with its own.
     let mut cx = Context::from_waker(Waker::noop());
     match std::pin::Pin::new(reader).poll_read(&mut cx, &mut read_buf) {
         Poll::Ready(Ok(())) => Some(Ok(read_buf.filled().len())),
@@ -873,7 +873,7 @@ fn violation(
 /// Makes the socket for the agent of the client. Without it the shell has no agent.
 fn listen_for_agent(path: &Path) -> Option<(UnixListener, SocketFile)> {
     use std::os::unix::fs::PermissionsExt;
-    // a leftover of a server that did not end cleanly
+    // a leftover of a server that did not end cleanly.
     let _ = std::fs::remove_file(path);
     let listener = UnixListener::bind(path).ok()?;
     let file = SocketFile(path.to_owned());
@@ -899,7 +899,7 @@ async fn hang_up<S: Shell>(shell: Option<Running<S>>, client: Option<&Active>) {
         ..
     }) = shell
     {
-        // closing the terminal makes the kernel send SIGHUP to the shell
+        // closing the terminal makes the kernel send SIGHUP to the shell.
         drop(reader);
         drop(writer);
         if let Some(exit) = exit {
@@ -1049,7 +1049,7 @@ async fn read_connection(
                 }
             };
             pending.drain(..used);
-            // compressed input is the same as plain input once it is inflated
+            // compressed input is the same as plain input once it is inflated.
             let frame = match frame {
                 ClientFrame::Compressed(packed) if got_hello => match inflate(&packed) {
                     Ok(data) => ClientFrame::Input(data),
@@ -1067,7 +1067,7 @@ async fn read_connection(
                 }
                 (_, false) => return send(Control::Violation(ErrorCode::BadHello)).await,
                 (ClientFrame::Input(data), true) => {
-                    // waits only for a client that sends far more than it may
+                    // waits only for a client that sends far more than it may.
                     match budget.acquire_many(data.len() as u32).await {
                         Ok(permit) => permit.forget(),
                         Err(_) => return,
@@ -1085,14 +1085,14 @@ async fn read_connection(
                 (ClientFrame::AgentOffer, true) => send(Control::AgentOffer).await,
                 (ClientFrame::Agent(id, data), true) => send(Control::Agent(id, data)).await,
                 (ClientFrame::AgentClose(id), true) => send(Control::AgentClose(id)).await,
-                // inflated above, and refused before the hello
+                // inflated above, and refused before the hello.
                 (ClientFrame::Compressed(_), _) => {
                     return send(Control::Violation(ErrorCode::BadHello)).await;
                 }
             }
         }
         // a header that announces more than a frame may hold is rejected by the decoder, so
-        // the pending bytes stay below one frame plus one read
+        // the pending bytes stay below one frame plus one read.
         debug_assert!(pending.len() < MAX_FRAME_LEN + 4 + READ_CHUNK);
     }
 }
@@ -1139,7 +1139,7 @@ async fn write_connection(
         if failed {
             break;
         }
-        // no timeout: the stream may legitimately stall while the network is down
+        // no timeout: the stream may legitimately stall while the network is down.
         if writer.write_all(&bytes).await.is_err() || writer.flush().await.is_err() {
             let _ = control
                 .send(Tagged {

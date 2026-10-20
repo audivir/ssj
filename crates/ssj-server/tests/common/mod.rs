@@ -73,7 +73,7 @@ pub fn free_port() -> u16 {
         // closed before the next is tried: on Linux a `::` socket cannot share the port with an
         // open `0.0.0.0` one, and on macOS it can.
         let v4_free = UdpSocket::bind(("0.0.0.0", port)).is_ok();
-        // a host without IPv6 (a container) has nothing to conflict with on that family
+        // a host without IPv6 (a container) has nothing to conflict with on that family.
         let v6_free = match UdpSocket::bind(("::", port)) {
             Ok(_) => true,
             Err(err) => err.kind() != std::io::ErrorKind::AddrInUse,
@@ -198,7 +198,7 @@ pub async fn open(
     connect: &Connect,
 ) -> Result<(quinn::SendStream, quinn::RecvStream, quinn::Connection), Box<dyn std::error::Error>> {
     let addr = ([127, 0, 0, 1], connect.udp.expect("a UDP port")).into();
-    // a handshake that gets no answer must fail the test and not wait for ever
+    // a handshake that gets no answer must fail the test and not wait for ever.
     let conn = timeout(
         Duration::from_secs(15),
         endpoint(client, connect.fingerprint).connect(addr, SERVER_NAME)?,

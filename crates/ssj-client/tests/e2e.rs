@@ -75,7 +75,7 @@ fn free_port() -> u16 {
         // closed before the next is tried: on Linux a `::` socket cannot share the port with an
         // open `0.0.0.0` one, and on macOS it can.
         let v4_free = UdpSocket::bind(("0.0.0.0", port)).is_ok();
-        // a host without IPv6 (a container) has nothing to conflict with on that family
+        // a host without IPv6 (a container) has nothing to conflict with on that family.
         let v6_free = match UdpSocket::bind(("::", port)) {
             Ok(_) => true,
             Err(err) => err.kind() != std::io::ErrorKind::AddrInUse,
@@ -206,13 +206,13 @@ fn run_with_command(ssh: &Path, words: &[&str]) -> Output {
 
 #[test]
 fn a_command_after_the_destination_runs_in_the_session_and_its_exit_code_is_returned() {
-    // the same way as `ssh host command`: through the shell of the host, so pipes and && work
+    // the same way as `ssh host command`: through the shell of the host, so pipes and && work.
     let ssh = fake_ssh(FAKE_SSH);
     for (words, expected_code, expected_text) in [
         (vec!["--", "echo one-two | tr o 0; exit 3"], 3, "0ne-tw0"),
         (vec!["--", "printf", "'%s-%s'", "a", "b"], 0, "a-b"),
         (vec!["--", "exit", "7"], 7, ""),
-        // without the dashes, when the command has no options of its own
+        // without the dashes, when the command has no options of its own.
         (vec!["echo", "plain"], 0, "plain"),
     ] {
         let output = run_with_command(&ssh, &words);
@@ -241,7 +241,7 @@ fn every_ssh_that_runs_a_command_gets_no_escape_character() {
     let calls: Vec<&str> = logged.lines().collect();
     assert!(!calls.is_empty());
     for call in calls {
-        // only the query of the configuration (`-G`) does not open a session
+        // only the query of the configuration (`-G`) does not open a session.
         if call.split(' ').any(|word| word == "-G") {
             continue;
         }
@@ -263,7 +263,7 @@ fn piped_script_runs_in_an_interactive_shell() {
     assert_eq!(output.status.code(), Some(5));
 }
 
-// Text from the remote side may carry terminal escape sequences and must not reach the screen.
+// text from the remote side may carry terminal escape sequences and must not reach the screen.
 #[test]
 fn failed_bootstrap_shows_remote_text_without_control_characters() {
     let ssh =
@@ -320,7 +320,7 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
         .spawn(pts)
         .unwrap();
 
-    // one handle to read on a thread and one to write
+    // one handle to read on a thread and one to write.
     let fd: std::os::fd::OwnedFd = pty.into();
     let mut reader = std::fs::File::from(fd.try_clone().unwrap());
     let mut pty = std::fs::File::from(fd);
@@ -334,7 +334,7 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
         }
     });
     let mut seen = String::new();
-    // alternatives are separated by `|`: the prompt is `$ ` for a user and `# ` for root
+    // alternatives are separated by `|`: the prompt is `$ ` for a user and `# ` for root.
     let mut wait_for = |needle: &str| {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !needle.split('|').any(|n| seen.contains(n)) {
@@ -495,7 +495,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
     let ssh = fake_ssh(FAKE_SSH);
     let script = "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done";
 
-    // a session whose first client never shows up, as after a crash of the client
+    // a session whose first client never shows up, as after a crash of the client.
     let port = free_port();
     let mut daemon = Command::new(server_binary())
         .env("XDG_RUNTIME_DIR", &runtime)
@@ -536,7 +536,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
     );
     let id = listing.split_whitespace().next().unwrap().to_owned();
 
-    // the same list as JSON, and the cache that completion reads
+    // the same list as JSON, and the cache that completion reads.
     let json = ssj(&runtime, &ssh, &["list", "--json", "user@localhost"], "");
     let json = text(&json.stdout);
     assert!(
@@ -546,7 +546,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
     let cached = ssj(&runtime, &ssh, &["--complete", "user@localhost"], "");
     assert!(text(&cached.stdout).lines().any(|l| l == id), "{cached:?}");
 
-    // the first attach types a line and leaves with the escape
+    // the first attach types a line and leaves with the escape.
     let first = ssj_typing(
         &runtime,
         &ssh,
@@ -573,7 +573,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
         text(&first.stderr)
     );
 
-    // the second one finds the shell as it was
+    // the second one finds the shell as it was.
     let second = ssj_typing(
         &runtime,
         &ssh,
@@ -640,7 +640,7 @@ fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
                 assert!(start.elapsed() < Duration::from_secs(20), "nothing typed");
                 std::thread::sleep(Duration::from_millis(50));
             }
-            // the client is connected and has typed: this is the other terminal
+            // the client is connected and has typed: this is the other terminal.
             ssj(&runtime, &ssh, &["detach", "user@localhost"], "")
         })
     };
@@ -660,7 +660,7 @@ fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
         text(&first.stderr)
     );
 
-    // the shell kept its state for the next client
+    // the shell kept its state for the next client.
     wait_for_state(&runtime, &ssh, "detached");
     let again = ssj_typing(
         &runtime,
@@ -670,7 +670,7 @@ fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
     );
     assert!(text(&again.stdout).contains("got:two:2"));
 
-    // nobody is connected now
+    // nobody is connected now.
     let nobody = ssj(&runtime, &ssh, &["detach", "user@localhost"], "");
     assert_eq!(nobody.status.code(), Some(1));
     assert!(
@@ -689,7 +689,7 @@ fn the_detach_key_leaves_in_the_middle_of_a_line() {
         &runtime,
         &ssh,
         &["--detach-key", "ctrl-]", "user@localhost"],
-        // typed in the middle of a line, which `~.` cannot do
+        // typed in the middle of a line, which `~.` cannot do.
         &[("half a line\x1d", "")],
     );
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
@@ -723,7 +723,7 @@ fn kill_ends_several_sessions_in_one_call() {
     }
     assert_eq!(ids.len(), 3, "{listing}");
 
-    // two of the three, in one call; a name that does not exist is reported and does not stop it
+    // two of the three, in one call; a name that does not exist is reported and does not stop it.
     let killed = ssj(
         &runtime,
         &ssh,
@@ -918,7 +918,7 @@ fn install_uploads_checks_and_makes_the_default_path_work() {
         text(&output.stdout)
     );
 
-    // a private, executable file that reports the protocol
+    // a private, executable file that reports the protocol.
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(host.installed())
         .unwrap()
@@ -931,14 +931,14 @@ fn install_uploads_checks_and_makes_the_default_path_work() {
         .output()
         .unwrap();
     assert!(text(&version.stdout).contains("protocol 1"));
-    // no temporary files stay behind
+    // no temporary files stay behind.
     let names: Vec<String> = std::fs::read_dir(host.data.join("ssj/bin"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["ssj-server-p1"]);
 
-    // and a session starts through the default path, without --server-path
+    // and a session starts through the default path, without --server-path.
     let session = host.session_words(&[]);
     let output = host.ssj(&ssh, &words(&session), "go\n");
     assert!(
@@ -1006,7 +1006,7 @@ fn a_missing_server_is_a_reason_to_install_for_auto_attach_and_name_but_not_for_
 
         let output = host.ssj(&ssh, &words(&session), "");
 
-        // no terminal, so nobody can be asked: the message is the one of the install policy
+        // no terminal, so nobody can be asked: the message is the one of the install policy.
         let stderr = text(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{flags:?}: {stderr}");
         assert!(
@@ -1018,7 +1018,7 @@ fn a_missing_server_is_a_reason_to_install_for_auto_attach_and_name_but_not_for_
             "{flags:?}: {stderr}"
         );
     }
-    // an explicit attach has no session to find without a server, and says so
+    // an explicit attach has no session to find without a server, and says so.
     let attached = host.ssj(&ssh, &["attach", "user@localhost"], "");
     assert!(
         text(&attached.stderr).contains("no session runs there"),
@@ -1040,7 +1040,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
         std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
     };
 
-    // "never" in the config stops an installation that would otherwise happen
+    // "never" in the config stops an installation that would otherwise happen.
     write("auto_install = \"never\"\n");
     let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
     let output = host.ssj(&ssh, &words(&session), "go\n");
@@ -1052,7 +1052,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     );
     assert!(!host.installed().exists());
 
-    // the flag wins over the config
+    // the flag wins over the config.
     let session = host.session_words(&["--install", "--server-dir", dir.to_str().unwrap()]);
     assert_eq!(
         host.ssj(&ssh, &words(&session), "go\n").status.code(),
@@ -1061,7 +1061,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     assert!(host.installed().exists());
     std::fs::remove_file(host.installed()).unwrap();
 
-    // "always" in the config installs without a flag
+    // "always" in the config installs without a flag.
     write("auto_install = \"always\"\n");
     let session = host.session_words(&["--server-dir", dir.to_str().unwrap()]);
     assert_eq!(
@@ -1071,7 +1071,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     assert!(host.installed().exists());
     std::fs::remove_file(host.installed()).unwrap();
 
-    // and --no-install wins over "always"
+    // and --no-install wins over "always".
     let session = host.session_words(&["--no-install", "--server-dir", dir.to_str().unwrap()]);
     assert_eq!(
         host.ssj(&ssh, &words(&session), "go\n").status.code(),
@@ -1079,7 +1079,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     );
     assert!(!host.installed().exists());
 
-    // a broken config is an error, not a silent default
+    // a broken config is an error, not a silent default.
     write("auto_instal = \"always\"\n");
     let output = host.ssj(&ssh, &["list", "user@localhost"], "");
     assert_eq!(output.status.code(), Some(2));
@@ -1305,7 +1305,7 @@ fn on_a_terminal_the_user_can_agree_and_the_session_starts() {
     assert!(host.installed().exists());
 }
 
-// Only a clear yes counts, so that a stray key or an empty answer never uploads anything.
+// only a clear yes counts, so that a stray key or an empty answer never uploads anything.
 #[test]
 fn only_yes_means_yes() {
     for answer in ["\n", "yep\n", "no\n", "n\n", " \n"] {
@@ -1385,7 +1385,7 @@ fn verbose_output_goes_to_the_log_file_and_names_the_steps() {
         ],
     );
     assert_session(&output);
-    // nothing of the log is on the terminal
+    // nothing of the log is on the terminal.
     assert!(!String::from_utf8_lossy(&output.stderr).contains("[ssj "));
     let text = std::fs::read_to_string(&log).unwrap();
     for step in [
@@ -1402,11 +1402,11 @@ fn verbose_output_goes_to_the_log_file_and_names_the_steps() {
     ] {
         assert!(text.contains(step), "{step}\n{text}");
     }
-    // the content of the session is never logged
+    // the content of the session is never logged.
     assert!(!text.contains("xyz"));
     let _ = std::fs::remove_file(&log);
 
-    // without -v nothing is written
+    // without -v nothing is written.
     let quiet = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "udp"]);
     assert!(!String::from_utf8_lossy(&quiet.stderr).contains("[ssj "));
 }
@@ -1437,7 +1437,7 @@ fn the_ssh_channel_alone_carries_a_session() {
     assert_session(&output);
 }
 
-// Shell startup files print text before the stream, and the client must find the start of it.
+// shell startup files print text before the stream, and the client must find the start of it.
 #[test]
 fn text_printed_before_the_stream_is_skipped() {
     let ssh = transport_ssh(
@@ -1466,7 +1466,7 @@ fn a_blocked_udp_port_falls_back_to_tcp() {
 
 #[test]
 fn forbidden_forwarding_falls_back_to_the_ssh_channel() {
-    // the host allows no forwarding, as `AllowTcpForwarding no` does
+    // the host allows no forwarding, as `AllowTcpForwarding no` does.
     let ssh = transport_ssh(
         "",
         "if [ -n \"$forward\" ]; then echo 'channel 0: open failed: administratively prohibited' >&2; exit 255; fi",
@@ -1534,7 +1534,7 @@ fn the_port_of_the_destination_goes_to_ssh_and_not_into_the_host_name() {
     }
 }
 
-// The destination may be a name from the `ssh` configuration that DNS does not know. UDP goes to
+// the destination may be a name from the `ssh` configuration that DNS does not know. UDP goes to
 // the `HostName` that `ssh -G` reports.
 #[test]
 fn udp_goes_to_the_host_name_of_the_ssh_configuration() {
@@ -1567,7 +1567,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
     words.extend(shell);
     words.push("user@localhost");
 
-    // the first call starts the session, the shell counts its lines
+    // the first call starts the session, the shell counts its lines.
     let first = ssj_typing(
         &runtime,
         &ssh,
@@ -1588,7 +1588,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         "{listing}"
     );
 
-    // the same call finds the session and the counter goes on
+    // the same call finds the session and the counter goes on.
     let second = ssj_typing(
         &runtime,
         &ssh,
@@ -1610,7 +1610,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         1
     );
 
-    // the name works for attach and kill as well
+    // the name works for attach and kill as well.
     let third = ssj_typing(
         &runtime,
         &ssh,
@@ -1723,14 +1723,14 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
         }
     };
     wait_for(&mut seen, "ready");
-    // the first key of a line is not predicted, the rest are
+    // the first key of a line is not predicted, the rest are.
     for line in ["abcdefgh\n", "ijklmnop\n"] {
         for byte in line.bytes() {
             pty.write_all(&[byte]).unwrap();
             std::thread::sleep(Duration::from_millis(40));
         }
     }
-    // each line comes back twice: echoed key by key by the terminal, then printed whole by `cat`
+    // each line comes back twice: echoed key by key by the terminal, then printed whole by `cat`.
     wait_for(&mut seen, "\r\nijklmnop\r\n");
     pty.write_all(&[4]).unwrap();
     let start = Instant::now();
@@ -1753,7 +1753,7 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
 #[test]
 fn local_echo_shows_typed_characters_ahead_and_leaves_the_session_intact() {
     let on = typed_on_a_terminal("auto");
-    // characters were drawn faint ahead of the server, and each was taken back
+    // characters were drawn faint ahead of the server, and each was taken back.
     assert!(on.contains("\x1b[2m"), "{on:?}");
     assert!(on.contains("\x08\x1b[K"), "{on:?}");
     let off = typed_on_a_terminal("off");
@@ -1813,7 +1813,7 @@ fn edit_without_a_host_changes_client_toml_and_saves_it_privately() {
     );
     let file = config.join("ssj/client.toml");
     let saved = std::fs::read_to_string(&file).unwrap();
-    // the template of a new file is kept, and the edit is at the end
+    // the template of a new file is kept, and the edit is at the end.
     assert!(saved.contains("# auto_install"), "{saved}");
     assert!(saved.ends_with("compress = \"auto\"\n"), "{saved}");
     assert_eq!(
@@ -1827,7 +1827,7 @@ fn edit_without_a_host_changes_client_toml_and_saves_it_privately() {
             == Some(true)
     );
 
-    // a second edit starts from the file
+    // a second edit starts from the file.
     let again =
         editor_script(r#"grep -q 'compress = "auto"' "$1" && echo 'local_echo = "auto"' >> "$1""#);
     let output = ssj_edit(&config, &again, &["edit"], "");
@@ -1868,7 +1868,7 @@ fn an_invalid_file_is_refused_before_it_is_saved_and_can_be_discarded() {
 fn an_invalid_file_can_be_edited_again_and_then_saved() {
     let config = short_dir();
     let marker = config.join("second-run");
-    // the first run writes a typo, the second one fixes it
+    // the first run writes a typo, the second one fixes it.
     let editor = editor_script(&format!(
         r#"if [ -e '{m}' ]; then sed 's/compres /compress /' "$1" > "$1.new" && mv "$1.new" "$1"; else touch '{m}'; echo 'compres = "auto"' >> "$1"; fi"#,
         m = marker.display()
@@ -1902,7 +1902,7 @@ fn edit_with_a_host_changes_server_toml_there_after_the_server_has_checked_it() 
         std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    // no client.toml was made, and no temporary file stays behind
+    // no client.toml was made, and no temporary file stays behind.
     assert!(!config.join("ssj/client.toml").exists());
     let names: Vec<String> = std::fs::read_dir(config.join("ssj"))
         .unwrap()
@@ -1910,7 +1910,7 @@ fn edit_with_a_host_changes_server_toml_there_after_the_server_has_checked_it() 
         .collect();
     assert_eq!(names, ["server.toml"]);
 
-    // a key that only the client knows is refused by the server, and the file stays as it was
+    // a key that only the client knows is refused by the server, and the file stays as it was.
     let bad = editor_script(r#"echo 'transport = "tcp"' >> "$1""#);
     let output = ssj_edit(&config, &bad, &["edit", "user@localhost"], "n\n");
     assert!(
@@ -1923,7 +1923,7 @@ fn edit_with_a_host_changes_server_toml_there_after_the_server_has_checked_it() 
 
 #[test]
 fn edit_is_the_editor_command_only_alone_or_before_a_host() {
-    // `ssj edit a b` has one word too many
+    // `ssj edit a b` has one word too many.
     let config = short_dir();
     let editor = editor_script("true");
     let output = ssj_edit(&config, &editor, &["edit", "a", "b"], "");
@@ -1943,9 +1943,9 @@ fn uncommented(template: &str) -> String {
 #[test]
 fn the_templates_of_the_two_files_hold_valid_settings_only() {
     use ssj_client::edit::{CLIENT_TEMPLATE, SERVER_TEMPLATE};
-    // as they are, both are empty files
+    // as they are, both are empty files.
     assert!(ssj_client::config::Config::from_text(CLIENT_TEMPLATE).is_ok());
-    // with every setting switched on, the client and the server accept every line
+    // with every setting switched on, the client and the server accept every line.
     let client = uncommented(CLIENT_TEMPLATE);
     assert!(client.lines().count() >= 10, "{client}");
     ssj_client::config::Config::from_text(&client).unwrap();
@@ -1989,7 +1989,7 @@ fn a_file_that_changed_while_it_was_edited_is_not_overwritten_and_the_text_is_ke
     ] {
         let file = dir.join(name);
         std::fs::write(&file, "").unwrap();
-        // the file exists and is empty; another editor saves while this one is open
+        // the file exists and is empty; another editor saves while this one is open.
         let editor = editor_script(&format!(
             "echo '{other_edit}' >> '{}'\nsleep 0.2\necho '# my change' >> \"$1\"",
             file.display()
@@ -2001,13 +2001,13 @@ fn a_file_that_changed_while_it_was_edited_is_not_overwritten_and_the_text_is_ke
             message.contains("changed while you were editing"),
             "{name}: {message}"
         );
-        // the file keeps what the other editor wrote
+        // the file keeps what the other editor wrote.
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             format!("{other_edit}\n"),
             "{name}"
         );
-        // and the text of this editor is in the file whose name is shown
+        // and the text of this editor is in the file whose name is shown.
         let kept = message
             .split_whitespace()
             .find(|word| word.contains("ssj-edit-kept-"))
@@ -2017,7 +2017,7 @@ fn a_file_that_changed_while_it_was_edited_is_not_overwritten_and_the_text_is_ke
         let copy = std::fs::read_to_string(kept).unwrap();
         assert!(copy.contains("# my change"), "{name}: {copy}");
         let _ = std::fs::remove_file(kept);
-        // no lock or temporary file stays behind
+        // no lock or temporary file stays behind.
         let names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -2042,6 +2042,6 @@ fn a_lock_that_is_held_on_the_host_stops_the_save_and_is_named() {
         "{message}"
     );
     assert!(!config.join("ssj/server.toml").exists());
-    // the lock of somebody else is left alone
+    // the lock of somebody else is left alone.
     assert!(lock.is_dir());
 }

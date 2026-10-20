@@ -52,7 +52,7 @@ where
 
     tokio::select! {
         () = &mut session_done => {
-            // the session is done: read and discard what the peer still sends until it closes
+            // the session is done: read and discard what the peer still sends until it closes.
             drop(peer_done);
             let _ = timeout(DRAIN, async {
                 let mut sink = [0u8; 4096];
@@ -61,7 +61,7 @@ where
             .await;
         }
         () = &mut peer_done => {
-            // the peer is gone, and the session sees the end of the stream and lets go
+            // the peer is gone, and the session sees the end of the stream and lets go.
             let _ = timeout(DRAIN, session_done).await;
         }
     }

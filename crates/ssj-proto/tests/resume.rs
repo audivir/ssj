@@ -91,7 +91,7 @@ fn resume_continues_where_the_client_stopped_if_the_output_is_still_there() {
     }
 }
 
-// Output that nobody acknowledged was forgotten, so the answer starts at the oldest byte left.
+// output that nobody acknowledged was forgotten, so the answer starts at the oldest byte left.
 #[test]
 fn resume_skips_forgotten_output_and_refuses_bytes_that_never_existed() {
     let out = output(100, 200);
@@ -127,23 +127,23 @@ fn attach_replays_everything_the_server_still_holds() {
         }
     );
 
-    // acknowledged output is gone, so the replay cannot start before the retained bytes
+    // acknowledged output is gone, so the replay cannot start before the retained bytes.
     let short = output(900, 1000);
     let (welcome, _) = negotiate(hello, &view(true, &short, 0)).unwrap();
     assert_eq!(welcome.output_offset, 900);
 }
 
-// The replay must not begin inside a character: the start of the buffer may cut one in two.
+// the replay must not begin inside a character: the start of the buffer may cut one in two.
 #[test]
 fn attach_starts_at_a_character_and_not_inside_one() {
     let hello = Hello::Attach { size: size() };
     let mut buf = ReplayBuffer::new(1 << 10);
-    // "€" is e2 82 ac; the first byte is acknowledged, so the buffer starts at 82 ac
+    // "€" is e2 82 ac; the first byte is acknowledged, so the buffer starts at 82 ac.
     buf.push("a€b".as_bytes());
     buf.ack(2).unwrap();
     let (welcome, _) = negotiate(hello.clone(), &view(true, &buf, 0)).unwrap();
     assert_eq!(welcome.output_offset, 4, "after 82 ac");
-    // text that is not UTF-8 is not touched beyond three bytes
+    // text that is not UTF-8 is not touched beyond three bytes.
     let mut binary = ReplayBuffer::new(1 << 10);
     binary.push(&[0x80; 10]);
     let (welcome, _) = negotiate(hello, &view(true, &binary, 0)).unwrap();
@@ -160,14 +160,14 @@ fn client_refuses_a_welcome_that_contradicts_its_own_state() {
         input_offset,
         output_offset,
     };
-    // the client sent 30 input bytes and got 10 acknowledged
+    // the client sent 30 input bytes and got 10 acknowledged.
     let check = |w| check_welcome(&resume, w, 10, 30).is_ok();
 
     assert!(check(welcome(10, 500)));
     assert!(check(welcome(30, 500)));
     assert!(!check(welcome(31, 500)), "claims input that was never sent");
     assert!(!check(welcome(9, 500)), "takes back acknowledged input");
-    // forgotten output moves the offset forward, and nothing ever moves it back
+    // forgotten output moves the offset forward, and nothing ever moves it back.
     assert!(check(welcome(20, 501)));
     assert!(check(welcome(20, 9_000_000)));
     assert!(
@@ -183,6 +183,6 @@ fn client_refuses_a_welcome_that_contradicts_its_own_state() {
     assert!(check_welcome(&start, welcome(0, 0), 0, 0).is_ok());
     assert!(check_welcome(&start, welcome(1, 0), 0, 0).is_err());
 
-    // a client without history takes whatever the server says
+    // a client without history takes whatever the server says.
     assert!(check_welcome(&Hello::Attach { size: size() }, welcome(999, 77), 0, 0).is_ok());
 }

@@ -67,7 +67,7 @@ impl Compressor {
 
 /// The data that `compressed` holds, at most [`MAX_DATA_LEN`] bytes of it.
 pub fn inflate(compressed: &[u8]) -> Result<Vec<u8>, InflateError> {
-    // the size is in the header, so a bomb is refused before anything is allocated for it
+    // the size is in the header, so a bomb is refused before anything is allocated for it.
     let size = match get_frame_content_size(compressed) {
         Ok(Some(size)) => size,
         _ => return Err(InflateError::Invalid),
@@ -85,7 +85,7 @@ pub fn inflate(compressed: &[u8]) -> Result<Vec<u8>, InflateError> {
     let out = state
         .decompress(compressed, size as usize)
         .map_err(|_| InflateError::Invalid)?;
-    // a frame that lies about its size is refused by zstd, but the length is part of the contract
+    // a frame that lies about its size is refused by zstd, but the length is part of the contract.
     if out.len() as u64 != size {
         return Err(InflateError::Invalid);
     }

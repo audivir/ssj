@@ -28,7 +28,7 @@ fn limits_are_inclusive() {
     );
 }
 
-// Each variable is within its limits, only the sum is too large.
+// each variable is within its limits, only the sum is too large.
 #[test]
 fn total_size_is_limited() {
     let value = "x".repeat(Env::MAX_VALUE);
@@ -78,7 +78,7 @@ fn terminal_and_locale_values_are_plain_names() {
         ("LANG", "de_DE.UTF-8@euro"),
         ("LC_ALL", "C.UTF-8"),
         ("LC_TIME", "en_GB"),
-        // other variables are not restricted
+        // other variables are not restricted.
         ("EDITOR", "/usr/bin/vi --wait"),
     ] {
         assert!(Env::new(vec![var(name, value)]).is_ok(), "{name}={value}");
@@ -102,10 +102,10 @@ fn terminal_and_locale_values_are_plain_names() {
             "{name}={value}"
         );
     }
-    // the longest allowed value
+    // the longest allowed value.
     let longest = "a".repeat(Env::MAX_PLAIN_VALUE);
     assert!(Env::new(vec![var("TERM", &longest)]).is_ok());
-    // one bad variable rejects the whole set
+    // one bad variable rejects the whole set.
     assert_eq!(
         Env::new(vec![var("COLORTERM", "truecolor"), var("TERM", "a/b")]),
         Err(EnvError::InvalidValue)

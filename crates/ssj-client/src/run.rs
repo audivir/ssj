@@ -215,7 +215,7 @@ pub fn run(args: Args) -> ExitCode {
     };
     let code = runtime.block_on(session(args));
     // the read of stdin runs on a worker thread that never returns on a terminal, so waiting for
-    // the runtime to finish would hang forever
+    // the runtime to finish would hang forever.
     runtime.shutdown_background();
     ExitCode::from(code)
 }
@@ -276,7 +276,7 @@ async fn session(mut args: Args) -> u8 {
     }
     if let Some(command) = &args.remote_command {
         // `ssh host command` runs the command in a shell, and so does this: the login shell of the
-        // host with `-c`
+        // host with `-c`.
         for word in [
             "--shell-arg",
             "-l",
@@ -294,7 +294,7 @@ async fn session(mut args: Args) -> u8 {
             .extend(["--congestion".to_owned(), choice.as_str().to_owned()]);
     }
     if args.batch {
-        // nobody can answer a prompt of a background refresh, and nobody waits for it
+        // nobody can answer a prompt of a background refresh, and nobody waits for it.
         args.ssh_command
             .extend(["-o", "BatchMode=yes", "-o", "ConnectTimeout=2"].map(str::to_owned));
     }
@@ -302,7 +302,7 @@ async fn session(mut args: Args) -> u8 {
         Command::Complete { host, connected } => complete(host.as_deref(), connected),
         Command::Connect => {
             // a name or `auto_attach` may mean a session that runs already; the server decides,
-            // and the client starts with an attach, which a new session answers with `NotStarted`
+            // and the client starts with an attach, which a new session answers with `NotStarted`.
             let mut extra = Vec::new();
             if let Some(name) = &args.name {
                 extra.extend(["--name".to_owned(), name.as_str().to_owned()]);
@@ -348,9 +348,9 @@ async fn start_or_install(
         args.destination,
         args.ssh_command[0]
     );
-    // with several sessions to join and a person at the terminal, the server hands the choice back
+    // with several sessions to join and a person at the terminal, the server hands the choice back.
     let mut extra = extra.to_vec();
-    // `--reuse` may start a session, and a bare `--attach` cannot name one
+    // `--reuse` may start a session, and a bare `--attach` cannot name one.
     let reuse = extra.iter().any(|word| word == "--reuse");
     let choosing = (reuse || extra == ["--attach"]) && interactive() && !args.batch;
     if choosing {
@@ -364,7 +364,7 @@ async fn start_or_install(
             choose_and_start(args, fingerprint, prestart, sessions, reuse).await
         }
         // only an explicit `ssj attach` has to find a session; `--name` and `--auto-attach` start
-        // one when there is none, and so may install the server
+        // one when there is none, and so may install the server.
         Err(StartError::Missing) if extra.first().is_some_and(|word| word == "--attach") => {
             Err(format!(
                 "ssj-server is not installed on {}, so no session runs there",
@@ -497,7 +497,7 @@ async fn run_choosing(
             })
             .collect();
         if flag == "--detach" {
-            // only a session with a client can be detached
+            // only a session with a client can be detached.
             sessions.retain(|s| s.state == SessionState::Connected);
         }
         let id = match sessions.len() {
@@ -536,7 +536,7 @@ fn state_word(state: SessionState) -> &'static str {
 
 /// The sessions as a JSON array, one object each.
 pub fn sessions_json(infos: &[SessionInfo]) -> String {
-    // the id and the name are restricted to characters that need no escaping
+    // the id and the name are restricted to characters that need no escaping.
     let items: Vec<String> = infos
         .iter()
         .map(|info| {
@@ -575,7 +575,7 @@ fn complete(host: Option<&str>, connected: bool) -> u8 {
     for origin in sessions_cache::stale_origins(&dir, sessions_cache::REFRESH_AFTER) {
         let target = match origin.port {
             Some(port) if origin.destination.contains(':') => {
-                // an IPv6 address needs brackets in front of a port
+                // an IPv6 address needs brackets in front of a port.
                 let (user, host) = origin
                     .destination
                     .rsplit_once('@')
@@ -590,7 +590,7 @@ fn complete(host: Option<&str>, connected: bool) -> u8 {
             Some(port) => format!("ssh://{}:{port}", origin.destination),
             None => origin.destination.clone(),
         };
-        // the list writes the cache; the process is not waited for
+        // the list writes the cache; the process is not waited for.
         let _ = std::process::Command::new(&exe)
             .args(["--batch", "list", &target])
             .stdin(std::process::Stdio::null())
@@ -603,13 +603,13 @@ fn complete(host: Option<&str>, connected: bool) -> u8 {
 
 fn remember(origin: &sessions_cache::Origin, entries: &[(String, bool)]) {
     if let Some(dir) = sessions_cache::dir() {
-        // a cache that cannot be written only costs the completion
+        // a cache that cannot be written only costs the completion.
         let _ = sessions_cache::store_states(&dir, origin, entries);
     }
 }
 
 async fn list_sessions(args: &Args) -> u8 {
-    // one refresh per host at a time; a second one has nothing to add
+    // one refresh per host at a time; a second one has nothing to add.
     let _refresh = if args.batch {
         match sessions_cache::dir()
             .and_then(|dir| sessions_cache::Refresh::acquire(&dir, &args.destination))
@@ -699,7 +699,7 @@ async fn list_sessions(args: &Args) -> u8 {
 async fn kill_session(args: &Args, mut ids: Vec<String>) -> u8 {
     let count = ids.len().max(1);
     let result = if ids.len() > 1 {
-        // one call to the host ends them all
+        // one call to the host ends them all.
         let mut extra = vec!["--kill".to_owned()];
         extra.extend(ids);
         run_remote(args, &extra, "").await
@@ -736,7 +736,7 @@ async fn kill_session(args: &Args, mut ids: Vec<String>) -> u8 {
 async fn detach_session(args: &Args, mut ids: Vec<String>) -> u8 {
     let count = ids.len().max(1);
     let result = if ids.len() > 1 {
-        // one call to the host detaches them all
+        // one call to the host detaches them all.
         let mut extra = vec!["--detach".to_owned()];
         extra.extend(ids);
         run_remote(args, &extra, "").await
@@ -834,7 +834,7 @@ async fn build_tiers(
     prefetched: Prefetched,
 ) -> Result<Vec<Tier>, String> {
     let choice = args.transport;
-    // UDP does not travel through a jump host, so it is not even tried there
+    // UDP does not travel through a jump host, so it is not even tried there.
     let udp_possible = matches!(choice, Transport::Auto | Transport::Udp) && connect.udp.is_some();
     let config = prefetched.config.filter(|_| udp_possible);
     let jump = choice == Transport::Auto && config.as_ref().is_some_and(|c| c.jump);
@@ -847,7 +847,7 @@ async fn build_tiers(
             Kind::Udp => {
                 let port = connect.udp.expect("offered");
                 // the address of the server: the one given, else the `HostName` of the `ssh`
-                // configuration (the destination may be an alias), else the destination itself
+                // configuration (the destination may be an alias), else the destination itself.
                 let host = udp_host(args, config.as_ref());
                 let found = match prefetched.address {
                     Some(ip) => Ok(SocketAddr::new(ip, port)),
@@ -1113,7 +1113,7 @@ impl Out {
         match self {
             Self::Quic(send) => {
                 let _ = send.finish();
-                // the peer must have the last frame before the process ends
+                // the peer must have the last frame before the process ends.
                 let _ = timeout(FLUSH_TIMEOUT, send.stopped()).await;
             }
             Self::Stream(writer) => {
@@ -1154,7 +1154,7 @@ async fn write_frames(mut out: Out, mut frames: mpsc::UnboundedReceiver<ClientFr
         if !out.write_all(&bytes).await {
             return;
         }
-        // a stream with a buffer must not hold a keystroke back
+        // a stream with a buffer must not hold a keystroke back.
         if let Out::Stream(writer) = &mut out
             && writer.flush().await.is_err()
         {
@@ -1426,7 +1426,7 @@ impl Client {
                     );
                     self.clear_status().await;
                     let pumped = self.pump(&mut link).await;
-                    // what was shown ahead of the server goes, whatever happens next
+                    // what was shown ahead of the server goes, whatever happens next.
                     let taken_back = self.echo.cancel();
                     let _ = self.io.output.write_all(&taken_back).await;
                     let _ = self.io.output.flush().await;
@@ -1445,7 +1445,8 @@ impl Client {
                         }
                     }
                 }
-                // the answer was fine and only the kind of hello was wrong: no pause, no other tier
+                // the answer was fine and only the kind of hello was wrong: no pause, no other
+                // tier.
                 Attempt::Again => continue,
                 Attempt::Retry => {
                     if self.try_next_tier() {
@@ -1530,7 +1531,7 @@ impl Client {
     async fn note_gap(&mut self, dropped: u64) {
         let _ = self.io.output.write_all(&dropped_notice(dropped)).await;
         let _ = self.io.output.flush().await;
-        // the rest of an open sequence is gone, so the tracker must not wait for it
+        // the rest of an open sequence is gone, so the tracker must not wait for it.
         self.tracker.abandon_sequence();
         self.sync_status(false).await;
     }
@@ -1582,7 +1583,7 @@ impl Client {
             let family_changed = found.is_ipv4() != addr.is_ipv4();
             *addr = found;
             if family_changed {
-                // the socket must be of the same family as the address
+                // the socket must be of the same family as the address.
                 self.rebind();
             }
         }
@@ -1704,7 +1705,7 @@ impl Client {
         } else {
             RACE_STAGGER
         };
-        // before the first connection QUIC is given up on quickly; later it may be slow to return
+        // before the first connection QUIC is given up on quickly; later it may be slow to return.
         let udp_cap = if self.linked_once {
             self.params.attempt_timeout
         } else {
@@ -1722,7 +1723,7 @@ impl Client {
         tokio::pin!(delay);
         let mut errors: Vec<String> = Vec::new();
         loop {
-            // the second one starts at once when the first is out
+            // the second one starts at once when the first is out.
             if first.is_none() && !second_started {
                 second = Some(self.prepare_link(secondary));
                 second_started = true;
@@ -1816,7 +1817,7 @@ impl Client {
         let welcome = match reply {
             Ok(Some(ServerFrame::Welcome(welcome))) => welcome,
             // the first start may not have arrived, so it is tried again as a start
-            // nobody has started the shell yet, so this client does it
+            // nobody has started the shell yet, so this client does it.
             Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
                 if matches!(hello, Hello::Attach { .. }) && !self.started =>
             {
@@ -1848,13 +1849,13 @@ impl Client {
             Ok(_) => return Attempt::Retry,
         };
         if matches!(hello, Hello::Attach { .. }) {
-            // a client without history takes over the offsets of the server
+            // a client without history takes over the offsets of the server.
             self.output_offset = welcome.output_offset;
             self.acked_output = welcome.output_offset;
             self.input = ReplayBuffer::starting_at(INPUT_BUFFER, welcome.input_offset);
             if welcome.output_offset > 0 {
                 // the replay starts in the middle of the stream: cancel a sequence it may cut
-                // and reset the colors, so that the first line does not inherit a state
+                // and reset the colors, so that the first line does not inherit a state.
                 let _ = self.io.output.write_all(b"\x18\x1b[0m").await;
                 let _ = self.io.output.flush().await;
             }
@@ -1905,7 +1906,8 @@ impl Client {
             self.output_offset = welcome.output_offset;
             self.note_gap(welcome.output_offset - output_offset).await;
         }
-        // everything after the offset of the server is sent again, including what was typed offline
+        // everything after the offset of the server is sent again, including what was typed
+        // offline.
         let mut offset = welcome.input_offset;
         while let Ok(chunk) = self.input.read_from(offset, MAX_DATA_LEN) {
             if chunk.is_empty() {
@@ -1950,7 +1952,7 @@ impl Client {
                     return Ok(Some(Finished::HungUp));
                 }
                 cause = next_cause(&mut self.net) => match cause {
-                    // the network is different now, so waiting longer makes no sense
+                    // the network is different now, so waiting longer makes no sense.
                     Some(_) => {
                         self.rebind();
                         return Ok(None);
@@ -2007,15 +2009,15 @@ impl Client {
                 Action::Send(bytes) => {
                     let stored = self.input.push(&bytes);
                     if stored < bytes.len() {
-                        // the reads leave room for the longest expansion, so this does not happen
+                        // the reads leave room for the longest expansion, so this does not happen.
                         return Err("the input buffer overflowed".to_owned());
                     }
                     if let Some(link) = link {
-                        // the acknowledgement of the output goes out in the same write
+                        // the acknowledgement of the output goes out in the same write.
                         self.ack_output(link, true);
                         let frame = self.input_frame(&bytes);
                         let _ = link.send(frame);
-                        // only with a connection: without one the echo cannot come
+                        // only with a connection: without one the echo cannot come.
                         let drawn = self.echo.typed(&bytes, Instant::now());
                         if !drawn.is_empty() {
                             let _ = self.io.output.write_all(&drawn).await;
@@ -2046,26 +2048,26 @@ impl Client {
     async fn pump(&mut self, link: &mut Link) -> Result<Pumped, String> {
         let mut ping = interval(PING_EVERY);
         let mut stalled = false;
-        // a change of the network that is waiting for the notifications to stop
+        // a change of the network that is waiting for the notifications to stop.
         let mut change: Option<(Cause, tokio::time::Instant)> = None;
-        // when the server has to have answered after the client moved to a new path
+        // when the server has to have answered after the client moved to a new path.
         let mut probe: Option<tokio::time::Instant> = None;
-        // when the probe went out, and how many notices the change brought, for the debug output
+        // when the probe went out, and how many notices the change brought, for the debug output.
         let mut probed_at: Option<Instant> = None;
         let mut notices = 0usize;
         let mut resizes = Debounce::new(RESIZE_QUIET);
-        // QUIC tried again on a new network while the session runs over a stream
+        // QUIC tried again on a new network while the session runs over a stream.
         let mut upgrade: Option<Upgrade> = None;
-        // when to make the program draw again, after debug lines were written over the screen
+        // when to make the program draw again, after debug lines were written over the screen.
         let mut redraw_at: Option<tokio::time::Instant> = None;
-        // the channels to the agent live as long as the link
+        // the channels to the agent live as long as the link.
         let mut agent = self
             .params
             .agent
             .clone()
             .map(|socket| Forward::new(socket, link.out.clone()));
         loop {
-            // two bytes of reserve: the escape can turn one typed byte into two
+            // two bytes of reserve: the escape can turn one typed byte into two.
             let room = self.input.free().saturating_sub(2).min(self.chunk.len());
             let change_at = change.map(|(_, at)| at);
             if crate::log::take_terminal_lines() {
@@ -2081,7 +2083,7 @@ impl Client {
                                 return Ok(Pumped::Done(finished));
                             }
                         }
-                        // end of input: the shell keeps running, like with `ssh`
+                        // end of input: the shell keeps running, like with `ssh`.
                         _ => self.stdin_open = false,
                     }
                 }
@@ -2100,7 +2102,7 @@ impl Client {
                         self.clear_status().await;
                     }
                     vlog!(3, "<- {}", server_frame_name(&frame));
-                    // compressed output is the same as plain output once it is inflated
+                    // compressed output is the same as plain output once it is inflated.
                     let frame = match frame {
                         ServerFrame::Compressed(packed) => ServerFrame::Output(
                             inflate(&packed)
@@ -2114,7 +2116,7 @@ impl Client {
                             // terminal hands out its output in small pieces, and one write (a
                             // trip through the blocking pool) for each would cap the throughput.
                             while data.len() < OUTPUT_BATCH && link.reader.take_ready_output(&mut data) {}
-                            // the rest of a sequence that was cancelled on the terminal is dropped
+                            // the rest of a sequence that was cancelled on the terminal is dropped.
                             let skipped = self.tracker.skip_prefix(&data);
                             let shown = &data[skipped..];
                             let (before, after) = self.echo.output(shown, Instant::now());
@@ -2128,7 +2130,7 @@ impl Client {
                                 return Err("cannot write to the terminal".to_owned());
                             }
                             self.tracker.feed(shown);
-                            // a status that was held back because of a sequence can go out now
+                            // a status that was held back because of a sequence can go out now.
                             self.sync_status(false).await;
                             self.output_offset += data.len() as u64;
                             if !link.reader.frame_ready() {
@@ -2143,7 +2145,7 @@ impl Client {
                         ServerFrame::Pong => {}
                         ServerFrame::AgentOpen(id) => match agent.as_mut() {
                             Some(agent) => agent.open(id).await,
-                            // nothing was offered, so a server that opens a channel is wrong
+                            // nothing was offered, so a server that opens a channel is wrong.
                             None => link.send(ClientFrame::AgentClose(id)),
                         },
                         ServerFrame::Agent(id, data) => {
@@ -2176,13 +2178,13 @@ impl Client {
                         }
                         ServerFrame::Error(code) => return Err(format!("the server ended the session: {code:?}")),
                         ServerFrame::Welcome(_) => return Err("the server sent a second welcome".to_owned()),
-                        // turned into output above
+                        // turned into output above.
                         ServerFrame::Compressed(_) => unreachable!("inflated above"),
                     }
                 }
                 Some(()) = self.io.hangups.recv() => {
                     if self.params.hangup_detaches {
-                        // the connection of an `ssh` session ended, which is a loss and not a wish
+                        // the connection of an `ssh` session ended, which is a loss and not a wish.
                         vlog!(1, "the terminal was closed inside an ssh session: leaving the session running");
                         link.send(ClientFrame::Detach);
                         return Ok(Pumped::Done(Finished::Detached));
@@ -2198,7 +2200,7 @@ impl Client {
                     resizes.push(size, tokio::time::Instant::now());
                 }
                 _ = async { tokio::time::sleep_until(tokio::time::Instant::from_std(echo_due.expect("guarded"))).await }, if echo_due.is_some() => {
-                    // nobody echoed what was shown, as with a password prompt
+                    // nobody echoed what was shown, as with a password prompt.
                     let taken_back = self.echo.expire(Instant::now());
                     let _ = self.io.output.write_all(&taken_back).await;
                     let _ = self.io.output.flush().await;
@@ -2232,7 +2234,7 @@ impl Client {
                     notices = 0;
                     self.rebind();
                     // a faster network may have appeared: QUIC is tried on it while the stream
-                    // works
+                    // works.
                     if self.current != 0
                         && upgrade.is_none()
                         && matches!(self.params.tiers[0], Tier::Udp { .. })
@@ -2248,7 +2250,7 @@ impl Client {
                 }
                 _ = async { tokio::time::sleep_until(probe.expect("guarded")).await }, if probe.is_some() => {
                     // the new path did not bring an answer, so the old connection is not worth
-                    // keeping
+                    // keeping.
                     vlog!(1, "no answer after the network change: giving up the connection and reconnecting");
                     return Ok(Pumped::Lost);
                 }
@@ -2295,7 +2297,7 @@ impl Client {
                     if silent > stall_after {
                         stalled = true;
                         // the number changes in steps of five seconds, so the title does not
-                        // flicker
+                        // flicker.
                         let text = if silent < Duration::from_secs(10) {
                             "no response from the server".to_owned()
                         } else {

@@ -1,11 +1,11 @@
-// Fuzz target. The first line is a comment, so that the file does not look like a script.
+// fuzz target. The first line is a comment, so that the file does not look like a script.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use ssj_proto::control::{format_reply, format_request, parse_reply, parse_request};
 
-// Whatever parses must format back to the same line.
+// whatever parses must format back to the same line.
 fuzz_target!(|data: &[u8]| {
     if let Ok(request) = parse_request(data) {
         let line = format_request(&request);

@@ -67,7 +67,7 @@ impl EnvFilter {
                 dropped.push(name.to_owned());
             }
         }
-        // a subset of a valid `Env` is valid
+        // a subset of a valid `Env` is valid.
         (
             Env::new(accepted).expect("subset of a valid environment"),
             dropped,

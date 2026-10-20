@@ -6,7 +6,7 @@ use clap::{CommandFactory, Parser};
 
 /// The flags that have a counterpart which turns them off: the id of each, its name, and the
 /// line that the help shows for both.
-// `build.rs` includes this file for the completions and the man page and does not call `command`
+// `build.rs` includes this file for the completions and the man page and does not call `command`.
 #[allow(dead_code)]
 const PAIRS: [[&str; 4]; 3] = [
     [

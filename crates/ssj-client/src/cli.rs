@@ -288,7 +288,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         Err(error) if error.use_stderr() => {
             return Err(error.render().to_string().trim_end().to_owned());
         }
-        // help and version go to the output and end the program
+        // help and version go to the output and end the program.
         Err(error) => error.exit(),
     };
     from_options(options)
@@ -401,13 +401,13 @@ fn from_options(options: Options) -> Result<Args, String> {
         (options.auto_attach || options.no_auto_attach).then_some(options.auto_attach);
     let forward_agent =
         (options.forward_agent || options.no_forward_agent).then_some(options.forward_agent);
-    // `list`, `attach`, and `kill` are commands only when a destination follows them
+    // `list`, `attach`, and `kill` are commands only when a destination follows them.
     let command_word = positionals
         .first()
         .filter(|_| positionals.len() > 1)
         .map(String::as_str);
     // `ssj edit` alone is the editor for the local file; a host that is called `edit` is reached
-    // as `user@edit`
+    // as `user@edit`.
     let local_edit = positionals.as_slice() == ["edit"];
     let (command, destination) = match command_word {
         _ if local_edit => (Command::Edit, String::new()),

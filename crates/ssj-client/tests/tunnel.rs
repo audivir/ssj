@@ -13,7 +13,7 @@ fn a_jump_host_or_proxy_command_is_found_in_the_ssh_configuration() {
     assert!(jump_in_config(&config(
         "proxycommand nc -X 5 -x proxy %h %p\n"
     )));
-    // only whole keys count
+    // only whole keys count.
     assert!(!jump_in_config(&config("identityfile ~/.ssh/proxyjump\n")));
     assert!(!jump_in_config("proxyjumper bastion\n"));
     assert!(!jump_in_config("proxyjump \n"));
@@ -25,16 +25,16 @@ fn the_order_of_transports_follows_the_choice_the_path_and_the_server() {
     use Kind::{Stdio, Tcp, Udp};
     let order = |choice, jump, udp, tcp| tier_order(choice, jump, udp, tcp);
 
-    // automatic: the fastest first, the one that always works last
+    // automatic: the fastest first, the one that always works last.
     assert_eq!(order(Transport::Auto, false, true, true), [Udp, Tcp, Stdio]);
-    // a jump host leaves out UDP
+    // a jump host leaves out UDP.
     assert_eq!(order(Transport::Auto, true, true, true), [Tcp, Stdio]);
-    // what the server does not offer is left out
+    // what the server does not offer is left out.
     assert_eq!(order(Transport::Auto, false, false, true), [Tcp, Stdio]);
     assert_eq!(order(Transport::Auto, false, true, false), [Udp, Stdio]);
     assert_eq!(order(Transport::Auto, false, false, false), [Stdio]);
 
-    // a choice is kept, and an unavailable one gives nothing
+    // a choice is kept, and an unavailable one gives nothing.
     assert_eq!(order(Transport::Udp, true, true, true), [Udp]);
     assert_eq!(order(Transport::Tcp, false, true, true), [Tcp]);
     assert_eq!(order(Transport::Stdio, false, true, true), [Stdio]);
@@ -59,6 +59,6 @@ fn the_host_name_is_taken_from_the_ssh_configuration() {
     assert!(jump.jump);
     assert_eq!(jump.hostname.as_deref(), Some("10.0.0.5"));
     assert_eq!(parse_ssh_config(""), SshConfig::default());
-    // no value, no host
+    // no value, no host.
     assert_eq!(parse_ssh_config("hostname \nhostname\n").hostname, None);
 }

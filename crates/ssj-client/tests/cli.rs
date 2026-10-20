@@ -39,13 +39,13 @@ fn bad_command_lines_are_refused() {
     }
 }
 
-// The destination is passed after `--`, but an option-like word must not get that far at all.
+// the destination is passed after `--`, but an option-like word must not get that far at all.
 #[test]
 fn destination_that_looks_like_an_option_is_refused() {
     assert!(args(&["-oProxyCommand=touch /tmp/x"]).is_err());
 }
 
-// Whatever the user types for the server path or its arguments must reach the server
+// whatever the user types for the server path or its arguments must reach the server
 // unchanged and must never be run as shell syntax.
 #[test]
 fn remote_command_survives_the_remote_shell_unchanged() {
@@ -85,7 +85,7 @@ fn remote_command_survives_the_remote_shell_unchanged() {
     );
 }
 
-// The default command is run by the remote login shell like this, so the test uses a real shell.
+// the default command is run by the remote login shell like this, so the test uses a real shell.
 #[test]
 fn default_command_runs_the_installed_file_or_reports_it_missing() {
     use std::os::unix::fs::PermissionsExt;
@@ -104,12 +104,12 @@ fn default_command_runs_the_installed_file_or_reports_it_missing() {
     let mut parsed = args(&["--server-arg", "a b; touch /tmp/ssj-injected", "host"]).unwrap();
     assert_eq!(parsed.server_path, ServerPath::Default);
 
-    // nothing installed: a marker and a code that the client can tell apart from other failures
+    // nothing installed: a marker and a code that the client can tell apart from other failures.
     let missing = run(&parsed);
     assert_eq!(missing.status.code(), Some(66));
     assert_eq!(String::from_utf8_lossy(&missing.stdout), "SSJ MISSING\n");
 
-    // installed: the file runs, and every argument arrives as one word
+    // installed: the file runs, and every argument arrives as one word.
     let file = bin.join("ssj-server-p1");
     std::fs::write(
         &file,
@@ -124,11 +124,11 @@ fn default_command_runs_the_installed_file_or_reports_it_missing() {
     );
     assert!(!std::path::Path::new("/tmp/ssj-injected").exists());
 
-    // a file that is not executable counts as missing
+    // a file that is not executable counts as missing.
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(run(&parsed).status.code(), Some(66));
 
-    // a path given by the user is used as it is, without the wrapper
+    // a path given by the user is used as it is, without the wrapper.
     parsed.server_path = ServerPath::Custom("/nonexistent/ssj-server".to_owned());
     assert_eq!(run(&parsed).status.code(), Some(127));
     std::fs::remove_dir_all(&data).unwrap();
@@ -155,7 +155,7 @@ fn subcommands_need_a_destination_after_them() {
             Command::Kill(vec![id]),
             "host",
         ),
-        // a name works where an id does
+        // a name works where an id does.
         (
             vec!["attach", "host", "work"],
             Command::Attach(Some("work".to_owned())),
@@ -239,7 +239,7 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
     assert!(args(&["--transport"]).is_err());
     assert!(args(&["--transport", "x", "host"]).is_err());
 
-    // the file fills in what the command line leaves open
+    // the file fills in what the command line leaves open.
     let config = Config::from_text("transport = \"tcp\"\n").unwrap();
     let mut open = args(&["host"]).unwrap();
     open.apply_config(&config);
@@ -268,14 +268,14 @@ fn the_destination_gives_the_argument_for_ssh_and_its_port() {
             "{text}"
         );
     }
-    // the host part is what DNS gets
+    // the host part is what DNS gets.
     assert_eq!(args(&["tim@host:2222"]).unwrap().host(), "host");
     assert_eq!(args(&["[::1]:22"]).unwrap().host(), "::1");
-    // an option or a command in place of a destination
+    // an option or a command in place of a destination.
     for bad in ["-oProxyCommand=id", "host;id", "a b", "$(id)", "host:0", ""] {
         assert!(args(&[bad]).is_err(), "{bad:?}");
     }
-    // an option is no destination even after the other arguments
+    // an option is no destination even after the other arguments.
     assert!(args(&["--", "-x"]).is_err());
 }
 
@@ -350,7 +350,7 @@ fn the_flags_of_the_listing_and_the_completion() {
     let json = args(&["list", "--json", "host"]).unwrap();
     assert!(json.json && json.command == Command::List);
     assert!(!args(&["list", "host"]).unwrap().json);
-    // the completion needs no destination, and takes a host or none
+    // the completion needs no destination, and takes a host or none.
     assert_eq!(
         args(&["--complete"]).unwrap().command,
         Command::Complete {
@@ -375,7 +375,7 @@ fn the_flags_of_the_listing_and_the_completion() {
         }
     );
     assert!(args(&["--batch", "list", "host"]).unwrap().batch);
-    // an option given twice: the last one counts, and the lists collect
+    // an option given twice: the last one counts, and the lists collect.
     assert_eq!(
         args(&["--udp-host", "a", "--udp-host", "b", "h"])
             .unwrap()
@@ -410,7 +410,7 @@ fn the_man_page_and_the_completions_are_built() {
         let text = std::fs::read_to_string(found(file)).unwrap();
         assert!(text.contains("transport"), "{file}");
     }
-    // the id after the host of `attach` and `kill` is completed from the sessions of that host
+    // the id after the host of `attach` and `kill` is completed from the sessions of that host.
     let zsh = std::fs::read_to_string(found("_ssj")).unwrap();
     assert!(
         zsh.starts_with("#compdef ssj\n"),
@@ -458,9 +458,9 @@ fn the_help_shows_a_flag_and_its_counterpart_on_one_line() {
     ] {
         assert!(help.contains(line), "{line}\n{help}");
     }
-    // the counterparts have no line of their own
+    // the counterparts have no line of their own.
     assert!(!help.contains("\n      --no-auto-attach"));
-    // and both spellings still work
+    // and both spellings still work.
     assert!(args(&["--auto-attach", "h"]).unwrap().auto_attach);
     assert!(
         !args(&["--auto-attach", "--no-auto-attach", "h"])
@@ -500,7 +500,7 @@ fn edit_alone_is_the_local_editor_and_with_a_host_the_remote_one() {
         (remote.destination.as_str(), remote.ssh_port),
         ("me@host", Some(2222))
     );
-    // a host called edit is reached with a user in front
+    // a host called edit is reached with a user in front.
     let host = args(&["me@edit"]).unwrap();
     assert_eq!(
         (host.command, host.destination.as_str()),
@@ -521,7 +521,7 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
             "host",
             Some("echo hi there"),
         ),
-        // options of the command come after `--`, and options of ssj may stay in front or behind
+        // options of the command come after `--`, and options of ssj may stay in front or behind.
         (
             vec!["host", "--", "ls", "-l"],
             Command::Connect,
@@ -540,14 +540,14 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
             "me@host",
             Some("uptime"),
         ),
-        // a shell command in one word is passed as it is
+        // a shell command in one word is passed as it is.
         (
             vec!["host", "--", "cd /tmp && ls | wc -l"],
             Command::Connect,
             "host",
             Some("cd /tmp && ls | wc -l"),
         ),
-        // hosts that are called like our commands: after `--` the single word is the host
+        // hosts that are called like our commands: after `--` the single word is the host.
         (
             vec!["attach", "--", "ls"],
             Command::Connect,
@@ -560,7 +560,7 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
             "list",
             Some("ls"),
         ),
-        // and without it the command word wins, as always
+        // and without it the command word wins, as always.
         (vec!["attach", "ls"], Command::Attach(None), "ls", None),
         (vec!["list", "ls"], Command::List, "ls", None),
     ];
@@ -571,17 +571,17 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
         assert_eq!(parsed.remote_command.as_deref(), remote, "{words:?}");
     }
     for bad in [
-        // no destination, or more than one in front of the command
+        // no destination, or more than one in front of the command.
         vec!["--", "ls"],
         vec!["a", "b", "--", "ls"],
         vec!["list", "host", "--", "ls"],
         // an empty command
         vec!["host", "--", ""],
         vec!["host", "--", " "],
-        // an existing session would not run it
+        // an existing session would not run it.
         vec!["--name", "work", "host", "--", "ls"],
         vec!["host", "--auto-attach", "--", "ls"],
-        // an option of the command without `--` is an option of ssj
+        // an option of the command without `--` is an option of ssj.
         vec!["host", "ls", "-l"],
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");

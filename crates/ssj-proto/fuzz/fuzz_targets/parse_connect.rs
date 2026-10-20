@@ -1,4 +1,4 @@
-// Fuzz target. The first line is a comment, so that the file does not look like a script.
+// fuzz target. The first line is a comment, so that the file does not look like a script.
 
 #![no_main]
 

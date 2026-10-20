@@ -95,7 +95,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     )
     .unwrap();
 
-    // nothing on the command line: the file decides
+    // nothing on the command line: the file decides.
     let mut plain = args(&["host"]);
     plain.apply_config(&config);
     assert_eq!(plain.ssh_command, ["my-ssh"]);
@@ -103,7 +103,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     assert!(plain.send_env.matches("ONLY") && !plain.send_env.matches("TERM"));
     assert_eq!(plain.auto_install, Some(AutoInstall::Always));
 
-    // each flag beats its key, and leaves the other keys alone
+    // each flag beats its key, and leaves the other keys alone.
     let mut flags = args(&[
         "--ssh-command",
         "other-ssh",

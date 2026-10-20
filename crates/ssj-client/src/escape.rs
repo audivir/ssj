@@ -56,7 +56,7 @@ impl EscapeFilter {
                 actions.push(Action::Detach);
                 return actions;
             }
-            // the escape character is off when it is none: no byte equals it
+            // the escape character is off when it is none: no byte equals it.
             let Some(escape) = self.escape else {
                 run.push(byte);
                 continue;
@@ -108,7 +108,7 @@ pub fn help_in(detach_key: Option<u8>, inside_ssh: bool) -> String {
         "\r\nSupported escape sequences:\r\n  ~.  detach and leave the session running\r\n  ~~  send a single ~\r\n  ~?  this list\r\n(only at the start of a line)\r\n",
     );
     if let Some(key) = detach_key {
-        // the key as it is typed: ^] for 0x1d
+        // the key as it is typed: ^] for 0x1d.
         text.push_str(&format!(
             "  ^{}  detach, anywhere\r\n",
             char::from(key + b'@')

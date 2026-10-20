@@ -278,7 +278,7 @@ pub fn parse_timeout(text: &str) -> Result<Option<Duration>, String> {
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
     let mut out = Args::default();
     let mut args = args.into_iter().peekable();
-    // an optional session id follows `--attach` and `--kill`
+    // an optional session id follows `--attach` and `--kill`.
     let session_id = |args: &mut std::iter::Peekable<_>| -> Result<Option<String>, String> {
         let next: Option<&OsString> = args.peek();
         match next.map(|a| a.to_string_lossy().into_owned()) {

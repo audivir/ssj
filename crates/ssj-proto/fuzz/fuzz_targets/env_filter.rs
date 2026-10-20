@@ -1,11 +1,11 @@
-// Fuzz target. The first line is a comment, so that the file does not look like a script.
+// fuzz target. The first line is a comment, so that the file does not look like a script.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use ssj_proto::{Env, EnvFilter};
 
-// The input is the patterns, one per line, then a zero byte, then the variable names, one per line.
+// the input is the patterns, one per line, then a zero byte, then the variable names, one per line.
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);
     let (patterns, names) = text.split_once('\0').unwrap_or((&text, ""));

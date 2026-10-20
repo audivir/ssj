@@ -110,7 +110,7 @@ pub(crate) fn read_bootstrap_input(
         .ok()
         .and_then(Result::ok)
         .filter(|line| !line.is_empty());
-    // a start line that is wrong only costs the head start of the shell
+    // a start line that is wrong only costs the head start of the shell.
     let start = start_line
         .as_deref()
         .and_then(|line| parse_start(line).ok());
@@ -177,7 +177,7 @@ fn existing_session(args: &Args) -> Result<Existing, String> {
 /// The process started by `ssh`.
 pub fn run_parent(args: &Args) -> ExitCode {
     daemon::close_inherited_descriptors();
-    // the daemon gets the resolved values on its command line, so both agree
+    // the daemon gets the resolved values on its command line, so both agree.
     let mut args = args.clone();
     match Config::load() {
         Ok(config) => args.apply_config(&config),
@@ -192,7 +192,7 @@ pub fn run_parent(args: &Args) -> ExitCode {
         Err(message) => return fail(message, 2),
     };
     let pin = input.pin;
-    // a named session, or the only free one, is joined instead of starting another
+    // a named session, or the only free one, is joined instead of starting another.
     match existing_session(args) {
         Err(message) => return fail(&message, 1),
         Ok(Existing::Join(found)) => return control_cli::attach_session(&found, pin),
@@ -210,7 +210,7 @@ pub fn run_parent(args: &Args) -> ExitCode {
         Ok(exe) => exe,
         Err(err) => return fail(&format!("cannot find the own executable: {err}"), 1),
     };
-    // the daemon shows the id in `ps`, and the client prints it in its log
+    // the daemon shows the id in `ps`, and the client prints it in its log.
     let mut for_child = args.clone();
     for_child.session_id = daemon::random_session_id()
         .ok()
@@ -316,14 +316,14 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
     let (conns, conns_rx) = tokio_mpsc::channel(4);
     let mut frontend = Frontend::new(id.clone(), args.port_range.clone(), conns, HELLO_TIMEOUT)
         .with_transports(args.udp, args.tcp)
-        // QUIC takes no more unacknowledged output than may wait for a connected client
+        // QUIC takes no more unacknowledged output than may wait for a connected client.
         .with_send_window(args.live_backlog as u64);
     let connect = match frontend.open(pin).await {
         Ok(connect) => connect,
         Err(err) => return fail(&err.to_string(), 1),
     };
 
-    // the control socket exists before the client hears about the session
+    // the control socket exists before the client hears about the session.
     let socket = match prepare_control_socket(&id) {
         Ok(socket) => socket,
         Err(err) => return fail(&format!("cannot create the control socket: {err}"), 1),
@@ -333,7 +333,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
     let mut out = std::io::stdout();
     let _ = out.write_all(format_connect(&connect).as_bytes());
     let _ = out.flush();
-    // from here on the daemon holds nothing of the `ssh` channel
+    // from here on the daemon holds nothing of the `ssh` channel.
     if let Err(err) = daemon::silence_stdio() {
         eprintln!("ssj-server: cannot release stdio: {err}");
     }
@@ -361,7 +361,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
         away_after: args.away_after,
         slow_client: args.slow_client,
         live_backlog: args.live_backlog,
-        // the directory exists: the control socket was made in it
+        // the directory exists: the control socket was made in it.
         agent_socket: control_dir().ok().map(|dir| agent_path(&dir, id.as_str())),
         compress: args.compress,
         prestart: input.start,
@@ -393,7 +393,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
                 SessionEvent::Disconnected => watching.set_state(SessionState::Disconnected),
                 SessionEvent::Detached => {
                     watching.set_state(SessionState::Detached);
-                    // nobody can connect anymore, and the next attach opens a new endpoint
+                    // nobody can connect anymore, and the next attach opens a new endpoint.
                     watching.frontend.lock().await.close();
                 }
             }
@@ -422,7 +422,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
         .run(conns_rx)
         .await;
     if matches!(end, SessionEnd::Killed) {
-        // the exit status for a connected client is queued, and needs a moment to leave
+        // the exit status for a connected client is queued, and needs a moment to leave.
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     context.frontend.lock().await.close_and_flush().await;

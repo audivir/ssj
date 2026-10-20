@@ -164,7 +164,7 @@ impl Echo {
 
     pub fn resize(&mut self, columns: u16) {
         self.columns = usize::from(columns);
-        // the line may have been redrawn by the terminal
+        // the line may have been redrawn by the terminal.
         self.column = None;
     }
 
@@ -241,7 +241,7 @@ impl Echo {
                     if self.pending.len() < MAX_PENDING {
                         self.pending.push_back(Entry { ch, drawn: draw });
                     } else {
-                        // too much to follow: a paste, or a server that does not answer
+                        // too much to follow: a paste, or a server that does not answer.
                         self.pending.clear();
                         self.trusted = false;
                     }
@@ -252,7 +252,7 @@ impl Echo {
                     }
                 }
                 '\r' | '\n' => {
-                    // a new line, and the first character of it is not shown
+                    // a new line, and the first character of it is not shown.
                     self.pending.clear();
                     self.trusted = false;
                     self.plain = true;
@@ -339,7 +339,7 @@ impl Echo {
                 }
                 0x20..=0x7e => self.printable(char::from(byte)),
                 _ => {
-                    // backspace, tab, and the rest move the cursor in ways that are not tracked
+                    // backspace, tab, and the rest move the cursor in ways that are not tracked.
                     self.column = None;
                     self.mismatch();
                 }
@@ -347,7 +347,7 @@ impl Echo {
             Parse::Esc => match byte {
                 b'[' => self.parse = Parse::Csi(Vec::new()),
                 b']' => self.parse = Parse::Osc,
-                // keypad modes, which shells switch around the prompt
+                // keypad modes, which shells switch around the prompt.
                 b'=' | b'>' => {}
                 _ => self.other_sequence(),
             },
@@ -377,7 +377,7 @@ impl Echo {
 
     /// A byte of a character of several bytes in the output (or one that ends it).
     fn feed_utf8(&mut self, byte: u8) {
-        // a sequence that a plain byte interrupts is broken, and the byte is handled as itself
+        // a sequence that a plain byte interrupts is broken, and the byte is handled as itself.
         if self.output_utf8.pending() && byte < 0x80 {
             self.output_utf8.clear();
             self.column = None;
@@ -388,7 +388,7 @@ impl Echo {
         match self.output_utf8.step(byte) {
             Step::More => {}
             Step::Char(ch) if narrow(ch) => self.printable(ch),
-            // a wide or unknown character: its width is not known, so neither is the column
+            // a wide or unknown character: its width is not known, so neither is the column.
             Step::Char(_) | Step::Invalid => {
                 self.column = None;
                 self.mismatch();
@@ -398,9 +398,9 @@ impl Echo {
 
     fn csi(&mut self, params: &[u8], last: u8) {
         match (params, last) {
-            // colors and attributes, erasing to the end of the line
+            // colors and attributes, erasing to the end of the line.
             (_, b'm' | b'K') if params.iter().all(|b| b.is_ascii_digit() || *b == b';') => {}
-            // application cursor keys and bracketed paste, which shells switch around the prompt
+            // application cursor keys and bracketed paste, which shells switch around the prompt.
             (b"?1" | b"?2004", b'h' | b'l') => {}
             _ => self.other_sequence(),
         }

@@ -47,7 +47,7 @@ fn the_host_name_is_one_safe_path_component() {
 
 #[test]
 fn a_path_too_long_for_a_socket_moves_to_tmp_by_user() {
-    // 100 bytes is the limit, and the file name takes 23
+    // 100 bytes is the limit, and the file name takes 23.
     let fits = format!("/{}", "a".repeat(100 - 23 - "/ssj".len() - 1));
     let dir = dir_for(Some(PathBuf::from(&fits)), None, None, "box", 1000).unwrap();
     assert_eq!(dir, PathBuf::from(&fits).join("ssj"));
@@ -56,7 +56,7 @@ fn a_path_too_long_for_a_socket_moves_to_tmp_by_user() {
     let too_long = format!("{fits}b");
     let dir = dir_for(Some(PathBuf::from(too_long)), None, None, "box", 1000).unwrap();
     assert_eq!(dir, PathBuf::from("/tmp/ssj-1000"));
-    // the other two sources move as well
+    // the other two sources move as well.
     let long_home = PathBuf::from(format!("/{}", "h".repeat(90)));
     assert_eq!(
         dir_for(None, None, Some(long_home), "box", 7).unwrap(),

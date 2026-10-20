@@ -118,7 +118,7 @@ async fn new_client_attaches_to_a_detached_session_and_finds_the_shell_as_it_was
     read_until(&mut rx, |o| o.contains("got:one:1")).await;
     send(&mut tx, ClientFrame::Detach).await;
     wait_state(&runtime, SessionState::Detached);
-    // a detached session listens on nothing
+    // a detached session listens on nothing.
     assert!(!reachable(&first, &launched.connect).await);
 
     let attach = run_control(&runtime, &["--attach"], &format_pin(&second.fingerprint()));
@@ -138,13 +138,13 @@ async fn new_client_attaches_to_a_detached_session_and_finds_the_shell_as_it_was
     let (mut tx, mut rx, _conn) = open(&second, &fresh).await.unwrap();
     send(&mut tx, ClientFrame::Hello(Hello::Attach { size: size() })).await;
     send(&mut tx, ClientFrame::Input(b"two\n".to_vec())).await;
-    // the counter of the shell is still there
+    // the counter of the shell is still there.
     let (output, _) = read_until(&mut rx, |o| o.contains("got:two:2")).await;
     assert!(output.contains("got:two:2"), "{output:?}");
 
-    // only the client of the attach is accepted by the new endpoint
+    // only the client of the attach is accepted by the new endpoint.
     assert!(!reachable(&first, &fresh).await);
-    // and the helper does say yes to the right client
+    // and the helper does say yes to the right client.
     assert!(reachable(&second, &fresh).await);
 }
 
@@ -169,7 +169,7 @@ fn attach_and_kill_report_problems_instead_of_guessing() {
         assert!(output.stdout.is_empty(), "{bad_stdin:?}");
     }
 
-    // an id that could point somewhere else is refused before anything happens
+    // an id that could point somewhere else is refused before anything happens.
     let bad_id = run_control(&runtime, &["--kill", "../../etc/passwd"], "");
     assert_eq!(bad_id.status.code(), Some(2));
     assert_eq!(list(&runtime).len(), 1, "the session must still run");
@@ -246,7 +246,7 @@ async fn sigterm_has_the_effect_of_kill() {
     let sockets = socket_files(&runtime);
     assert_eq!(sockets.len(), 1);
 
-    // the pid of the daemon, as the kernel reports it for the peer of the socket
+    // the pid of the daemon, as the kernel reports it for the peer of the socket.
     let stream = tokio::net::UnixStream::connect(runtime.join("ssj").join(&sockets[0]))
         .await
         .unwrap();
@@ -309,7 +309,7 @@ fn control_directory_that_others_can_enter_is_refused() {
 
 #[test]
 fn a_runtime_directory_with_a_long_path_still_gets_a_working_socket() {
-    // longer than a socket path may be
+    // longer than a socket path may be.
     let mut long = runtime_dir();
     for _ in 0..4 {
         long = long.join("a-long-directory-name-0123456789");
@@ -319,7 +319,7 @@ fn a_runtime_directory_with_a_long_path_still_gets_a_working_socket() {
 
     launch(&long, &Identity::generate(), free_range(), "cat");
 
-    // the session is found again with the same environment, and the socket is outside the path
+    // the session is found again with the same environment, and the socket is outside the path.
     assert!(!list(&long).is_empty());
     assert!(!long.join("ssj").exists());
     run_control(&long, &["--kill"], "");
@@ -336,19 +336,19 @@ fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].name.as_ref().map(|n| n.as_str()), Some("work"));
 
-    // the same command with a new client joins the session instead of starting another
+    // the same command with a new client joins the session instead of starting another.
     let second = Identity::generate();
     let joined = launch_with(&runtime, &second, free_range(), "cat", &["--name", "work"]);
     assert_eq!(joined.connect.id, id);
     assert_ne!(joined.connect.fingerprint, launched.connect.fingerprint);
     assert_eq!(list(&runtime).len(), 1);
 
-    // another name is another session
+    // another name is another session.
     let other = launch_with(&runtime, &first, free_range(), "cat", &["--name", "play"]);
     assert_ne!(other.connect.id, id);
     assert_eq!(list(&runtime).len(), 2);
 
-    // by name: attach, and kill
+    // by name: attach, and kill.
     let pin = format_pin(&Identity::generate().fingerprint());
     let attached = run_control(&runtime, &["--attach", "work"], &pin);
     assert!(attached.status.success());
@@ -399,16 +399,16 @@ fn invalid_names_are_refused_before_anything_starts() {
 async fn reuse_joins_the_only_session_without_a_client_and_otherwise_starts_a_new_one() {
     let runtime = runtime_dir();
     let client = Identity::generate();
-    // nothing runs: a new session starts
+    // nothing runs: a new session starts.
     let first = launch_with(&runtime, &client, free_range(), "cat", &["--reuse"]);
     assert_eq!(list(&runtime).len(), 1);
 
-    // one session without a client: it is joined
+    // one session without a client: it is joined.
     let again = launch_with(&runtime, &client, free_range(), "cat", &["--reuse"]);
     assert_eq!(again.connect.id, first.connect.id);
     assert_eq!(list(&runtime).len(), 1);
 
-    // a client is connected: the session is not taken away, a new one starts
+    // a client is connected: the session is not taken away, a new one starts.
     let (mut tx, mut rx, _conn) = open(&client, &again.connect).await.unwrap();
     send(
         &mut tx,
@@ -426,7 +426,7 @@ async fn reuse_joins_the_only_session_without_a_client_and_otherwise_starts_a_ne
     assert_ne!(third.connect.id, first.connect.id);
     assert_eq!(list(&runtime).len(), 2);
 
-    // two candidates would be a guess: a third session starts instead of picking one
+    // two candidates would be a guess: a third session starts instead of picking one.
     send(&mut tx, ClientFrame::Detach).await;
     let start = Instant::now();
     while list(&runtime)
@@ -457,7 +457,7 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
         run_bootstrap_with(runtime, &pin, free_range(), "cat", &["--reuse", "--choose"])
     };
 
-    // nothing runs: a session starts, and one session without a client is joined
+    // nothing runs: a session starts, and one session without a client is joined.
     let first = launch_with(
         &runtime,
         &client,
@@ -469,7 +469,7 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
     assert!(status.success());
     assert_eq!(list(&runtime).len(), 1);
 
-    // two of them: the caller is asked, and nothing starts
+    // two of them: the caller is asked, and nothing starts.
     let second = launch_with(&runtime, &client, free_range(), "cat", &[]);
     assert_ne!(first.connect.id, second.connect.id);
     let (status, out, ..) = choose(&runtime);
@@ -491,7 +491,7 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
     assert_eq!(list(&runtime).len(), 2);
 
     // the same for the orders that name a session: `--choose` hands the choice back, and
-    // without it the error asks for a name
+    // without it the error asks for a name.
     for order in ["--kill", "--detach", "--attach"] {
         let pin_text = if order == "--attach" {
             pin.as_str()
@@ -512,7 +512,7 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
             "{order}"
         );
     }
-    // several ids in one call: each one is answered, and the failures do not stop the others
+    // several ids in one call: each one is answered, and the failures do not stop the others.
     let both = run_control(
         &runtime,
         &[
@@ -529,7 +529,7 @@ fn choose_lists_the_sessions_without_a_client_when_there_are_several() {
             .count(),
         2
     );
-    // a name is never a question
+    // a name is never a question.
     let id = first.connect.id.as_str().to_owned();
     let named = run_control(&runtime, &["--kill", &id, "--choose"], "");
     assert!(named.status.success());

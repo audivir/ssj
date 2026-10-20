@@ -5,14 +5,14 @@ fn the_old_title_is_restored_by_the_stack_and_by_name() {
     let mut status = TitleStatus::default();
     let shown = status.show("no response from the server");
     assert_eq!(shown, b"\x1b[22;0t\x1b]2;no response from the server\x07");
-    // a second message does not push the stack again
+    // a second message does not push the stack again.
     assert_eq!(status.show("again"), b"\x1b]2;again\x07");
 
     assert_eq!(
         status.clear(Some("my title")),
         b"\x1b[23;0t\x1b]2;my title\x07"
     );
-    // nothing to clear any more
+    // nothing to clear any more.
     assert!(status.clear(Some("my title")).is_empty());
 }
 

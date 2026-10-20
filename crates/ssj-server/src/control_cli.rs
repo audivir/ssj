@@ -191,7 +191,7 @@ fn stdio(path: &std::path::Path) -> ExitCode {
     };
     let code = runtime.block_on(stdio_session(path));
     // the read of stdin runs on a thread that does not return on a terminal or a pipe that stays
-    // open, so waiting for the runtime would hang
+    // open, so waiting for the runtime would hang.
     runtime.shutdown_background();
     code
 }
@@ -213,7 +213,7 @@ async fn stdio_session(path: &std::path::Path) -> ExitCode {
     {
         return fail("the session does not answer");
     }
-    // the answer is one line, and the stream follows it at once
+    // the answer is one line, and the stream follows it at once.
     let mut from_session = BufReader::new(read);
     let mut line = Vec::new();
     let answer = tokio::time::timeout(
@@ -243,9 +243,9 @@ async fn stdio_session(path: &std::path::Path) -> ExitCode {
         let _ = write.shutdown().await;
     });
     tokio::select! {
-        // the session closed the stream, which is the normal end
+        // the session closed the stream, which is the normal end.
         () = &mut down => {}
-        // the client closed its side; the session may still have bytes for it
+        // the client closed its side; the session may still have bytes for it.
         () = &mut up => {
             let _ = tokio::time::timeout(STDIO_DRAIN, down).await;
         }

@@ -79,7 +79,7 @@ async fn a_stream_that_is_slow_to_open_is_not_given_up_after_the_short_first_tim
     let session = tokio::spawn(Session::new(Direct, config).run(conns_rx));
 
     // the first transport needs 1.2 s, the first attempt may take 0.3 s, and a second transport
-    // that never works is behind it
+    // that never works is behind it.
     let failing: Dial = Box::new(|| Box::pin(async { Err("no second way".to_owned()) }));
     let (_typed_tx, typed_rx) = tokio::io::duplex(1 << 10);
     let (shown_tx, mut shown_rx) = tokio::io::duplex(1 << 20);

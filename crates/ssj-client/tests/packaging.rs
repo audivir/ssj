@@ -55,14 +55,14 @@ fn the_cache_keeps_names_per_host_and_replaces_them() {
     store(&dir, &b, &["work".into(), "xyz".into()]).unwrap();
     assert_eq!(names(&dir, Some("me@a")), ["work", "abc"]);
     assert_eq!(names(&dir, Some("b")), ["work", "xyz"]);
-    // all hosts, without repeats
+    // all hosts, without repeats.
     let mut all = names(&dir, None);
     all.sort();
     assert_eq!(all, ["abc", "work", "xyz"]);
     store(&dir, &a, &[]).unwrap();
     assert!(names(&dir, Some("me@a")).is_empty());
     assert!(names(&dir, Some("nobody")).is_empty());
-    // the directory is private
+    // the directory is private.
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
     assert_eq!(mode & 0o077, 0, "{mode:o}");
@@ -78,11 +78,11 @@ fn old_lists_are_found_with_where_they_came_from() {
         stale_origins(&dir, Duration::ZERO),
         [origin("me@a", Some(2222))]
     );
-    // a hand-edited file must not smuggle anything into the `ssh` command line
+    // a hand-edited file must not smuggle anything into the `ssh` command line.
     std::fs::write(dir.join("evil.list"), "@-oProxyCommand=id\nx\n").unwrap();
     std::fs::write(dir.join("evil2.list"), "@a;id\n").unwrap();
     assert_eq!(stale_origins(&dir, Duration::ZERO).len(), 1);
-    // and a name that is no selector is not offered
+    // and a name that is no selector is not offered.
     std::fs::write(dir.join("evil3.list"), "@h\n$(id)\nok\n").unwrap();
     assert!(!names(&dir, None).iter().any(|n| n.contains('$')));
     std::fs::remove_dir_all(&dir).unwrap();
@@ -119,7 +119,7 @@ fn the_cache_remembers_which_sessions_have_a_client() {
     .unwrap();
     assert_eq!(names(&dir, Some("me@a")), ["work", "abc", "idle"]);
     assert_eq!(connected_names(&dir, Some("me@a")), ["work", "abc"]);
-    // a list written without the information has no session with a client
+    // a list written without the information has no session with a client.
     store(&dir, &origin, &["work".to_owned()]).unwrap();
     assert!(connected_names(&dir, Some("me@a")).is_empty());
     let _ = std::fs::remove_dir_all(&dir);

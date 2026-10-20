@@ -24,7 +24,7 @@ fn descriptors_above_2_are_closed_and_the_standard_ones_stay() {
         );
         return;
     }
-    // a shell opens two files on descriptors above 2 and runs this test again
+    // a shell opens two files on descriptors above 2 and runs this test again.
     let exe = std::env::current_exe().unwrap();
     let status = Command::new("sh")
         .arg("-c")

@@ -122,7 +122,7 @@ fn listed(dir: &Path, host: Option<&str>, connected_only: bool) -> Vec<String> {
             if connected_only && state != "connected" {
                 continue;
             }
-            // the file may have been edited, so only a valid selector is passed on
+            // the file may have been edited, so only a valid selector is passed on.
             if ssj_proto::is_selector(name) && !out.iter().any(|seen| seen == name) {
                 out.push(name.to_owned());
             }
@@ -160,7 +160,7 @@ pub fn stale_origins(dir: &Path, older_than: Duration) -> Vec<Origin> {
 fn origin_of(text: &str) -> Option<Origin> {
     let mut lines = text.lines();
     let destination = lines.next()?.strip_prefix('@')?.to_owned();
-    // the text goes to `ssh` later, so it must pass the same check as a typed destination
+    // the text goes to `ssh` later, so it must pass the same check as a typed destination.
     let parsed = ssj_proto::destination::parse(&destination).ok()?;
     if parsed.port.is_some() || parsed.target() != destination {
         return None;

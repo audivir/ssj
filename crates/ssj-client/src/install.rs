@@ -135,13 +135,13 @@ echo "SSJ INSTALLED $dir/ssj-server-p__PROTOCOL__""#;
 
 /// Uploads the server file for the host and returns the path it was installed at.
 pub async fn install(args: &Args) -> Result<String, String> {
-    // a wrong address is found before the host is asked for anything
+    // a wrong address is found before the host is asked for anything.
     if args.download || args.download_url.is_some() {
         crate::download::base_url(args)?;
     }
     let target = detect_target(args).await?;
     vlog!(1, "the host runs {}", target.triple());
-    // a local file wins; without one the release is the source
+    // a local file wins; without one the release is the source.
     let local = if args.download {
         None
     } else {

@@ -8,7 +8,7 @@ use rustix::process::{Resource, Rlimit, setrlimit, setsid};
 
 /// Starts a new session, so that the end of the `ssh` channel does not touch the server.
 pub fn detach_from_session() {
-    // fails only if the process leads a process group already, which is harmless here
+    // fails only if the process leads a process group already, which is harmless here.
     let _ = setsid();
 }
 
@@ -53,7 +53,7 @@ fn listed_descriptors() -> Option<Vec<i32>> {
 #[allow(unsafe_code)]
 pub fn close_inherited_descriptors() {
     let candidates = listed_descriptors().unwrap_or_else(|| {
-        // no list on this system: try every number up to the limit, with a ceiling
+        // no list on this system: try every number up to the limit, with a ceiling.
         let limit = rustix::process::getrlimit(Resource::Nofile)
             .current
             .unwrap_or(1024)

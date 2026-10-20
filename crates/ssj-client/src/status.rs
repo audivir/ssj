@@ -24,7 +24,7 @@ impl Status for TitleStatus {
             out.extend_from_slice(b"\x1b[22;0t");
             self.active = true;
         }
-        // the text comes from the client itself, but a control character would end the title early
+        // the text comes from the client itself, but a control character would end the title early.
         let safe: String = text.chars().filter(|c| !c.is_control()).collect();
         out.extend_from_slice(format!("\x1b]2;{safe}\x07").as_bytes());
         out

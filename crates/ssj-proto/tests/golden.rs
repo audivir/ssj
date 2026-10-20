@@ -16,7 +16,7 @@ fn encoded_frames() -> Vec<u8> {
     out
 }
 
-// Fails when the wire format changes without a new protocol version. To create the file for a
+// fails when the wire format changes without a new protocol version. To create the file for a
 // new version, run with `UPDATE_GOLDEN=1` after increasing `PROTOCOL`. An existing file is never
 // overwritten.
 #[test]

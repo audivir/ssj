@@ -33,7 +33,7 @@ fn finds_the_line_between_banners_and_noise() {
     let line = format_connect(&connect());
     let output = format!("Welcome to host\r\nlast login: today\n{line}some trailing text\n");
     assert_eq!(parse_connect(output.as_bytes()), Ok(Some(connect())));
-    // windows line ending, as some shells and wrappers produce
+    // windows line ending, as some shells and wrappers produce.
     let crlf = line.replace('\n', "\r\n");
     assert_eq!(parse_connect(crlf.as_bytes()), Ok(Some(connect())));
 }
@@ -52,7 +52,7 @@ fn waits_for_the_complete_line() {
     assert_eq!(parse_connect(b"just a banner\n"), Ok(None));
 }
 
-// Text that merely contains the prefix, such as an echoed command, is not the line.
+// text that merely contains the prefix, such as an echoed command, is not the line.
 #[test]
 fn prefix_must_be_at_the_start_of_the_line() {
     for text in [
@@ -79,7 +79,7 @@ fn malformed_lines_are_errors_and_not_ignored() {
         format!("SSJ CONNECT {id} udp:123456 tcp:2 {HEX}\n"),
         format!("SSJ CONNECT {id} udp: tcp:2 {HEX}\n"),
         format!("SSJ CONNECT {id} udp:1 tcp:0 {HEX}\n"),
-        // the kind of the transport
+        // the kind of the transport.
         format!("SSJ CONNECT {id} tcp:1 udp:2 {HEX}\n"),
         format!("SSJ CONNECT {id} 80 tcp:2 {HEX}\n"),
         format!("SSJ CONNECT {id} UDP:80 tcp:2 {HEX}\n"),
@@ -100,7 +100,7 @@ fn malformed_lines_are_errors_and_not_ignored() {
         format!("SSJ CONNECT {id}  udp:1 tcp:2 {HEX}\n"),
         format!("SSJ CONNECT {id} udp:1 tcp:2 {HEX} extra\n"),
         format!("SSJ CONNECT {id} udp:1 tcp:2 {HEX} \n"),
-        // the old line of one port
+        // the old line of one port.
         format!("SSJ CONNECT 80 {HEX}\n"),
         "SSJ CONNECT \n".to_owned(),
     ];
@@ -124,13 +124,13 @@ fn two_lines_are_ambiguous_even_if_identical() {
 
 #[test]
 fn remote_text_cannot_carry_terminal_commands() {
-    // clear screen, set title, and a fake prompt, as a hostile banner could send
+    // clear screen, set title, and a fake prompt, as a hostile banner could send.
     let hostile = b"\x1b[2J\x1b]0;title\x07\x1b[31mred\r\x9b31m";
     let shown = sanitize(hostile, 100);
     assert!(!shown.chars().any(|c| c.is_control()), "{shown:?}");
     assert!(shown.contains("red"));
 
-    // right-to-left override can reorder what the user reads
+    // right-to-left override can reorder what the user reads.
     assert_eq!(sanitize("a\u{202e}b\u{2066}c".as_bytes(), 100), "a?b?c");
     assert_eq!(sanitize(b"\xff\xfe", 100), "\u{fffd}\u{fffd}");
 }
@@ -206,11 +206,11 @@ fn the_stream_of_stdio_starts_after_the_sync_header_whatever_came_before() {
     .concat();
     let end = find_sync(&noisy).unwrap();
     assert_eq!(&noisy[end..], b"\x01\x02");
-    // the first header counts
+    // the first header counts.
     let twice = [SYNC_HEADER, b"x", SYNC_HEADER].concat();
     assert_eq!(find_sync(&twice), Some(SYNC_HEADER.len()));
 
-    // an incomplete header, or the text of it without the leading NUL, is not the header
+    // an incomplete header, or the text of it without the leading NUL, is not the header.
     for cut in 0..SYNC_HEADER.len() {
         assert_eq!(find_sync(&SYNC_HEADER[..cut]), None, "cut at {cut}");
     }
@@ -244,7 +244,7 @@ mod start_line {
         assert!(line.starts_with("SSJ START ") && line.ends_with('\n'));
         assert_eq!(line.matches('\n').count(), 1);
         assert_eq!(parse_start(line.as_bytes()), Ok(wanted.clone()));
-        // a carriage return before the newline is accepted
+        // a carriage return before the newline is accepted.
         let crlf = line.replace('\n', "\r\n");
         assert_eq!(parse_start(crlf.as_bytes()), Ok(wanted));
     }
@@ -262,7 +262,7 @@ mod start_line {
 
     #[test]
     fn the_largest_environment_fits_in_the_line() {
-        // seven values of the largest size, close to the limit of the total
+        // seven values of the largest size, close to the limit of the total.
         let vars: Vec<(String, String)> = (0..7)
             .map(|i| (format!("BIG{i}"), "x".repeat(Env::MAX_VALUE)))
             .collect();
@@ -282,7 +282,7 @@ mod start_line {
             format!("SSJ START {}\n", hex.to_uppercase()),
             format!("SSJ START {}00\n", hex),
             format!("SSJ START {}\n", &hex[..hex.len() - 2]),
-            // a frame that is not a start
+            // a frame that is not a start.
             "SSJ START 0000000105\n".to_owned(),
             format!("SSJ PIN {hex}\n"),
         ] {

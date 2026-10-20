@@ -24,11 +24,11 @@ fn a_character_is_shown_after_the_server_echoed_one_and_replaced_by_its_echo() {
     let now = Instant::now();
     let mut echo = trusted(now);
     assert_eq!(echo.typed(b"b", now), FAINT_B);
-    // the echo arrives: the drawing is taken back and the real character goes over it
+    // the echo arrives: the drawing is taken back and the real character goes over it.
     let (before, after) = echo.output(b"b", now);
     assert_eq!(before, RETRACT_1);
     assert!(after.is_empty());
-    // and the next one is shown again
+    // and the next one is shown again.
     assert_eq!(echo.typed(b"b", now), FAINT_B);
 }
 
@@ -161,7 +161,7 @@ fn nothing_is_drawn_near_the_right_edge() {
             shown += 1;
         }
     }
-    // the cursor is in column 3, and the drawing stops with a few columns left at the edge
+    // the cursor is in column 3, and the drawing stops with a few columns left at the edge.
     assert_eq!(shown, 13);
 }
 
@@ -213,7 +213,7 @@ fn umlauts_and_other_letters_of_one_column_are_predicted() {
             faint.as_bytes(),
             "{letter}"
         );
-        // the echo replaces the drawing, and the next one is shown again
+        // the echo replaces the drawing, and the next one is shown again.
         let (before, after) = echo.output(letter.as_bytes(), now);
         assert_eq!(before, RETRACT_1, "{letter}");
         assert!(after.is_empty());
@@ -225,20 +225,20 @@ fn umlauts_and_other_letters_of_one_column_are_predicted() {
 fn a_letter_that_arrives_in_pieces_is_followed_as_one_character() {
     let now = Instant::now();
     let mut echo = trusted(now);
-    // typed in two reads
+    // typed in two reads.
     assert!(echo.typed(&"ä".as_bytes()[..1], now).is_empty());
     assert_eq!(
         echo.typed(&"ä".as_bytes()[1..], now),
         "\x1b[2mä\x1b[22m".as_bytes()
     );
-    // and echoed in two writes of the server
+    // and echoed in two writes of the server.
     let (before, after) = echo.output(&"ä".as_bytes()[..1], now);
     assert_eq!(before, RETRACT_1);
-    // nothing is drawn into the middle of a character
+    // nothing is drawn into the middle of a character.
     assert!(after.is_empty());
     let (before, after) = echo.output(&"ä".as_bytes()[1..], now);
     assert!(before.is_empty() && after.is_empty());
-    // the echo matched, so the line is still trusted
+    // the echo matched, so the line is still trusted.
     assert_eq!(echo.typed(b"b", now), FAINT_B);
 }
 
@@ -272,7 +272,7 @@ fn an_echo_that_differs_from_what_was_typed_drops_the_trust() {
     let now = Instant::now();
     let mut echo = trusted(now);
     echo.typed("ä".as_bytes(), now);
-    // a shell in a locale without UTF-8 shows the bytes as an escape
+    // a shell in a locale without UTF-8 shows the bytes as an escape.
     echo.output(b"\\303\\244", now);
     assert!(echo.typed(b"b", now).is_empty());
 }
@@ -284,12 +284,12 @@ fn a_drawing_never_cuts_a_sequence_or_a_character_of_the_output() {
         let mut echo = trusted(now);
         echo.typed(b"b", now);
         echo.typed(b"c", now);
-        // the echo of b ends in the middle of a sequence: c is not drawn again yet
+        // the echo of b ends in the middle of a sequence: c is not drawn again yet.
         let (_, after) = echo.output(cut, now);
         assert!(after.is_empty(), "{cut:?}");
         assert!(echo.typed(b"d", now).is_empty(), "{cut:?}");
     }
-    // and once the sequence is complete the waiting characters come back
+    // and once the sequence is complete the waiting characters come back.
     let mut echo = trusted(now);
     echo.typed(b"b", now);
     echo.typed(b"c", now);

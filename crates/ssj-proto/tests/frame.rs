@@ -52,7 +52,7 @@ fn server_frames_survive_any_chunking_of_the_stream() {
     }
 }
 
-// The announced length is judged from the 4 header bytes, before any body is buffered.
+// the announced length is judged from the 4 header bytes, before any body is buffered.
 #[test]
 fn bad_length_is_rejected_from_the_header_alone() {
     for len in [0u32, MAX_FRAME_LEN as u32 + 1, u32::MAX] {
@@ -68,7 +68,7 @@ fn bad_length_is_rejected_from_the_header_alone() {
             "{len}"
         );
     }
-    // the largest allowed frame just waits for its body
+    // the largest allowed frame just waits for its body.
     let header = (MAX_FRAME_LEN as u32).to_be_bytes();
     assert_eq!(decode_client(&header), Ok(None));
 }
@@ -83,7 +83,7 @@ fn raw(tag: u8, body: &[u8]) -> Vec<u8> {
 #[test]
 fn malformed_client_frames_are_rejected() {
     let size = [0, 24, 0, 80];
-    // a start has the flag of the agent after the size
+    // a start has the flag of the agent after the size.
     let hello = |kind: u8, rest: &[u8]| {
         let agent: &[u8] = if kind == 0 { &[0] } else { &[] };
         raw(0x01, &[&[kind][..], &size, agent, rest].concat())
@@ -146,7 +146,7 @@ fn malformed_client_frames_are_rejected() {
             hello(1, &[0; 4]),
             DecodeError::Truncated,
         ),
-        // would allocate 65535 pairs if the count were trusted
+        // would allocate 65535 pairs if the count were trusted.
         (
             "env count over the limit",
             hello(0, &[0xff, 0xff]),
@@ -260,7 +260,7 @@ impl Rng {
     }
 }
 
-// Cheap stand-in for the real fuzzer, which runs on a single platform only.
+// cheap stand-in for the real fuzzer, which runs on a single platform only.
 #[test]
 fn decoders_do_not_panic_on_random_or_mutated_input() {
     let mut rng = Rng(0x9e3779b97f4a7c15);
@@ -279,7 +279,7 @@ fn decoders_do_not_panic_on_random_or_mutated_input() {
     for round in 0..200_000u64 {
         let (mut bytes, _) = seeds[(rng.next() % seeds.len() as u64) as usize].clone();
         match round % 3 {
-            // flip a few bits
+            // flip a few bits.
             0 => {
                 for _ in 0..1 + rng.next() % 4 {
                     let at = (rng.next() % bytes.len() as u64) as usize;
@@ -288,7 +288,7 @@ fn decoders_do_not_panic_on_random_or_mutated_input() {
             }
             // cut off
             1 => bytes.truncate((rng.next() % (bytes.len() as u64 + 1)) as usize),
-            // pure noise behind a plausible header
+            // pure noise behind a plausible header.
             _ => {
                 let len = (rng.next() % 64) as usize;
                 bytes = (1 + len as u32).to_be_bytes().to_vec();
@@ -326,7 +326,7 @@ fn ping_and_pong_carry_no_body() {
     );
 }
 
-// Looking at a frame must agree with decoding it, for every frame and every cut of the stream.
+// looking at a frame must agree with decoding it, for every frame and every cut of the stream.
 #[test]
 fn peeking_agrees_with_decoding() {
     use ssj_proto::{Peek, peek_server};
@@ -351,12 +351,12 @@ fn peeking_agrees_with_decoding() {
             (peeked, decoded) => panic!("{peeked:?} for {decoded:?}"),
         }
     }
-    // a frame of one kind followed by another: only the first counts
+    // a frame of one kind followed by another: only the first counts.
     let mut two = Vec::new();
     ServerFrame::Pong.encode(&mut two).unwrap();
     ServerFrame::Output(b"x".to_vec()).encode(&mut two).unwrap();
     assert_eq!(peek_server(&two), Ok(Peek::Other));
-    // an output frame without data, and a header that is too large, are errors
+    // an output frame without data, and a header that is too large, are errors.
     assert!(peek_server(&[0, 0, 0, 1, 0x82]).is_err());
     assert!(peek_server(&[0xff, 0xff, 0xff, 0xff]).is_err());
 }

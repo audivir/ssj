@@ -28,7 +28,7 @@ fn the_usual_forms_are_understood() {
         ("ssh://host", dest(None, "host", None)),
         ("ssh://tim@host:2222", dest(Some("tim"), "host", Some(2222))),
         ("ssh://tim@host/", dest(Some("tim"), "host", None)),
-        // IPv6: with brackets, with a port, and bare
+        // IPv6: with brackets, with a port, and bare.
         ("[::1]", dest(None, "::1", None)),
         ("[2001:db8::1]:2222", dest(None, "2001:db8::1", Some(2222))),
         ("tim@[2001:db8::1]", dest(Some("tim"), "2001:db8::1", None)),

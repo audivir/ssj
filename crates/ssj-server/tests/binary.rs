@@ -23,7 +23,7 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
         "read x; echo got:$x; exit 3",
     );
 
-    // exactly one line, so that nothing else can be mistaken for it
+    // exactly one line, so that nothing else can be mistaken for it.
     assert_eq!(launched.stdout.iter().filter(|b| **b == b'\n').count(), 1);
     assert!(
         launched.closed_after < Duration::from_secs(5),
@@ -31,7 +31,7 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
         launched.closed_after
     );
 
-    // the parent is gone and its pipes are closed, yet the daemon serves the session
+    // the parent is gone and its pipes are closed, yet the daemon serves the session.
     let (mut tx, mut rx, conn) = open(&client, &launched.connect).await.unwrap();
     send(
         &mut tx,
@@ -48,9 +48,9 @@ async fn bootstrap_prints_one_line_releases_the_pipe_and_leaves_a_working_daemon
     assert!(output.contains("got:binary"), "{output}");
     assert_eq!(exit, Some(ExitStatus::Code(3)));
 
-    // after the client confirms, the daemon ends and its port is closed
+    // after the client confirms, the daemon ends and its port is closed.
     send(&mut tx, ClientFrame::Close).await;
-    // the daemon says goodbye before it ends, so the client does not wait for an answer
+    // the daemon says goodbye before it ends, so the client does not wait for an answer.
     let reason = timeout(Duration::from_secs(1), conn.closed())
         .await
         .expect("the daemon closes the connection before it ends");
@@ -85,7 +85,7 @@ async fn the_daemon_starts_the_shell_from_the_start_line_before_a_client_connect
         .unwrap()
         .expect("a CONNECT line");
 
-    // the shell has printed before anybody connects
+    // the shell has printed before anybody connects.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let (mut tx, mut rx, _conn) = open(&client, &connect).await.unwrap();
     send(
@@ -189,7 +189,7 @@ fn single_port_range_is_used_and_a_busy_range_is_reported() {
     let launched = launch(&runtime, &client, range, "cat");
     assert_eq!(launched.connect.udp, Some(range.0));
 
-    // the port is taken by the daemon now, so a second server finds nothing
+    // the port is taken by the daemon now, so a second server finds nothing.
     let pin = format_pin(&client.fingerprint());
     let (status, stdout, stderr, _) = run_bootstrap(&runtime, &pin, range, "cat");
     assert_eq!(status.code(), Some(1));
@@ -252,12 +252,12 @@ fn config_file_is_validated_and_the_server_refuses_a_bad_one() {
             .unwrap();
         let pin = format_pin(&Identity::generate().fingerprint());
         // a server that refuses its config exits without reading the pin, and the write then
-        // fails with a broken pipe, which is the very thing that is tested
+        // fails with a broken pipe, which is the very thing that is tested.
         let _ = child.stdin.take().unwrap().write_all(pin.as_bytes());
         child.wait_with_output().unwrap()
     };
 
-    // the flag for the port range wins, so the unusable 1024 of the file is not tried
+    // the flag for the port range wins, so the unusable 1024 of the file is not tried.
     let ok = start(&[]);
     assert!(
         ok.status.success(),
@@ -265,14 +265,14 @@ fn config_file_is_validated_and_the_server_refuses_a_bad_one() {
         String::from_utf8_lossy(&ok.stderr)
     );
 
-    // a broken file stops the server before it does anything
+    // a broken file stops the server before it does anything.
     std::fs::write(&file, "accept_env = \"TERM\"\n").unwrap();
     let broken = start(&[]);
     assert_eq!(broken.status.code(), Some(2));
     assert!(broken.stdout.is_empty());
     assert!(String::from_utf8_lossy(&broken.stderr).contains("accept_env must be a list"));
 
-    // a file that others can write is refused
+    // a file that others can write is refused.
     std::fs::write(&file, "").unwrap();
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o666)).unwrap();
     let writable = start(&[]);

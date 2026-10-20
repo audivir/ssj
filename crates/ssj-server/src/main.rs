@@ -7,7 +7,7 @@ use ssj_server::{control_cli, launch};
 fn check_config() -> ExitCode {
     use std::io::Read;
     let mut text = String::new();
-    // a config file is small, and a larger one is not one
+    // a config file is small, and a larger one is not one.
     if std::io::stdin()
         .take(1 << 20)
         .read_to_string(&mut text)

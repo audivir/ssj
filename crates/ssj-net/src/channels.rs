@@ -137,7 +137,7 @@ async fn copy<S, F, Fut>(
                         return;
                     }
                 }
-                // the other side closed the channel
+                // the other side closed the channel.
                 None => return,
             },
         }
@@ -205,7 +205,7 @@ mod tests {
         }
         let (local, _program) = duplex(64);
         assert!(!channels.open(999, local, report(&seen)));
-        // a channel that ended makes room
+        // a channel that ended makes room.
         drop(keep.pop());
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let (local, _program) = duplex(64);

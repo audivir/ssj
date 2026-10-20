@@ -143,7 +143,7 @@ fn malformed_replies_are_refused() {
     }
 }
 
-// Text from the server is shown to the user, so it must not carry control characters.
+// text from the server is shown to the user, so it must not carry control characters.
 #[test]
 fn error_text_is_reduced_to_printable_ascii_and_cut() {
     let line = format_reply(&Reply::Error(format!(
@@ -219,7 +219,7 @@ fn names_have_a_small_alphabet_and_no_dot_or_dash_in_front() {
     ] {
         assert!(SessionName::parse(bad).is_none(), "{bad:?}");
     }
-    // ids are selectors too
+    // ids are selectors too.
     assert!(ssj_proto::is_selector("abcdef012345"));
     assert!(ssj_proto::is_selector("work"));
     assert!(!ssj_proto::is_selector("a b"));

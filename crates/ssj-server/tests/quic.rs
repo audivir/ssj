@@ -142,7 +142,7 @@ async fn pinned_client_runs_a_shell_over_quic_and_gets_the_exit_code() {
     assert!(matches!(end, SessionEnd::ShellExited(status) if status.code() == Some(7)));
 }
 
-// The handshake fails before a stream exists, so the session never learns about the attempt.
+// the handshake fails before a stream exists, so the session never learns about the attempt.
 #[tokio::test]
 async fn client_with_another_certificate_never_reaches_the_session() {
     let (pinned, stranger) = (Identity::generate(), Identity::generate());
@@ -151,7 +151,7 @@ async fn client_with_another_certificate_never_reaches_the_session() {
 
     let attempt = async {
         let conn = endpoint.connect(server.addr, SERVER_NAME).unwrap().await?;
-        // the client may finish its side of the handshake first, so it has to use the stream
+        // the client may finish its side of the handshake first, so it has to use the stream.
         let (mut tx, mut rx) = conn.open_bi().await?;
         let mut bytes = Vec::new();
         ClientFrame::Hello(Hello::Attach { size: size() })
@@ -164,7 +164,7 @@ async fn client_with_another_certificate_never_reaches_the_session() {
     };
     assert!(!matches!(attempt.await, Ok(Some(_))));
 
-    // nothing arrived at the session, which is still waiting for its first connection
+    // nothing arrived at the session, which is still waiting for its first connection.
     assert!(
         timeout(Duration::from_millis(500), server.session)
             .await

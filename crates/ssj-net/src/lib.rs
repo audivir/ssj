@@ -289,10 +289,10 @@ fn congestion() -> Congestion {
 /// Limits shared by both roles: no datagrams, no unidirectional streams, few bidirectional ones.
 fn base_transport() -> quinn::TransportConfig {
     let mut transport = quinn::TransportConfig::default();
-    // the session must outlive long outages, and the keepalive notices a returning network
+    // the session must outlive long outages, and the keepalive notices a returning network.
     transport.max_idle_timeout(None);
     transport.keep_alive_interval(Some(Duration::from_secs(1)));
-    // a paste must not spend several round trips on slow start
+    // a paste must not spend several round trips on slow start.
     match congestion() {
         Congestion::Cubic => {
             let mut cubic = quinn::congestion::CubicConfig::default();
@@ -356,7 +356,7 @@ pub fn quic_server_with_send_window(
     transport.stream_receive_window((SERVER_RECEIVE_WINDOW / 2).into());
     transport.send_window(send_window);
     config.transport_config(Arc::new(transport));
-    // one session, so only a handful of handshakes may be in flight at once
+    // one session, so only a handful of handshakes may be in flight at once.
     config.max_incoming(16);
     config.incoming_buffer_size(64 * 1024);
     config.incoming_buffer_size_total(256 * 1024);
@@ -383,7 +383,7 @@ pub async fn accept_validated(endpoint: &quinn::Endpoint) -> Option<quinn::Incom
         if incoming.remote_address_validated() {
             return Some(incoming);
         }
-        // fails only if the attempt cannot be retried, which cannot happen when unvalidated
+        // fails only if the attempt cannot be retried, which cannot happen when unvalidated.
         let _ = incoming.retry();
     }
 }

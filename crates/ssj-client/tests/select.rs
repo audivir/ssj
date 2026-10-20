@@ -15,7 +15,7 @@ fn keys_are_read_from_the_bytes_of_one_read() {
     for cancel in [&b"q"[..], b"\x03", b"\x04", b"\x1b"] {
         assert_eq!(parse_keys(cancel), [Key::Cancel], "{cancel:?}");
     }
-    // other sequences, such as the arrows to the sides or Delete, do nothing
+    // other sequences, such as the arrows to the sides or Delete, do nothing.
     assert_eq!(parse_keys(b"\x1b[C\x1b[3~\x1b[D"), []);
     assert_eq!(parse_keys(b"\x1b[C\r"), [Key::Enter]);
     assert_eq!(parse_keys(b"x \t"), []);

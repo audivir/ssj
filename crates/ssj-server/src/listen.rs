@@ -10,7 +10,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use crate::daemon::random_bytes;
 
 fn bind_socket(port: u16) -> io::Result<UdpSocket> {
-    // dual stack, so that one socket serves clients on IPv4 and IPv6
+    // dual stack, so that one socket serves clients on IPv4 and IPv6.
     let v6 = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).and_then(|socket| {
         socket.set_only_v6(false)?;
         socket.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)).into())?;

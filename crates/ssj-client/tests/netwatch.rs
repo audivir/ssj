@@ -27,7 +27,7 @@ fn normal_ticks_and_small_delays_are_not_a_wake() {
     };
     for (i, ms) in [1000, 2000, 3100, 5000, 8500].into_iter().enumerate() {
         let (w, m) = step(ms);
-        // 8.5 s is 3.5 s after the one before, which is still within 1 s + 3 s
+        // 8.5 s is 3.5 s after the one before, which is still within 1 s + 3 s.
         assert!(!clock.tick(w, m), "tick {i}");
     }
 }
@@ -40,13 +40,13 @@ fn a_late_timer_is_a_wake_whichever_clock_saw_the_sleep() {
         wall + Duration::from_secs(600),
         mono + Duration::from_secs(1)
     ));
-    // the monotonic clock runs during sleep, the wall clock was set back
+    // the monotonic clock runs during sleep, the wall clock was set back.
     let (mut clock, wall, mono) = watch();
     assert!(clock.tick(
         wall - Duration::from_secs(5),
         mono + Duration::from_secs(600)
     ));
-    // the very next tick is normal again
+    // the very next tick is normal again.
     assert!(!clock.tick(
         wall - Duration::from_secs(4),
         mono + Duration::from_secs(601)
@@ -76,7 +76,7 @@ async fn one_reaction_for_a_burst_of_notifications_with_the_strongest_cause() {
     }
     let quiet = Duration::from_millis(300);
     assert_eq!(next_settled(&mut rx, quiet).await, Some(Cause::Woke));
-    // nothing is left over
+    // nothing is left over.
     assert!(
         timeout(Duration::from_secs(5), next_settled(&mut rx, quiet))
             .await
@@ -100,7 +100,7 @@ async fn a_slow_burst_extends_the_wait_and_the_end_of_all_sources_ends_the_wait(
         Some(Cause::NetworkChanged)
     );
     // the pieces arrived at 200, 400, and 600 ms, and the last sender ended there, which ends the
-    // wait at once: without any source left there is nothing more to wait for
+    // wait at once: without any source left there is nothing more to wait for.
     assert_eq!(started.elapsed(), Duration::from_millis(600));
     sender.await.unwrap();
     assert_eq!(
@@ -124,7 +124,7 @@ async fn the_macos_source_starts_and_stays_quiet_without_a_change() {
         "{:?}",
         sources.active
     );
-    // no notification for the start itself
+    // no notification for the start itself.
     assert!(
         timeout(Duration::from_millis(800), sources.events.recv())
             .await
@@ -132,7 +132,7 @@ async fn the_macos_source_starts_and_stays_quiet_without_a_change() {
     );
 }
 
-// The state of the network cannot be changed without privileges, so this one is run by hand:
+// the state of the network cannot be changed without privileges, so this one is run by hand:
 // `cargo nextest run -p ssj-client --test netwatch --run-ignored only --no-capture`, then switch
 // Wi-Fi off.
 #[cfg(all(target_os = "macos", feature = "netwatch"))]

@@ -188,7 +188,7 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
     tokio::spawn(async move {
         while let Ok((client, _)) = listener.accept().await {
             let mut killed = killed.clone();
-            // only a kill from now on ends this connection
+            // only a kill from now on ends this connection.
             killed.borrow_and_update();
             let swallowing = swallowing.clone();
             tokio::spawn(async move {
@@ -454,7 +454,7 @@ impl Terminal {
                 _ => break,
             }
         }
-        // a client that gave up would also make the output stop
+        // a client that gave up would also make the output stop.
         assert!(
             !self.client.is_finished(),
             "the client ended early: {:?}",
@@ -535,7 +535,7 @@ async fn input_typed_while_the_server_is_unreachable_arrives_once_it_returns() {
     terminal.type_line("before").await;
     terminal.wait_for("got:before").await;
 
-    // the server stops accepting connections and drops the current one
+    // the server stops accepting connections and drops the current one.
     server.endpoint.set_server_config(None);
     server
         .connections
@@ -567,7 +567,7 @@ async fn input_typed_while_the_server_is_unreachable_arrives_once_it_returns() {
         .into_iter()
         .filter(|s| s.contains("attempt"))
         .collect();
-    // a silent server gives no refusal, so an attempt lasts until its timeout
+    // a silent server gives no refusal, so an attempt lasts until its timeout.
     assert!(!attempts.is_empty(), "{attempts:?}");
 }
 
@@ -579,7 +579,7 @@ async fn a_closed_terminal_ends_the_session_and_its_shell() {
     terminal.type_line("hello").await;
     terminal.wait_for("got:hello").await;
 
-    // SIGHUP of the terminal: the server hangs up the shell, and nothing is left running
+    // SIGHUP of the terminal: the server hangs up the shell, and nothing is left running.
     terminal.hangup.send(()).unwrap();
     let finished = timeout(Duration::from_secs(10), terminal.client)
         .await
@@ -593,7 +593,7 @@ async fn a_closed_terminal_ends_the_session_and_its_shell() {
     assert!(matches!(end, SessionEnd::Killed), "{end:?}");
 }
 
-// Inside an `ssh` session the end of the terminal is more likely a lost connection than a wish.
+// inside an `ssh` session the end of the terminal is more likely a lost connection than a wish.
 #[tokio::test]
 async fn inside_ssh_a_closed_terminal_detaches_and_the_session_keeps_running() {
     let client_id = Identity::generate();
@@ -619,7 +619,7 @@ async fn inside_ssh_a_closed_terminal_detaches_and_the_session_keeps_running() {
         .unwrap()
         .unwrap();
     assert_eq!(finished, Ok(Finished::Detached));
-    // the server saw a deliberate detach, and the shell is still there
+    // the server saw a deliberate detach, and the shell is still there.
     loop {
         let event = timeout(Duration::from_secs(10), server.events.recv())
             .await
@@ -639,7 +639,7 @@ async fn a_closed_terminal_while_offline_leaves_the_session_for_a_later_return()
     let mut terminal = start_client(&server, client_id);
     terminal.type_line("hello").await;
     terminal.wait_for("got:hello").await;
-    // the connection is cut and the client waits to reconnect
+    // the connection is cut and the client waits to reconnect.
     server.endpoint.close(0u8.into(), b"gone");
     timeout(Duration::from_secs(20), async {
         while !terminal.status().iter().any(|s| s.contains("reconnecting")) {
@@ -655,7 +655,7 @@ async fn a_closed_terminal_while_offline_leaves_the_session_for_a_later_return()
         .unwrap()
         .unwrap();
     assert_eq!(finished, Ok(Finished::HungUp));
-    // nobody could tell the server, so the shell still runs
+    // nobody could tell the server, so the shell still runs.
     assert!(!server.session.is_finished());
 }
 
@@ -674,7 +674,7 @@ async fn escape_dot_detaches_and_the_session_keeps_running() {
         .unwrap()
         .unwrap();
     assert_eq!(finished, Ok(Finished::Detached));
-    // other events (the client connecting) come first
+    // other events (the client connecting) come first.
     let detached = timeout(Duration::from_secs(10), async {
         while let Some(event) = server.events.recv().await {
             if event == SessionEvent::Detached {
@@ -717,13 +717,13 @@ async fn escape_dot_works_without_a_connection_so_the_user_is_never_stuck() {
         .unwrap()
         .unwrap();
     assert_eq!(finished, Ok(Finished::Detached));
-    // there was no connection to tell, so the server is not told
+    // there was no connection to tell, so the server is not told.
     while let Ok(event) = server.events.try_recv() {
         assert_ne!(event, SessionEvent::Detached);
     }
 }
 
-// The server consumed input whose acknowledgement never reached the client. After the
+// the server consumed input whose acknowledgement never reached the client. After the
 // reconnect the client must not send it a second time, and must get the output it missed.
 #[tokio::test]
 async fn input_consumed_before_the_loss_is_not_sent_twice() {
@@ -739,7 +739,7 @@ async fn input_consumed_before_the_loss_is_not_sent_twice() {
     for i in 0..10 {
         terminal.type_line(&format!("b{i}")).await;
     }
-    // the server has consumed and answered them by now, but the client heard nothing
+    // the server has consumed and answered them by now, but the client heard nothing.
     sleep(Duration::from_millis(800)).await;
     assert!(!terminal.seen.contains("got:b0"));
     server
@@ -788,7 +788,7 @@ async fn silent_server_is_reported_and_the_report_goes_away_when_it_answers() {
         Some("<clear>"),
         "{after:?}"
     );
-    // the same connection came back, so there was no reconnect
+    // the same connection came back, so there was no reconnect.
     assert!(
         !after.iter().any(|s| s.contains("reconnecting")),
         "{after:?}"
@@ -814,10 +814,10 @@ async fn attaching_client_continues_a_running_session_and_survives_a_later_loss(
     let mut second = start_client_with(&server, client_id, server.addr, true);
     second.type_line("two").await;
     second.wait_for("got:two:2").await;
-    // the second client has the history of the first one only as far as the replay reaches
+    // the second client has the history of the first one only as far as the replay reaches.
     assert!(second.seen.contains("got:two:2"));
 
-    // and it reconnects like any client
+    // and it reconnects like any client.
     live_connection(&mut server)
         .await
         .close(9u8.into(), b"killed by the test");
@@ -872,7 +872,7 @@ async fn a_change_of_the_network_moves_the_same_connection_to_a_new_address() {
     .await;
 
     assert!(moved.is_some(), "the server still sees {old_address}");
-    // the same connection, not a new one, and the session goes on
+    // the same connection, not a new one, and the session goes on.
     assert!(conn.close_reason().is_none());
     terminal.type_line("after").await;
     terminal.wait_for("got:after").await;
@@ -897,10 +897,10 @@ async fn silence_after_a_change_starts_a_new_connection_quickly_and_loses_nothin
         let mut terminal = start_client_at(&server, client_id, proxy.addr);
         terminal.type_line("one").await;
         terminal.wait_for("got:one").await;
-        // held until the end: the id comes from an address, which a new connection could reuse
+        // held until the end: the id comes from an address, which a new connection could reuse.
         let first = live_connection(&mut server).await;
 
-        // the path is dead and nothing tells the connection so
+        // the path is dead and nothing tells the connection so.
         proxy.drop_replies.store(true, Ordering::Relaxed);
         terminal.type_line("two").await;
         sleep(Duration::from_millis(300)).await;
@@ -929,7 +929,7 @@ async fn silence_after_a_change_starts_a_new_connection_quickly_and_loses_nothin
     }
 }
 
-// An attempt that hangs on a dead path is the slowest part of a reconnect: the handshake packets
+// an attempt that hangs on a dead path is the slowest part of a reconnect: the handshake packets
 // are repeated with growing pauses, so a path that comes back is found late.
 #[tokio::test]
 async fn a_change_of_the_network_cuts_short_an_attempt_that_hangs() {
@@ -941,7 +941,7 @@ async fn a_change_of_the_network_cuts_short_an_attempt_that_hangs() {
     terminal.wait_for("got:before").await;
 
     // the path dies, the first change finds nothing on the new path, and every attempt after
-    // that is answered by nobody
+    // that is answered by nobody.
     proxy.drop_replies.store(true, Ordering::Relaxed);
     terminal.type_line("during").await;
     terminal.net.send(Cause::NetworkChanged).unwrap();
@@ -950,7 +950,7 @@ async fn a_change_of_the_network_cuts_short_an_attempt_that_hangs() {
     })
     .await;
     assert!(reconnecting.is_some(), "{:?}", terminal.status());
-    // an attempt is in progress and keeps repeating its handshake into the void
+    // an attempt is in progress and keeps repeating its handshake into the void.
     sleep(Duration::from_millis(1500)).await;
 
     proxy.drop_replies.store(false, Ordering::Relaxed);
@@ -981,10 +981,10 @@ async fn a_silent_server_is_reported_after_a_short_time_and_not_at_once() {
     .await;
 
     let after = reported.expect("a stall must be reported");
-    // not at once (a blip is not a stall), but long before the old five seconds plus a tick
+    // not at once (a blip is not a stall), but long before the old five seconds plus a tick.
     assert!(after >= Duration::from_millis(1500), "{after:?}");
     assert!(after <= Duration::from_millis(3600), "{after:?}");
-    // the message does not repeat on every ping
+    // the message does not repeat on every ping.
     sleep(Duration::from_secs(3)).await;
     let shown = terminal
         .status()
@@ -996,7 +996,7 @@ async fn a_silent_server_is_reported_after_a_short_time_and_not_at_once() {
 
 const OPEN_SEQUENCE: &str = "printf '\\033]52;c;AAAA'; read x; printf 'BBBB\\007done\\n'";
 
-// Writing a title into the middle of a clipboard sequence would show the rest as garbage. So the
+// writing a title into the middle of a clipboard sequence would show the rest as garbage. So the
 // status first waits. A sequence that stays open for good is cancelled with CAN, the status goes
 // out, and the rest of the sequence is dropped when it arrives.
 #[tokio::test]
@@ -1008,7 +1008,7 @@ async fn a_status_waits_in_a_stuck_sequence_and_then_cancels_it() {
     terminal.wait_for("AAAA").await;
 
     proxy.drop_replies.store(true, Ordering::Relaxed);
-    // the stall shows after a few seconds, and the sequence is given two more
+    // the stall shows after a few seconds, and the sequence is given two more.
     sleep(Duration::from_millis(1500)).await;
     assert!(
         terminal.status().is_empty(),
@@ -1040,7 +1040,7 @@ fn counted(from: u32, to: u32) -> String {
     (from..=to).map(|i| format!("{i}\n")).collect()
 }
 
-// The job writes far more than the server keeps while the client is away. When the client comes
+// the job writes far more than the server keeps while the client is away. When the client comes
 // back, the terminal shows how much was lost, once and exactly, and everything after the gap is
 // intact. The second burst of output proves that the client acknowledges with the new offsets: with
 // the old ones, the server would wait for acknowledgements that never move its buffer.
@@ -1058,7 +1058,7 @@ async fn output_dropped_while_away_is_reported_exactly_once_and_the_rest_is_inta
     let mut terminal = start_client(&server, client_id);
     terminal.wait_for("first").await;
 
-    // away: the server refuses connections and the current one ends
+    // away: the server refuses connections and the current one ends.
     server.endpoint.set_server_config(None);
     live_connection(&mut server)
         .await
@@ -1084,21 +1084,21 @@ async fn output_dropped_while_away_is_reported_exactly_once_and_the_rest_is_inta
     let suffix = " bytes of output were dropped]\r\n";
     assert_eq!(seen.matches("[ssj:").count(), 1, "one notice");
     let at = seen.find(prefix).expect("the notice");
-    // what came before the gap is what the client had seen before it left
+    // what came before the gap is what the client had seen before it left.
     assert_eq!(&seen[..at], "first\n");
     let after = &seen[at + prefix.len()..];
     let digits = after.find(suffix).expect("the end of the notice");
     let dropped: usize = after[..digits].parse().unwrap();
     assert!(dropped > 1_000_000, "{dropped}");
 
-    // exactly the forgotten bytes are missing from the stream, and nothing else
+    // exactly the forgotten bytes are missing from the stream, and nothing else.
     let expected = format!(
         "first\n{}DONE\n{}END\n",
         counted(1, 400_000),
         counted(1, 400_000)
     );
     let rest = &after[digits + suffix.len()..];
-    // the client had seen "first\n", which is six bytes
+    // the client had seen "first\n", which is six bytes.
     let want = &expected[6 + dropped..];
     let first_difference = rest.bytes().zip(want.bytes()).position(|(a, b)| a != b);
     assert!(
@@ -1140,7 +1140,7 @@ async fn the_address_is_looked_up_again_after_every_third_failed_attempt() {
     terminal.type_line("before").await;
     terminal.wait_for("got:before").await;
 
-    // the connection ends, and the old address stops answering from then on
+    // the connection ends, and the old address stops answering from then on.
     live_connection(&mut server)
         .await
         .close(9u8.into(), b"killed by the test");
@@ -1151,7 +1151,7 @@ async fn the_address_is_looked_up_again_after_every_third_failed_attempt() {
     terminal.settle().await;
 
     assert_eq!(terminal.got_lines(), ["got:before", "got:after"]);
-    // exactly after the third failure, not earlier and not at every attempt
+    // exactly after the third failure, not earlier and not at every attempt.
     assert_eq!(lookups.load(Ordering::Relaxed), 1);
     let last_attempt = terminal
         .status()
@@ -1191,7 +1191,7 @@ async fn a_failed_lookup_keeps_the_old_address() {
         .close(9u8.into(), b"killed by the test");
     sleep(Duration::from_millis(100)).await;
     proxy.drop_replies.store(true, Ordering::Relaxed);
-    // three attempts fail, then the lookup fails, and the old address works again
+    // three attempts fail, then the lookup fails, and the old address works again.
     assert!(
         wait_until(Duration::from_secs(10), || lookups.load(Ordering::Relaxed)
             >= 1)
@@ -1221,7 +1221,7 @@ async fn a_burst_of_resizes_reaches_the_shell_as_the_last_size() {
     terminal.type_line("wake").await;
     terminal.wait_for("69 100").await;
     terminal.settle().await;
-    // the sizes in between did not each reach the terminal of the shell
+    // the sizes in between did not each reach the terminal of the shell.
     let reached = terminal.seen.matches(" 100").count();
     assert!(
         reached < 10,
@@ -1280,7 +1280,7 @@ async fn a_silent_tcp_path_is_given_up_after_a_while_and_replaced() {
     })
     .await;
     assert!(silent.is_some(), "{:?}", terminal.status());
-    // the client gives the connection up, and its new attempts are swallowed too
+    // the client gives the connection up, and its new attempts are swallowed too.
     let gave_up = wait_until(Duration::from_secs(10), || {
         terminal.status().iter().any(|s| s.contains("reconnecting"))
     })
@@ -1315,7 +1315,7 @@ async fn a_client_that_is_too_slow_does_not_hold_the_job_up_and_shows_what_it_mi
     );
     let mut terminal = start_client(&server, client_id);
 
-    // the terminal reads nothing, and the job ends all the same
+    // the terminal reads nothing, and the job ends all the same.
     timeout(Duration::from_secs(60), async {
         while !marker.exists() {
             sleep(Duration::from_millis(50)).await;
@@ -1332,7 +1332,7 @@ async fn a_client_that_is_too_slow_does_not_hold_the_job_up_and_shows_what_it_mi
     let _ = std::fs::remove_file(&marker);
 }
 
-// Compressed output goes through the real client and reaches the terminal exactly as written,
+// compressed output goes through the real client and reaches the terminal exactly as written,
 // every line in its place.
 #[tokio::test]
 async fn compressed_output_reaches_the_terminal_intact() {
@@ -1347,7 +1347,7 @@ async fn compressed_output_reaches_the_terminal_intact() {
         true,
     );
     let mut terminal = start_client(&server, client_id);
-    // a terminal that reads late makes the link the limit
+    // a terminal that reads late makes the link the limit.
     sleep(Duration::from_secs(1)).await;
     terminal.wait_for("FINISHED").await;
     let expected: String = (1..=50_000)
@@ -1384,7 +1384,7 @@ fn start_client_udp_and_tcp(
     )
 }
 
-// With UDP blocked, the first connection must not wait for QUIC to give up: TCP starts after a
+// with UDP blocked, the first connection must not wait for QUIC to give up: TCP starts after a
 // short head start, and the first connection that opens wins.
 #[tokio::test]
 async fn tcp_takes_over_at_once_when_udp_gets_no_answer() {
@@ -1405,7 +1405,7 @@ async fn tcp_takes_over_at_once_when_udp_gets_no_answer() {
     assert_eq!(terminal.got_lines(), ["got:one"]);
 }
 
-// After a change of the network that left UDP dead, the new connection must not spend the time
+// after a change of the network that left UDP dead, the new connection must not spend the time
 // of a whole QUIC attempt before TCP is tried.
 #[tokio::test]
 async fn after_a_change_that_kills_udp_tcp_carries_the_session_within_seconds() {
@@ -1416,7 +1416,7 @@ async fn after_a_change_that_kills_udp_tcp_carries_the_session_within_seconds() 
     terminal.type_line("one").await;
     terminal.wait_for("got:one").await;
 
-    // the path is dead for QUIC, and the client is told that the network changed
+    // the path is dead for QUIC, and the client is told that the network changed.
     proxy.drop_replies.store(true, Ordering::Relaxed);
     terminal.type_line("two").await;
     let changed = std::time::Instant::now();
@@ -1443,12 +1443,12 @@ async fn a_session_on_tcp_moves_to_quic_when_the_network_changes_and_quic_works(
     terminal.type_line("one").await;
     terminal.wait_for("got:one").await;
 
-    // the faster network appears
+    // the faster network appears.
     udp.drop_replies.store(false, Ordering::Relaxed);
     terminal.net.send(Cause::NetworkChanged).unwrap();
     sleep(Duration::from_millis(2500)).await;
 
-    // a session still on TCP would lose its connection now and say so
+    // a session still on TCP would lose its connection now and say so.
     tcp.kill.send_modify(|generation| *generation += 1);
     terminal.type_line("two").await;
     terminal.wait_for("got:two").await;

@@ -212,7 +212,7 @@ fn save_local(path: &Path, original: &str, text: &str) -> Result<(), SaveError> 
         .mode(0o600)
         .open(&lock_path)
         .map_err(|e| other(&format!("cannot open {}", lock_path.display()), e))?;
-    // another editor holds it for the blink of a save, so a few tries are enough
+    // another editor holds it for the blink of a save, so a few tries are enough.
     let mut tries = 0;
     while rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive).is_err() {
         tries += 1;
@@ -249,7 +249,7 @@ fn save_local(path: &Path, original: &str, text: &str) -> Result<(), SaveError> 
         let _ = fs::remove_file(&tmp);
         return Err(other(&format!("cannot save {}", path.display()), err));
     }
-    // the lock goes with the file handle
+    // the lock goes with the file handle.
     drop(lock);
     Ok(())
 }
@@ -348,7 +348,7 @@ async fn edit_remote(args: &Args) -> Result<String, String> {
             current.error_text()
         ));
     }
-    // the digest is of the bytes as they are on the host
+    // the digest is of the bytes as they are on the host.
     let original_digest = sha256_hex(&current.stdout);
     let original = String::from_utf8_lossy(&current.stdout).into_owned();
     let initial = if original.trim().is_empty() {
@@ -356,7 +356,7 @@ async fn edit_remote(args: &Args) -> Result<String, String> {
     } else {
         original.clone()
     };
-    // the server of the host judges the text, before anything is saved
+    // the server of the host judges the text, before anything is saved.
     let edited = edit_text(&initial, |text| {
         let args = args.clone();
         async move {

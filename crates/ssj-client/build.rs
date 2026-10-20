@@ -100,9 +100,9 @@ refreshed in the background.
 fn main() {
     println!("cargo:rerun-if-changed=src/options.rs");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-    // where the tests and the release workflow find the files
+    // where the tests and the release workflow find the files.
     println!("cargo:rustc-env=SSJ_ASSETS={}", out.display());
-    // the generators list hidden options too, so they are left out here
+    // the generators list hidden options too, so they are left out here.
     let build = |full: clap::Command| {
         let visible: Vec<clap::Arg> = full
             .get_arguments()
@@ -125,7 +125,7 @@ fn main() {
         }
         command
     };
-    // the completions offer the real flag names, the man page shows a pair on one line
+    // the completions offer the real flag names, the man page shows a pair on one line.
     let mut command = build(options::Options::command());
     let mut page = Vec::new();
     clap_mangen::Man::new(options::command().version(env!("CARGO_PKG_VERSION")))
@@ -143,13 +143,13 @@ fn main() {
         let mut text = String::from_utf8(text).expect("the completions are text");
         text.push_str(dynamic(shell));
         if shell == Shell::Zsh {
-            // the names of the sessions for `--name`
+            // the names of the sessions for `--name`.
             text = text.replace(
                 "--name=[Join the session of this name, or start it]:NAME:_default",
                 "--name=[Join the session of this name, or start it]:NAME:_ssj_sessions",
             );
             // the words after the options: a command or a host, then a host, then (for `attach` and
-            // `kill`) the sessions of that host
+            // `kill`) the sessions of that host.
             text = text.replace(
                 "*::words -- Command, session id or name, and destination:_default",
                 "*::words -- Command, destination, and session id or name:_ssj_words",
@@ -171,7 +171,7 @@ _ssj_words() {
     fi
 }
 "#;
-            // `#compdef` must stay the first line, or the completion is not found
+            // `#compdef` must stay the first line, or the completion is not found.
             text = match text.split_once('\n') {
                 Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
                 None => format!("{helpers}{text}"),
@@ -182,7 +182,8 @@ _ssj_words() {
 }
 
 /// Hooks that let `attach`, `kill`, `detach`, and `--name` offer the session names of
-/// `ssj --complete`: for the id after the host of `attach`, `kill`, and `detach` those of that host.
+/// `ssj --complete`: for the id after the host of `attach`, `kill`, and `detach` those of that
+/// host.
 fn dynamic(shell: Shell) -> &'static str {
     match shell {
         Shell::Bash => {

@@ -117,7 +117,7 @@ fn mistakes_are_errors_that_name_the_problem() {
     }
 }
 
-// The daemon starts with the values of the bootstrap process on its command line.
+// the daemon starts with the values of the bootstrap process on its command line.
 #[test]
 fn the_daemon_receives_the_resolved_values() {
     let mut a = args(&[]);

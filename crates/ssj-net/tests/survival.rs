@@ -133,7 +133,7 @@ async fn new_connection_takes_over_while_old_one_is_still_open() {
     let addr = server.local_addr().unwrap();
     spawn_resumable_server(server);
 
-    // first connection reads a prefix, then goes silent without closing, like a roamed client
+    // first connection reads a prefix, then goes silent without closing, like a roamed client.
     let first_endpoint = client_endpoint(&client_id, server_id.fingerprint());
     let first = connect(&first_endpoint, addr).await;
     let (mut send, mut recv) = first.open_bi().await.unwrap();

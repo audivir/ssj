@@ -10,13 +10,13 @@ fn at(base: Instant, ms: u64) -> Instant {
 
 #[test]
 fn a_loss_without_a_queue_is_random_and_a_loss_with_one_is_not() {
-    // the round trip time is near its minimum: nothing has queued
+    // the round trip time is near its minimum: nothing has queued.
     assert!(Policy::is_random(Duration::from_millis(41), MIN));
     assert!(Policy::is_random(Duration::from_millis(48), MIN));
-    // 15 percent and 2 ms above the minimum is the limit
+    // 15 percent and 2 ms above the minimum is the limit.
     assert!(!Policy::is_random(Duration::from_millis(49), MIN));
     assert!(!Policy::is_random(Duration::from_millis(120), MIN));
-    // a LAN: 2 ms of slack still counts, 5 ms does not
+    // a LAN: 2 ms of slack still counts, 5 ms does not.
     assert!(Policy::is_random(
         Duration::from_micros(1500),
         Duration::from_micros(400)
@@ -32,7 +32,7 @@ fn it_starts_with_cubic_and_stays_there_on_a_clean_path() {
     let base = Instant::now();
     let mut policy = Policy::new(base);
     assert!(!policy.bbr());
-    // time alone changes nothing
+    // time alone changes nothing.
     assert!(!policy.on_time(at(base, 3_600_000)));
     assert!(!policy.bbr());
 }
@@ -59,7 +59,7 @@ fn four_random_losses_within_ten_seconds_move_it_to_bbr() {
     assert!(!policy.bbr());
     assert!(policy.on_loss(at(base, 3000), smoothed, MIN));
     assert!(policy.bbr());
-    // already there: more losses do not report another move
+    // already there: more losses do not report another move.
     assert!(!policy.on_loss(at(base, 3500), smoothed, MIN));
     assert!(policy.bbr());
 }
@@ -69,7 +69,7 @@ fn losses_spread_over_a_long_time_do_not_add_up() {
     let base = Instant::now();
     let mut policy = Policy::new(base);
     let smoothed = Duration::from_millis(42);
-    // one loss every 4 seconds: never four within ten
+    // one loss every 4 seconds: never four within ten.
     for i in 0..30 {
         assert!(!policy.on_loss(at(base, i * 4000), smoothed, MIN));
     }
@@ -86,13 +86,13 @@ fn thirty_quiet_seconds_move_it_back_and_a_loss_postpones_that() {
     }
     assert!(policy.bbr());
     assert!(!policy.on_time(at(base, 20_000)));
-    // a loss at 25 s starts the quiet time again
+    // a loss at 25 s starts the quiet time again.
     assert!(!policy.on_loss(at(base, 25_000), smoothed, MIN));
     assert!(!policy.on_time(at(base, 50_000)));
     assert!(policy.bbr());
     assert!(policy.on_time(at(base, 55_001)));
     assert!(!policy.bbr());
-    // back on cubic it takes four fresh losses again
+    // back on cubic it takes four fresh losses again.
     assert!(!policy.on_loss(at(base, 56_000), smoothed, MIN));
     assert!(!policy.bbr());
 }

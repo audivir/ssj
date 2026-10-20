@@ -51,7 +51,7 @@ async fn download(client: &Endpoint, addr: std::net::SocketAddr, bytes: usize) -
     began.elapsed()
 }
 
-// One test, so that the counters are not shared with another test: the switches are counted for
+// one test, so that the counters are not shared with another test: the switches are counted for
 // the whole process.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn it_stays_with_cubic_on_a_clean_path_and_moves_to_bbr_on_a_lossy_one() {
@@ -62,14 +62,14 @@ async fn it_stays_with_cubic_on_a_clean_path_and_moves_to_bbr_on_a_lossy_one() {
     spawn_sender(server, bytes);
     let client = client_endpoint(&client_id, server_id.fingerprint());
 
-    // a clean path: no loss, so nothing to learn from
+    // a clean path: no loss, so nothing to learn from.
     let before = switches();
     let clean = download(&client, addr, bytes).await;
     assert_eq!(switches(), before, "a clean path stays with CUBIC");
     println!("clean: {bytes} bytes in {clean:?}");
 
     // a path with a round trip of 30 ms that loses 2 percent of the packets, none of it from a
-    // queue
+    // queue.
     let proxy = Proxy::start(addr).await;
     proxy.set_delay(Duration::from_millis(15));
     proxy.set_loss_permille(20);

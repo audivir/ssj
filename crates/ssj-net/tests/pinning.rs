@@ -94,7 +94,7 @@ async fn client_rejects_server_with_other_certificate() {
     assert!(result.is_err());
 }
 
-// Passes the fingerprint check, so only the handshake signature can reject it.
+// passes the fingerprint check, so only the handshake signature can reject it.
 #[tokio::test]
 async fn client_rejects_pinned_server_certificate_without_its_private_key() {
     let (victim, attacker, client_id) = (

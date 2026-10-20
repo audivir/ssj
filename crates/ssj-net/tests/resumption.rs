@@ -160,7 +160,7 @@ async fn connect_twice(
     client.set_default_client_config(quic_client(tls));
 
     let first = client.connect(addr, SERVER_NAME).unwrap().await.unwrap();
-    // session tickets arrive after the handshake
+    // session tickets arrive after the handshake.
     tokio::time::sleep(Duration::from_millis(300)).await;
     first.close(0u8.into(), b"");
 
@@ -169,7 +169,7 @@ async fn connect_twice(
         Ok((conn, _accepted)) => (conn, true),
         Err(connecting) => (connecting.await.unwrap(), false),
     };
-    // a 0-RTT connection is usable before the server has verified anything
+    // a 0-RTT connection is usable before the server has verified anything.
     let (mut send, _recv) = second.open_bi().await.unwrap();
     send.write_all(b"x").await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -197,7 +197,7 @@ async fn every_connection_verifies_both_certificates_even_if_client_asks_to_resu
     assert!(!outcome.zero_rtt_possible);
 }
 
-// Without this, the test above would also pass if the counters never noticed a resumption.
+// without this, the test above would also pass if the counters never noticed a resumption.
 #[tokio::test]
 async fn counters_notice_resumption_when_server_allows_it() {
     let outcome = connect_twice(

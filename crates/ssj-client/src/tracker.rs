@@ -80,7 +80,7 @@ impl Tracker {
     pub fn cancel_sequence(&mut self) {
         if self.open() {
             self.skipping = true;
-            // a half title must not be taken for the title
+            // a half title must not be taken for the title.
             self.payload.clear();
             self.payload_overflow = true;
         }
@@ -127,7 +127,7 @@ impl Tracker {
     }
 
     fn step(&mut self, byte: u8) {
-        // CAN and SUB cancel any sequence, in every state
+        // CAN and SUB cancel any sequence, in every state.
         if matches!(byte, 0x18 | 0x1a) {
             self.finish_payload(false);
             self.state = State::Ground;
@@ -144,7 +144,7 @@ impl Tracker {
                     self.payload_overflow = false;
                 }
                 b'P' | b'X' | b'^' | b'_' => self.state = State::String,
-                // intermediate bytes, such as in `ESC ( B`
+                // intermediate bytes, such as in `ESC ( B`.
                 0x20..=0x2f => {}
                 0x1b => {}
                 _ => self.state = State::Ground,
@@ -172,7 +172,7 @@ impl Tracker {
                     self.finish_payload(osc);
                     self.state = State::Ground;
                 }
-                // a new sequence starts and the old one is abandoned
+                // a new sequence starts and the old one is abandoned.
                 _ => {
                     self.finish_payload(false);
                     self.state = State::Escape;
@@ -188,7 +188,7 @@ impl Tracker {
                 self.utf8_pending -= 1;
                 return;
             }
-            // a broken character: the byte starts something new
+            // a broken character: the byte starts something new.
             self.utf8_pending = 0;
         }
         match byte {

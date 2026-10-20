@@ -35,7 +35,7 @@ pub fn parse_keys(bytes: &[u8]) -> Vec<Key> {
                     keys.push(Key::Cancel);
                     at += 1;
                 }
-                // another sequence: skip its introducer and what follows up to a final byte
+                // another sequence: skip its introducer and what follows up to a final byte.
                 _ => {
                     at += 2;
                     while at < bytes.len() && !(0x40..=0x7e).contains(&bytes[at]) {
@@ -132,7 +132,7 @@ pub fn choose(title: &str, items: Vec<String>) -> Option<usize> {
     let _raw = RawMode::enable().ok().flatten()?;
     let mut menu = Menu::new(items);
     let mut err = std::io::stderr();
-    // no cursor over the menu
+    // no cursor over the menu.
     let _ = write!(err, "{title}\r\n\x1b[?25l{}", menu.render());
     let _ = err.flush();
     let mut stdin = std::io::stdin();
@@ -155,11 +155,11 @@ pub fn choose(title: &str, items: Vec<String>) -> Option<usize> {
         if let Some(finished) = done {
             break finished;
         }
-        // draw again over the old lines
+        // draw again over the old lines.
         let _ = write!(err, "\x1b[{}A{}", menu.lines(), menu.render());
         let _ = err.flush();
     };
-    // take the menu and the title away, and give the cursor back
+    // take the menu and the title away, and give the cursor back.
     let _ = write!(err, "\x1b[{}A\x1b[1A\x1b[J\x1b[?25h", menu.lines());
     let _ = err.flush();
     match outcome {

@@ -65,7 +65,7 @@ impl Drop for QuicWriter {
         let conn = self.conn.clone();
         tokio::spawn(async move {
             let _ = send.finish();
-            // closing at once would discard data that is still on its way
+            // closing at once would discard data that is still on its way.
             let _ = timeout(DRAIN, send.stopped()).await;
             conn.close(0u8.into(), b"done");
         });
@@ -97,7 +97,7 @@ pub async fn serve_observed(
         let to_session = conns.clone();
         let observer = observer.clone();
         tokio::spawn(async move {
-            // the handshake includes the check of the pinned client certificate
+            // the handshake includes the check of the pinned client certificate.
             let Ok(connection) = incoming.await else {
                 return;
             };

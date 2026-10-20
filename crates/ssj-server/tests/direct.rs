@@ -62,7 +62,7 @@ async fn shell_sees_initial_and_changed_window_size() {
         .unwrap();
     let mut parts = shell.split();
 
-    // resizing before the first output would race with the first `stty size`
+    // resizing before the first output would race with the first `stty size`.
     let mut seen = String::new();
     let mut buf = [0u8; 1024];
     while !seen.contains("30 100") {
@@ -95,7 +95,7 @@ async fn shell_gets_only_the_environment_of_the_spec() {
     let output = read_all(&mut parts.reader).await;
 
     assert!(output.contains("ONLY=this"));
-    // the test process itself has these
+    // the test process itself has these.
     assert!(!output.contains("HOME="), "{output}");
     assert!(!output.contains("CARGO"), "{output}");
 }

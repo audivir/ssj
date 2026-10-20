@@ -50,14 +50,14 @@ pub fn emit(level: u8, args: Arguments<'_>) {
             let _ = writeln!(file, "{line}");
         }
         None => {
-            // the terminal may be in raw mode, where a line feed alone would not return the cursor
+            // the terminal may be in raw mode, where a line feed alone would not return the cursor.
             let end = if std::io::stderr().is_terminal() {
                 "\r\n"
             } else {
                 "\n"
             };
             let _ = write!(std::io::stderr(), "{line}{end}");
-            // the lines of level 3 are about every frame, and drawing again sends frames
+            // the lines of level 3 are about every frame, and drawing again sends frames.
             if level < 3 {
                 TERMINAL_LINES.store(true, Ordering::Relaxed);
             }

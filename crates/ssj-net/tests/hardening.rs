@@ -41,7 +41,7 @@ async fn handshake_without_the_ssj_alpn_is_refused() {
         }
     });
 
-    // a correct client with the same setup connects, so the refusals below are about ALPN
+    // a correct client with the same setup connects, so the refusals below are about ALPN.
     let ok = client_with_alpn(
         &client_id,
         server_id.fingerprint(),
@@ -155,7 +155,7 @@ async fn server_limits_concurrent_bidirectional_streams() {
     );
 }
 
-// Pasting a large text must not crawl on a slow link.
+// pasting a large text must not crawl on a slow link.
 #[tokio::test]
 async fn large_paste_arrives_intact_and_fast_at_100ms_round_trip() {
     const PASTE: usize = 8 * 1024 * 1024;
@@ -192,7 +192,7 @@ async fn large_paste_arrives_intact_and_fast_at_100ms_round_trip() {
     assert!(took < Duration::from_secs(4), "paste took {took:?}");
 }
 
-// Input that the server does not read must not pile up in its memory.
+// input that the server does not read must not pile up in its memory.
 #[tokio::test]
 async fn unread_input_is_capped_by_the_receive_window() {
     let (server_id, client_id) = (Identity::generate(), Identity::generate());
@@ -200,7 +200,7 @@ async fn unread_input_is_capped_by_the_receive_window() {
     let addr = server.local_addr().unwrap();
     tokio::spawn(async move {
         let conn = server.accept().await.unwrap().await.unwrap();
-        // accepts the stream but never reads from it
+        // accepts the stream but never reads from it.
         let _stream = conn.accept_bi().await.unwrap();
         conn.closed().await;
     });
@@ -218,7 +218,7 @@ async fn unread_input_is_capped_by_the_receive_window() {
     })
     .await;
 
-    // fixed numbers on purpose: the cap must not move together with the configured window
+    // fixed numbers on purpose: the cap must not move together with the configured window.
     assert!(written <= 4 * 1024 * 1024, "wrote {written} bytes");
     assert!(written >= 64 * 1024, "wrote only {written} bytes");
 }

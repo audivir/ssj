@@ -38,7 +38,7 @@ pub async fn serve_tcp(
         let tcp = match listener.accept().await {
             Ok((tcp, _)) => tcp,
             Err(_) => {
-                // out of descriptors or similar: wait instead of spinning
+                // out of descriptors or similar: wait instead of spinning.
                 sleep(Duration::from_millis(100)).await;
                 continue;
             }

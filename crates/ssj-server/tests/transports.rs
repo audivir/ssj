@@ -118,7 +118,7 @@ async fn tcp_refuses_a_client_with_another_certificate_and_the_right_one_still_w
 
     let stranger = Identity::generate();
     // TLS 1.3 lets the client finish before the server has checked its certificate, so the
-    // refusal shows when the client reads
+    // refusal shows when the client reads.
     if let Ok(stream) = connect_tcp(&stranger, &launched.connect).await {
         let (reader, writer) = tokio::io::split(stream);
         let mut wire = Wire::new(reader, writer);
@@ -190,7 +190,7 @@ async fn start_stdio(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_runs_over_stdin_and_stdout() {
     let runtime = runtime_dir();
-    // no network transport at all: only the channel of `ssh` reaches this server
+    // no network transport at all: only the channel of `ssh` reaches this server.
     let launched = launch_with(
         &runtime,
         &Identity::generate(),
@@ -206,9 +206,9 @@ async fn a_session_runs_over_stdin_and_stdout() {
 
     assert!(output.contains("got:stdio"), "{output:?}");
     assert_eq!(exit, Some(ExitStatus::Code(3)));
-    // the client says it has the status, as the real one does
+    // the client says it has the status, as the real one does.
     wire.send(ClientFrame::Close).await;
-    // the process ends by itself once the session has ended
+    // the process ends by itself once the session has ended.
     let status = timeout(Duration::from_secs(10), child.wait())
         .await
         .expect("the stdio process did not end")
@@ -256,7 +256,7 @@ async fn a_second_stdio_connection_takes_over_and_the_session_goes_on() {
         }
     }
 
-    // the first process is still alive, as if its `ssh` had hung; the second one replaces it
+    // the first process is still alive, as if its `ssh` had hung; the second one replaces it.
     let (_second_process, mut second) = start_stdio(&runtime, &[&id]).await;
     second
         .send(ClientFrame::Hello(Hello::Resume {

@@ -283,7 +283,7 @@ async fn large_paste_into_a_chatty_program_does_not_deadlock() {
         }
     });
 
-    // read and acknowledge output until the server has consumed the whole paste
+    // read and acknowledge output until the server has consumed the whole paste.
     let (mut received, mut acked_input) = (0u64, 0u64);
     timeout(Duration::from_secs(60), async {
         let mut chunk = [0u8; 16 * 1024];
@@ -326,7 +326,7 @@ async fn new_connection_takes_over_from_the_old_one() {
         .await;
     new.read_until(|s| s.welcome.is_some()).await;
 
-    // the old connection is closed, the new one drives the same shell
+    // the old connection is closed, the new one drives the same shell.
     let old_end = old.read_until(|_| false).await;
     assert!(old_end.closed);
     new.send(ClientFrame::Input(b"ping\n".to_vec())).await;
@@ -477,7 +477,7 @@ async fn unacknowledged_output_is_capped_by_the_replay_buffer() {
     })
     .await;
 
-    // fixed numbers on purpose: the cap must not move together with the configured capacity
+    // fixed numbers on purpose: the cap must not move together with the configured capacity.
     assert!(
         total <= 8 * 1024,
         "{total} bytes arrived without any acknowledgement"
@@ -520,14 +520,14 @@ async fn deliberate_detach_disables_the_timeout_until_the_next_connection() {
     assert_eq!(next_event(&mut events).await, SessionEvent::Connected);
     assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
 
-    // several times the timeout later the session still runs
+    // several times the timeout later the session still runs.
     assert!(
         timeout(Duration::from_millis(1200), &mut session)
             .await
             .is_err()
     );
 
-    // a new client attaches and uses the same shell
+    // a new client attaches and uses the same shell.
     let mut again = harness.connect().await;
     again
         .send(ClientFrame::Hello(Hello::Attach { size: size() }))
@@ -535,7 +535,7 @@ async fn deliberate_detach_disables_the_timeout_until_the_next_connection() {
     again.send(ClientFrame::Input(b"back\n".to_vec())).await;
     again.read_until(|s| contains(&s.output, "back")).await;
 
-    // an involuntary loss brings the timeout back
+    // an involuntary loss brings the timeout back.
     drop(again);
     let end = timeout(Duration::from_secs(5), session)
         .await
@@ -544,7 +544,7 @@ async fn deliberate_detach_disables_the_timeout_until_the_next_connection() {
     assert!(matches!(end, SessionEnd::DetachedTimeout));
 }
 
-// The answer must not wait for the shell: the point of a ping is to show that the path works
+// the answer must not wait for the shell: the point of a ping is to show that the path works
 // while the shell is busy or stuck.
 #[tokio::test]
 async fn ping_is_answered_while_the_shell_is_stuck() {
@@ -552,7 +552,7 @@ async fn ping_is_answered_while_the_shell_is_stuck() {
     let mut client = harness.connect().await;
     client.start().await;
 
-    // pings that arrive together may share one pong, so each ping waits for its answer
+    // pings that arrive together may share one pong, so each ping waits for its answer.
     for _ in 0..2 {
         client.send(ClientFrame::Ping).await;
         let seen = client.read_until(|s| s.pongs >= 1).await;
@@ -581,7 +581,7 @@ async fn events_follow_the_state_of_the_client() {
         session: tokio::spawn(async { SessionEnd::Closed }),
     };
 
-    // a connection that never completes its hello is not reported
+    // a connection that never completes its hello is not reported.
     let mut bad = harness.connect().await;
     bad.send_raw(b"\xff\xff\xff\xff garbage").await;
     bad.read_until(|_| false).await;
@@ -599,7 +599,7 @@ async fn events_follow_the_state_of_the_client() {
         .await;
     assert_eq!(next_event(&mut events).await, SessionEvent::Connected);
     again.send(ClientFrame::Detach).await;
-    // a deliberate detach is its own event and not also a loss
+    // a deliberate detach is its own event and not also a loss.
     assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
 }
 
@@ -629,7 +629,7 @@ async fn the_detach_command_tells_the_client_to_leave_and_the_shell_keeps_runnin
     assert!(seen.detached);
     assert_eq!(next_event(&mut events).await, SessionEvent::Detached);
 
-    // on purpose, so the timeout does not apply, and the shell is still there
+    // on purpose, so the timeout does not apply, and the shell is still there.
     assert!(
         timeout(Duration::from_millis(1200), &mut session)
             .await
@@ -645,7 +645,7 @@ async fn the_detach_command_tells_the_client_to_leave_and_the_shell_keeps_runnin
 
 #[tokio::test]
 async fn an_attach_makes_the_program_redraw_by_changing_the_size_and_back() {
-    // the shell reports the size at every SIGWINCH
+    // the shell reports the size at every SIGWINCH.
     let script = "trap 'echo size:$(stty size)' WINCH; echo ready; while true; do sleep 0.05; done";
     let (conns, rx) = mpsc::channel(4);
     let session = tokio::spawn(Session::new(Direct, config(script)).run(rx));
@@ -659,7 +659,7 @@ async fn an_attach_makes_the_program_redraw_by_changing_the_size_and_back() {
     first.send(ClientFrame::Detach).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // the same size as before: only the narrower size in between makes the program notice
+    // the same size as before: only the narrower size in between makes the program notice.
     let mut second = harness.connect().await;
     second
         .send(ClientFrame::Hello(Hello::Attach { size: size() }))
@@ -696,7 +696,7 @@ async fn kill_hangs_up_the_shell_and_tells_the_client() {
     commands.send(SessionCommand::Kill).unwrap();
     let seen = client.read_until(|s| s.exit.is_some()).await;
 
-    // SIGHUP from the closing terminal, not the five seconds of patience
+    // SIGHUP from the closing terminal, not the five seconds of patience.
     assert_eq!(seen.exit, Some(ExitStatus::Signal(1)));
     assert!(
         started.elapsed() < Duration::from_secs(4),
@@ -745,7 +745,7 @@ async fn kill_works_without_a_client_and_without_a_shell() {
 
 #[tokio::test]
 async fn max_detached_limits_a_deliberate_detach_and_not_a_loss() {
-    // no timeout for lost connections, a short limit for deliberate detaches
+    // no timeout for lost connections, a short limit for deliberate detaches.
     let mut cfg = config("cat");
     cfg.detached_timeout = None;
     cfg.max_detached = Some(Duration::from_millis(400));
@@ -754,7 +754,7 @@ async fn max_detached_limits_a_deliberate_detach_and_not_a_loss() {
     let mut client = harness.connect().await;
     client.start().await;
     drop(client);
-    // the loss is not limited
+    // the loss is not limited.
     assert!(
         timeout(Duration::from_millis(1200), harness.session)
             .await
@@ -815,7 +815,7 @@ async fn wait_for_file(path: &std::path::Path) {
     })
     .await
     .unwrap_or_else(|_| panic!("the job did not finish: {} was not created", path.display()));
-    // the last bytes are still on their way from the terminal into the buffer
+    // the last bytes are still on their way from the terminal into the buffer.
     tokio::time::sleep(Duration::from_millis(400)).await;
 }
 
@@ -844,7 +844,7 @@ async fn drain(client: &mut Client) -> (u64, Vec<u8>, Option<ExitStatus>) {
     (first.expect("a welcome"), out, exit)
 }
 
-// The job writes ten megabytes while the client is away. With backpressure it would stop after
+// the job writes ten megabytes while the client is away. With backpressure it would stop after
 // the first buffer full and wait for a client that is not there.
 #[tokio::test]
 async fn a_job_runs_to_its_end_while_no_client_is_connected() {
@@ -866,10 +866,10 @@ async fn a_job_runs_to_its_end_while_no_client_is_connected() {
     let (welcome_offset, output, exit) = drain(&mut second).await;
 
     let expected = job_output();
-    // exactly the newest buffer full is left, and the client can work out what it missed
+    // exactly the newest buffer full is left, and the client can work out what it missed.
     assert_eq!(welcome_offset as usize, expected.len() - REPLAY);
     assert_eq!(output.len(), REPLAY);
-    // no byte is missing or repeated after the gap
+    // no byte is missing or repeated after the gap.
     assert!(
         output == expected[welcome_offset as usize..],
         "the bytes after the gap differ"
@@ -878,7 +878,7 @@ async fn a_job_runs_to_its_end_while_no_client_is_connected() {
     let _ = std::fs::remove_file(&marker);
 }
 
-// While somebody acknowledges, nothing may be forgotten, however slow that client is.
+// while somebody acknowledges, nothing may be forgotten, however slow that client is.
 #[tokio::test]
 async fn a_connected_client_gets_backpressure_and_loses_nothing() {
     let marker = marker();
@@ -886,7 +886,7 @@ async fn a_connected_client_gets_backpressure_and_loses_nothing() {
     let mut client = harness.connect().await;
     client.start().await;
 
-    // the client is connected but acknowledges nothing for a while
+    // the client is connected but acknowledges nothing for a while.
     let mut received = 0usize;
     while let Ok(Some(frame)) = timeout(Duration::from_millis(1500), client.next()).await {
         if let ServerFrame::Output(data) = frame {
@@ -902,7 +902,7 @@ async fn a_connected_client_gets_backpressure_and_loses_nothing() {
         "the job must be held back by the full buffer"
     );
 
-    // now it acknowledges, and everything arrives
+    // now it acknowledges, and everything arrives.
     client.send(ClientFrame::OutputAck(received as u64)).await;
     let (_, rest, exit) = {
         let (mut offset, mut out, mut exit) = (received as u64, Vec::new(), None);
@@ -1029,12 +1029,12 @@ async fn a_client_that_goes_silent_is_given_up_and_the_detached_timeout_starts()
     let harness = start(cfg);
     let mut client = harness.connect().await;
     // measured from before the hello: the silence starts with it, and a busy machine can delay
-    // the answer
+    // the answer.
     let started = tokio::time::Instant::now();
     client.start().await;
 
     // the client stays connected but sends nothing; the session ends by its detached timeout,
-    // which counts from the moment the connection was given up
+    // which counts from the moment the connection was given up.
     assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
     let waited = started.elapsed();
     assert!(
@@ -1052,7 +1052,7 @@ async fn a_client_that_pings_is_not_given_up() {
     let mut client = harness.connect().await;
     client.start().await;
 
-    // silence of 1.5 s in total, but never 400 ms at a time
+    // silence of 1.5 s in total, but never 400 ms at a time.
     for _ in 0..15 {
         client.send(ClientFrame::Ping).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1062,7 +1062,7 @@ async fn a_client_that_pings_is_not_given_up() {
     assert!(!harness.session.is_finished());
 }
 
-// The exit status was sent, but the connection broke before the client confirmed it. The client
+// the exit status was sent, but the connection broke before the client confirmed it. The client
 // may not have seen it, so the session stays and sends it again to the next connection.
 #[tokio::test]
 async fn an_exit_status_that_may_not_have_arrived_is_sent_again() {
@@ -1071,7 +1071,7 @@ async fn an_exit_status_that_may_not_have_arrived_is_sent_again() {
     first.start().await;
     let seen = first.read_until(|s| s.exit.is_some()).await;
     assert_eq!(seen.exit, Some(ExitStatus::Code(6)));
-    // no close: the connection just goes
+    // no close: the connection just goes.
     drop(first);
     tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -1161,7 +1161,7 @@ async fn a_connected_client_that_takes_nothing_does_not_hold_the_job_up() {
     let mut client = harness.connect().await;
     client.start().await;
 
-    // the client reads nothing, and the job still finishes
+    // the client reads nothing, and the job still finishes.
     wait_for_file(&marker).await;
 
     let expected = job_output();
@@ -1171,13 +1171,13 @@ async fn a_connected_client_that_takes_nothing_does_not_hold_the_job_up() {
         !gaps.is_empty(),
         "a job of 10 MB cannot fit in a backlog of 256 KiB"
     );
-    // what arrives plus what was skipped is the whole stream, and the end of it is intact
+    // what arrives plus what was skipped is the whole stream, and the end of it is intact.
     assert_eq!(received + gaps.iter().sum::<u64>(), expected.len() as u64);
     assert!(received >= live as u64 / 2, "{received}");
     let _ = std::fs::remove_file(&marker);
 }
 
-// What the shell wrote before a client joined is replay. It is delivered whole, even though it is
+// what the shell wrote before a client joined is replay. It is delivered whole, even though it is
 // more than the backlog that a connected client may have.
 #[tokio::test]
 async fn the_replay_for_a_client_that_joins_is_not_skipped() {
@@ -1209,7 +1209,7 @@ async fn the_replay_for_a_client_that_joins_is_not_skipped() {
     let _ = std::fs::remove_file(&marker);
 }
 
-// The skip never starts inside a character of several bytes.
+// the skip never starts inside a character of several bytes.
 #[tokio::test]
 async fn a_skip_does_not_cut_a_character_in_two() {
     let marker = marker();
@@ -1237,7 +1237,7 @@ async fn a_skip_does_not_cut_a_character_in_two() {
             }
             ServerFrame::Output(data) => {
                 if after_gap {
-                    // the first byte after a gap is not a continuation byte
+                    // the first byte after a gap is not a continuation byte.
                     starts_ok &= data[0] & 0xc0 != 0x80;
                     after_gap = false;
                 }
@@ -1252,7 +1252,7 @@ async fn a_skip_does_not_cut_a_character_in_two() {
     let _ = std::fs::remove_file(&marker);
 }
 
-// While the link is the limit, output that compresses is sent compressed, and it arrives exactly
+// while the link is the limit, output that compresses is sent compressed, and it arrives exactly
 // as the shell wrote it. Without the setting nothing is compressed.
 #[tokio::test]
 async fn output_is_compressed_while_the_link_holds_it_back_and_arrives_intact() {
@@ -1264,7 +1264,7 @@ async fn output_is_compressed_while_the_link_holds_it_back_and_arrives_intact() 
         let harness = start(cfg);
         let mut client = harness.connect().await;
         client.start().await;
-        // the client takes nothing while the job runs, so output piles up: a slow link
+        // the client takes nothing while the job runs, so output piles up: a slow link.
         wait_for_file_or_full(&marker).await;
 
         let expected = job_output();
@@ -1292,7 +1292,7 @@ async fn wait_for_file_or_full(marker: &std::path::Path) {
     }
 }
 
-// Input that the client compressed is the same as plain input once the server has inflated it,
+// input that the client compressed is the same as plain input once the server has inflated it,
 // and the input offset counts the plain bytes.
 #[tokio::test]
 async fn compressed_input_reaches_the_shell_as_plain_input() {
@@ -1301,7 +1301,7 @@ async fn compressed_input_reaches_the_shell_as_plain_input() {
     ));
     let mut client = harness.connect().await;
     client.start().await;
-    // the terminal must be raw before the input comes, or the line discipline cuts it
+    // the terminal must be raw before the input comes, or the line discipline cuts it.
     client.read_until(|s| contains(&s.output, "ready")).await;
     let text: Vec<u8> = (0..20_000u32)
         .map(|i| b"abcdefghij"[(i % 10) as usize])
@@ -1400,7 +1400,7 @@ async fn a_client_can_close_a_channel() {
     let harness = start(config);
     let mut client = harness.connect().await;
     start_with_agent(&mut client).await;
-    // the socket appears with the shell
+    // the socket appears with the shell.
     let mut program = loop {
         if let Ok(stream) = UnixStream::connect(&path).await {
             break stream;
@@ -1466,7 +1466,7 @@ fn prestarted(script: &str) -> SessionConfig {
 #[tokio::test]
 async fn a_prestarted_shell_runs_before_the_client_and_the_first_start_joins_it() {
     let harness = start(prestarted("echo ready-early; read x; echo got:$x; exit 4"));
-    // the shell has run its startup before anybody connects
+    // the shell has run its startup before anybody connects.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut client = harness.connect().await;
     let welcome = client.start().await;
@@ -1474,7 +1474,7 @@ async fn a_prestarted_shell_runs_before_the_client_and_the_first_start_joins_it(
 
     client.send(ClientFrame::Input(b"late\n".to_vec())).await;
     let seen = client.read_until(|s| s.exit.is_some()).await;
-    // the output of the shell from before the connection is in the stream from offset 0
+    // the output of the shell from before the connection is in the stream from offset 0.
     assert!(
         contains(&seen.output, "ready-early"),
         "{:?}",
@@ -1488,7 +1488,7 @@ async fn a_prestarted_shell_runs_before_the_client_and_the_first_start_joins_it(
 async fn joining_a_prestarted_shell_applies_the_size_of_the_hello() {
     let harness = start(prestarted("read x; stty size; sleep 5"));
     let mut client = harness.connect().await;
-    // the hello says 24 rows and 80 columns, the bootstrap said 30 and 100
+    // the hello says 24 rows and 80 columns, the bootstrap said 30 and 100.
     client.start().await;
     client.send(ClientFrame::Input(b"go\n".to_vec())).await;
     let seen = client.read_until(|s| contains(&s.output, "24 80")).await;
@@ -1504,7 +1504,7 @@ async fn only_the_first_start_joins_and_an_attach_joins_too() {
     first.read_until(|s| contains(&s.output, "x")).await;
     drop(first);
 
-    // a client that connected once is not a first start any more
+    // a client that connected once is not a first start any more.
     let mut again = harness.connect().await;
     again
         .send(ClientFrame::Hello(Hello::Start {
@@ -1516,7 +1516,7 @@ async fn only_the_first_start_joins_and_an_attach_joins_too() {
     let seen = again.read_until(|s| s.error.is_some() || s.closed).await;
     assert_eq!(seen.error, Some(ErrorCode::AlreadyStarted));
 
-    // and a fresh session can be joined with an attach, as a named or reused session is
+    // and a fresh session can be joined with an attach, as a named or reused session is.
     let harness = start(prestarted("echo here; sleep 5"));
     let mut attach = harness.connect().await;
     attach
@@ -1533,7 +1533,7 @@ async fn a_session_that_nobody_joins_ends_with_its_shell() {
     let harness = start(cfg);
     assert!(matches!(harness.end().await, SessionEnd::DetachedTimeout));
 
-    // also without a prestart, and a shorter detached timeout wins
+    // also without a prestart, and a shorter detached timeout wins.
     let mut cfg = config("cat");
     cfg.first_client_timeout = Duration::from_secs(3600);
     cfg.detached_timeout = Some(Duration::from_millis(200));
@@ -1548,7 +1548,7 @@ async fn the_first_client_timeout_stops_counting_once_a_client_has_joined() {
     let harness = start(cfg);
     let mut client = harness.connect().await;
     client.start().await;
-    // longer than the timeout, and the session is still there
+    // longer than the timeout, and the session is still there.
     tokio::time::sleep(Duration::from_millis(900)).await;
     drop(client);
     tokio::time::sleep(Duration::from_millis(900)).await;
@@ -1557,7 +1557,7 @@ async fn the_first_client_timeout_stops_counting_once_a_client_has_joined() {
 
 #[tokio::test]
 async fn a_shell_that_leaves_a_background_program_on_the_terminal_still_ends_the_session() {
-    // the program keeps the terminal open, so the output never reaches its end
+    // the program keeps the terminal open, so the output never reaches its end.
     let harness = start(config("sleep 30 & echo before; exit 3"));
     let mut client = harness.connect().await;
     client.start().await;
@@ -1572,7 +1572,7 @@ async fn a_shell_that_leaves_a_background_program_on_the_terminal_still_ends_the
 async fn a_hangup_ends_the_session_and_hangs_up_the_shell() {
     let marker = std::env::temp_dir().join(format!("ssj-hangup-{}", std::process::id()));
     let _ = std::fs::remove_file(&marker);
-    // the shell notes the SIGHUP that closing its terminal sends
+    // the shell notes the SIGHUP that closing its terminal sends.
     let script = format!(
         "trap 'echo hup > {}; exit 0' HUP; echo ready; while :; do sleep 0.05; done",
         marker.display()
@@ -1583,7 +1583,7 @@ async fn a_hangup_ends_the_session_and_hangs_up_the_shell() {
     client.read_until(|s| contains(&s.output, "ready")).await;
     client.send(ClientFrame::Hangup).await;
     assert!(matches!(harness.end().await, SessionEnd::Killed));
-    // the end of the session waited for the shell, which has run its trap
+    // the end of the session waited for the shell, which has run its trap.
     assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "hup");
     let _ = std::fs::remove_file(&marker);
 }

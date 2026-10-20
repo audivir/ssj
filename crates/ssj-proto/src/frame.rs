@@ -249,7 +249,7 @@ fn put_size(out: &mut Vec<u8>, size: WindowSize) {
 }
 
 fn put_string(out: &mut Vec<u8>, s: &str) {
-    // `Env` limits keep every string below `u16::MAX`
+    // `Env` limits keep every string below `u16::MAX`.
     out.extend_from_slice(&(s.len() as u16).to_be_bytes());
     out.extend_from_slice(s.as_bytes());
 }
@@ -379,7 +379,7 @@ impl ClientFrame {
                         _ => return Err(DecodeError::InvalidValue),
                     };
                     let count = usize::from(body.u16()?);
-                    // a count above the limit is rejected before any allocation
+                    // a count above the limit is rejected before any allocation.
                     if count > Env::MAX_VARS {
                         return Err(DecodeError::Env(EnvError::TooMany));
                     }
@@ -490,7 +490,7 @@ impl ServerFrame {
             INPUT_ACK => Self::InputAck(body.u64()?),
             GAP => {
                 let skipped = body.u64()?;
-                // a gap of nothing would be a frame that does nothing
+                // a gap of nothing would be a frame that does nothing.
                 if skipped == 0 {
                     return Err(DecodeError::InvalidValue);
                 }

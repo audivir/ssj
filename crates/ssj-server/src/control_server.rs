@@ -53,7 +53,7 @@ impl Context {
                     Reply::Error("no client is connected".to_owned())
                 }
             }
-            // handled by the caller, since the connection itself is needed
+            // handled by the caller, since the connection itself is needed.
             Request::Stream => Reply::Error("not a stream".to_owned()),
             Request::Attach(pin) => match self.frontend.lock().await.open(pin).await {
                 Ok(connect) => Reply::Connect(connect),
@@ -71,7 +71,7 @@ pub async fn serve_control(listener: UnixListener, context: Arc<Context>) {
 }
 
 async fn handle(stream: UnixStream, context: Arc<Context>) {
-    // the directory is private already, and this is the second lock on the door
+    // the directory is private already, and this is the second lock on the door.
     match stream.peer_cred() {
         Ok(cred) if cred.uid() == rustix::process::getuid().as_raw() => {}
         _ => return,
@@ -84,7 +84,7 @@ async fn handle(stream: UnixStream, context: Arc<Context>) {
         Ok(Ok(n)) if n > 0 && line.ends_with(b"\n") => match parse_request(&line) {
             Ok(Request::Stream) => {
                 // the connection becomes the byte stream of a client; the client sends nothing
-                // before the answer, so no input is lost with the buffer of the reader
+                // before the answer, so no input is lost with the buffer of the reader.
                 let reader = lines.into_inner().into_inner();
                 if writer
                     .write_all(format_reply(&Reply::Ok).as_bytes())

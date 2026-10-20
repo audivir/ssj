@@ -81,7 +81,7 @@ pub fn parse_connect(output: &[u8]) -> Result<Option<Connect>, BootstrapError> {
     let mut found = None;
     let mut lines = output.split(|&b| b == b'\n').peekable();
     while let Some(line) = lines.next() {
-        // the last segment has no newline behind it, so it is not complete yet
+        // the last segment has no newline behind it, so it is not complete yet.
         if lines.peek().is_none() {
             break;
         }

@@ -133,9 +133,9 @@ pub async fn run_remote_command(
     let mut stderr = child.stderr.take().expect("piped").take(4096);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let finished = timeout(BOOTSTRAP_TIMEOUT, async {
-        // writing and reading run side by side, so that a large upload cannot block on output
+        // writing and reading run side by side, so that a large upload cannot block on output.
         let write = async move {
-            // the remote side may stop reading early, which shows up in its error output
+            // the remote side may stop reading early, which shows up in its error output.
             let _ = input.write_all(&stdin).await;
             drop(input);
         };

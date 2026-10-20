@@ -84,7 +84,7 @@ pub fn host_dir_name() -> String {
             }
         })
         .collect();
-    // no `.` or `..`, and nothing hidden
+    // no `.` or `..`, and nothing hidden.
     match name.trim_start_matches('.') {
         "" => "host".to_owned(),
         trimmed => trimmed.to_owned(),
@@ -178,7 +178,7 @@ pub fn find_sessions(dir: &Path) -> Vec<Found> {
                     io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
                 ) =>
             {
-                // a leftover of a server that did not end cleanly
+                // a leftover of a server that did not end cleanly.
                 let _ = fs::remove_file(&path);
             }
             _ => {}
