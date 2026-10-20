@@ -1252,5 +1252,4 @@ UDP phase:
 - The client CLI uses `clap`. The options live in one file that the build script includes, so the
   man page and the completions cannot drift from the parser.
 - One protocol version per binary, with no backward compatibility. Old server files stay
-  side by side (`ssj-server-p<N>`). Revisit at the first
-  protocol bump.
+  side by side (`ssj-server-p<N>`). Revisit at the first protocol bump.
