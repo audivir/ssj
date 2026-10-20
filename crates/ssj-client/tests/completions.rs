@@ -109,6 +109,7 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
             "compdef() {{ :; }}\nsource '{}'\n\
              compadd() {{ if [[ $1 == -a ]]; then print -r -- \"names: ${{(P)2}}\"; else print -r -- \"add: $*\"; fi; }}\n\
              _hosts() {{ print hosts; }}\n\
+             _files() {{ print files; }}\n\
              _alternative() {{ print \"alternative: $*\"; }}\n\
              words=({words}); CURRENT={current}; _ssj_words",
             file.display()
@@ -132,12 +133,12 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     assert_eq!(case("attach other@host ''", 3), "names:");
     // list and install take nothing more.
     assert_eq!(case("list me@box ''", 3), "");
-    // after the destination come the words of the command for the host, and no host.
-    assert_eq!(case("me@box ''", 2), "");
-    assert_eq!(case("me@box rm ''", 3), "");
-    assert_eq!(case("me@box rm -rf ''", 4), "");
+    // after the destination come the words of the command for the host: files, not hosts.
+    assert_eq!(case("me@box ''", 2), "files");
+    assert_eq!(case("me@box rm ''", 3), "files");
+    assert_eq!(case("me@box rm -rf ''", 4), "files");
     // a host that is called like a command, after the dashes
-    assert_eq!(case("attach -- ''", 3), "");
+    assert_eq!(case("attach -- ''", 3), "files");
 }
 
 #[test]

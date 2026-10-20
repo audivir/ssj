@@ -176,7 +176,7 @@ _ssj_words() {
         _alternative 'commands:command:compadd list attach kill detach install' 'hosts:host:_hosts'
     elif [[ $words[1] == (list|attach|kill|detach|install) ]]; then
         # `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
-        (( CURRENT >= 3 )) && [[ $words[2] == -- ]] && return
+        if (( CURRENT >= 3 )) && [[ $words[2] == -- ]]; then _files; return; fi
         if (( CURRENT == 2 )); then
             _hosts
         elif [[ ( $CURRENT -eq 3 && $words[1] == attach ) || ( $CURRENT -ge 3 && $words[1] == (kill|detach) ) ]]; then
@@ -184,9 +184,11 @@ _ssj_words() {
             local -a s extra; [[ $words[1] == detach ]] && extra=(--connected)
             s=(${(f)"$(ssj --complete $words[2] $extra 2>/dev/null)"}); compadd -a s
         fi
+    elif (( CURRENT >= 2 )); then
+        # any other first word is the destination, and the rest belongs to the command for the
+        # host: files, since the layout of the host is mostly the same (`~/.local/share/...`)
+        _files
     fi
-    # any other first word is the destination, and everything after it belongs to the command that
-    # runs on the host, so nothing local is offered there
 }
 "#;
             // `#compdef` must stay the first line, or the completion is not found.

@@ -342,6 +342,10 @@ redraw.
   three shells offer the values after a space and after `=`, and clap rejects anything else with
   the list. The sets are written again in the `parse_*` functions of `cli.rs`, which turn the text
   into the types, and in the test table of `completions.rs`.
+- After the destination the shells complete files, not hosts: the words belong to the command that
+  runs on the host, and its layout (`~/.local/share/...`) is mostly the one of this machine. Zsh
+  does it in `_ssj_words`, Bash through the default completion that follows an empty answer, Fish
+  by its default for words that no rule takes.
 - `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
   section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left
