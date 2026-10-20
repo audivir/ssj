@@ -28,6 +28,7 @@
 #                                 frames, with times) into target/ssj-client-log.txt
 #   PROBE=1                       no ssj: measure what `ssh -W` does to two small writes in a row
 #                                 (bench/wprobe.py), at several gaps
+#   CPUS=1                        limit each container to this many CPUs (a small cloud machine)
 #   UDPSTAT=1                     print the UDP counters of the client container before and after
 #                                 (RcvbufErrors counts datagrams that a full socket buffer dropped)
 #   TRACE=1                       print the socket options that sshd sets (TCP_NODELAY and such)
@@ -42,6 +43,9 @@ BUILD=${BUILD:-1}
 CAPTURE=${CAPTURE:-0}
 TRACE=${TRACE:-0}
 UDPSTAT=${UDPSTAT:-0}
+CPUS=${CPUS:-}
+cpu_args=
+[ -n "$CPUS" ] && cpu_args="--cpus $CPUS"
 CLIENT_LOG=${CLIENT_LOG:-0}
 PROBE=${PROBE:-0}
 CLIENT=${CLIENT:-container}
@@ -89,7 +93,7 @@ sshd='/usr/sbin/sshd -D -e'
 publish=
 [ "$CLIENT" = host ] && publish='-p 127.0.0.1::22'
 # shellcheck disable=SC2086
-docker run -d --name "$name-server" $publish --network "$name" --hostname server --cap-add NET_ADMIN --cap-add SYS_PTRACE -v "$PWD":/src:ro \
+docker run -d --name "$name-server" $cpu_args $publish --network "$name" --hostname server --cap-add NET_ADMIN --cap-add SYS_PTRACE -v "$PWD":/src:ro \
     -e NETEM="$NETEM" -v "$TARGET_VOLUME":/target:ro -v "$keys/id.pub":/id.pub:ro "$IMAGE" sh -c "
 $install
 mkdir -p /run/sshd /root/.ssh
@@ -125,7 +129,8 @@ CONFIG
     exit $?
 fi
 
-docker run --rm --network "$name" --cap-add NET_ADMIN -e NETEM="$NETEM" \
+# shellcheck disable=SC2086
+docker run --rm $cpu_args --network "$name" --cap-add NET_ADMIN -e NETEM="$NETEM" \
     -v "$PWD":/src:ro -v "$PWD/target":/out -v "$TARGET_VOLUME":/target:ro -v "$keys/id":/id:ro "$IMAGE" sh -c "
 $install
 mkdir -p /root/.ssh

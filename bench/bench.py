@@ -152,7 +152,9 @@ def clients(args: Args) -> dict[str, list[str]]:
         "udp": [*ssj, "--transport", "udp", args.host],
         "udp-z": ssj + compress + ["--transport", "udp", args.host],
         "tcp": [*ssj, "--transport", "tcp", args.host],
+        "tcp-z": [*ssj, *compress, "--transport", "tcp", args.host],
         "stdio": [*ssj, "--transport", "stdio", args.host],
+        "stdio-z": [*ssj, *compress, "--transport", "stdio", args.host],
     }
 
 
@@ -287,7 +289,9 @@ def main() -> None:
     parser.add_argument("--server", default="target/release/ssj-server")
     parser.add_argument("--ssh-command", default="ssh")
     parser.add_argument("--congestion", choices=["bbr", "cubic"], help="for ssj (default: its own)")
-    parser.add_argument("--only", help="comma separated: ssh,ssh-C,udp,udp-z,tcp,stdio")
+    parser.add_argument(
+        "--only", help="comma separated: ssh,ssh-C,udp,udp-z,tcp,tcp-z,stdio,stdio-z"
+    )
     parser.add_argument("--text-bulk", action="store_true", help="log-like text for bulk and paste")
     parser.add_argument(
         "--allow-drop", action="store_true", help="let ssj skip output on a slow link"

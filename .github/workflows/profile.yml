@@ -1,0 +1,41 @@
+name: Profile
+# Records where the CPU time goes while ssh and ssj move bulk output between two containers, with
+# perf on the runner. Start it by hand and read the report in the job summary.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "clients to run (bench.py --only)"
+        default: "ssh,udp"
+permissions:
+  contents: read
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the binaries
+        run: |
+          NETEM= bench/docker-bench.sh --only ssh --bulk-mb 1 --samples 5 --rounds 1 --json > /dev/null
+      - name: Install perf
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y -qq linux-tools-generic
+      - name: Run with perf
+        run: |
+          perf_bin="$(ls /usr/lib/linux-tools/*/perf | head -1)"
+          echo "$perf_bin" > perf-path
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+          sudo "$perf_bin" record -F 499 -a -g -o perf.data -- env NETEM= BUILD=0 bench/docker-bench.sh --only "${{ inputs.only }}" --raw-bulk --bulk-mb 512 --samples 20 --rounds 2 | tee bench.txt
+      - name: Report
+        run: |
+          perf_bin="$(cat perf-path)"
+          {
+            echo '### bench'; echo '```'; cat bench.txt; echo '```'
+            echo '### CPU by process'; echo '```'
+            sudo "$perf_bin" report -i perf.data --no-children --sort comm -g none --stdio 2>/dev/null | grep -v '^#' | grep -v '^$' | head -15
+            echo '```'
+            for comm in ssj ssj-server sshd ssh; do
+              echo "### $comm: top symbols"; echo '```'
+              sudo "$perf_bin" report -i perf.data --no-children --comms "$comm" --sort dso,sym -g none --stdio 2>/dev/null | grep -v '^#' | grep -v '^$' | head -25
+              echo '```'
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
