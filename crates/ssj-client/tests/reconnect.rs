@@ -182,9 +182,18 @@ struct TcpProxy {
     blind: Arc<AtomicUsize>,
     /// How many of the oldest connections hold back what they carry (it is not lost).
     held: Arc<AtomicUsize>,
+    /// How many of the oldest connections swallow what the client sends (and carry the rest).
+    blind_up: Arc<AtomicUsize>,
 }
 
 impl TcpProxy {
+    /// Swallows what the client sends on the connections that exist now, while what the server
+    /// sends still arrives: a path that works in one direction only.
+    fn blind_the_upstream_of_the_existing(&self) {
+        self.blind_up
+            .store(self.made.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
+
     /// Makes the connections that exist now carry nothing for the moment. What they were given
     /// waits, and goes through when [`TcpProxy::release_the_held`] is called.
     fn hold_the_existing(&self) {
@@ -212,6 +221,8 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
     let made = Arc::new(AtomicUsize::new(0));
     let blind = Arc::new(AtomicUsize::new(0));
     let held = Arc::new(AtomicUsize::new(0));
+    let blind_up = Arc::new(AtomicUsize::new(0));
+    let blind_up_by_proxy = blind_up.clone();
     let (made_by_proxy, blind_by_proxy, held_by_proxy) =
         (made.clone(), blind.clone(), held.clone());
     tokio::spawn(async move {
@@ -219,6 +230,7 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
             let number = made_by_proxy.fetch_add(1, Ordering::Relaxed);
             let blind = blind_by_proxy.clone();
             let held = held_by_proxy.clone();
+            let blind_up_here = blind_up_by_proxy.clone();
             let mut killed = killed.clone();
             // only a kill from now on ends this connection.
             killed.borrow_and_update();
@@ -242,7 +254,8 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
                             sleep(Duration::from_millis(20)).await;
                         }
                         let swallowed = swallowing_up.load(Ordering::Relaxed)
-                            || number < blind_up.load(Ordering::Relaxed);
+                            || number < blind_up.load(Ordering::Relaxed)
+                            || number < blind_up_here.load(Ordering::Relaxed);
                         if !swallowed && uw.write_all(&buf[..n]).await.is_err() {
                             break;
                         }
@@ -279,6 +292,7 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
         made,
         blind,
         held,
+        blind_up,
     }
 }
 
@@ -1453,6 +1467,33 @@ async fn an_old_connection_that_delivers_late_does_not_repeat_a_line() {
 
     let expected: Vec<String> = (0..100).map(|i| format!("got:l{i}")).collect();
     assert_eq!(terminal.got_lines(), expected);
+}
+
+// The server is heard, but it hears nothing: a job prints all the time, so the stream is never
+// silent, and what the user types does not arrive. The client sees that its input and its pings
+// stay unanswered, opens a spare, and moves to it.
+#[tokio::test]
+async fn a_stream_that_works_in_one_direction_only_is_replaced_by_a_spare() {
+    let client_id = Identity::generate();
+    let server = start_server(
+        "stty -opost -echo; (while true; do echo tick; sleep 0.2; done) & while read l; do echo \"got:$l\"; done",
+        client_id.fingerprint(),
+    );
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    let mut terminal = start_client_tcp(&server, client_id, proxy.addr, Duration::from_secs(60));
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+
+    proxy.blind_the_upstream_of_the_existing();
+    terminal.type_line("during").await;
+    let began = std::time::Instant::now();
+    terminal.wait_for("got:during").await;
+    assert!(
+        began.elapsed() < Duration::from_secs(20),
+        "the input waited {:?}",
+        began.elapsed()
+    );
+    assert!(proxy.made.load(Ordering::Relaxed) >= 2, "no spare was made");
 }
 
 // A terminal that reads nothing for a while is a client that is too slow. The job must not wait

@@ -1253,6 +1253,9 @@ struct Link {
     writer: JoinHandle<()>,
     reader: FrameReader,
     last_heard: Instant,
+    /// When the oldest ping that no pong has answered went out. Frames of the server that arrive
+    /// meanwhile show that its direction works and say nothing about ours.
+    ping_since: Option<Instant>,
     _guard: Option<Box<dyn Send + Sync>>,
 }
 
@@ -1270,12 +1273,19 @@ impl Link {
             writer: tokio::spawn(write_frames(out, rx)),
             reader: FrameReader::new(reader),
             last_heard: Instant::now(),
+            ping_since: None,
             _guard: guard,
         }
     }
 
     fn send(&self, frame: ClientFrame) {
         let _ = self.out.send(frame);
+    }
+
+    /// Sends a ping and remembers when, until the pong comes.
+    fn ping(&mut self) {
+        self.ping_since.get_or_insert_with(Instant::now);
+        self.send(ClientFrame::Ping);
     }
 
     /// Lets the writer deliver what is queued, then ends the link.
@@ -1337,6 +1347,8 @@ struct Client {
     note: Option<String>,
     io: Io,
     input: ReplayBuffer,
+    /// Since when input is typed that the server has not acknowledged.
+    input_since: Option<Instant>,
     output_offset: u64,
     /// Output that the server has been told about.
     acked_output: u64,
@@ -1384,6 +1396,7 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         status_shown: None,
         status_blocked_since: None,
         input: ReplayBuffer::new(INPUT_BUFFER),
+        input_since: None,
         output_offset: 0,
         acked_output: 0,
         escape,
@@ -1657,6 +1670,18 @@ impl Client {
 
     /// Starts opening the connection of tier `idx`. The returned future owns what it needs, so
     /// that several of them can run side by side.
+    /// How long the connection has not worked in both directions: the longer of the silence of the
+    /// server and the wait for an answer to a ping or to typed input.
+    fn lag(&self, link: &Link) -> Duration {
+        [link.ping_since, self.input_since]
+            .into_iter()
+            .flatten()
+            .map(|since| since.elapsed())
+            .max()
+            .unwrap_or_default()
+            .max(link.last_heard.elapsed())
+    }
+
     fn prepare_link(&mut self, idx: usize) -> LinkFuture {
         let udp = match &self.params.tiers[idx] {
             Tier::Udp { addr, .. } => Some(*addr),
@@ -1936,6 +1961,7 @@ impl Client {
             vlog!(2, "sending {} bytes of input again", chunk.len());
             link.send(ClientFrame::Input(chunk));
         }
+        self.input_since = (self.input.end() > self.input.start()).then(Instant::now);
         if self.params.agent.is_some() {
             link.send(ClientFrame::AgentOffer);
         }
@@ -2027,6 +2053,7 @@ impl Client {
             match action {
                 Action::Send(bytes) => {
                     let stored = self.input.push(&bytes);
+                    self.input_since.get_or_insert_with(Instant::now);
                     if stored < bytes.len() {
                         // the reads leave room for the longest expansion, so this does not happen.
                         return Err("the input buffer overflowed".to_owned());
@@ -2163,8 +2190,9 @@ impl Client {
                             self.input
                                 .ack(offset)
                                 .map_err(|_| "the server acknowledged input that was never sent".to_owned())?;
+                            self.input_since = (self.input.end() > self.input.start()).then(Instant::now);
                         }
-                        ServerFrame::Pong => {}
+                        ServerFrame::Pong => link.ping_since = None,
                         ServerFrame::AgentOpen(id) => match agent.as_mut() {
                             Some(agent) => agent.open(id).await,
                             // nothing was offered, so a server that opens a channel is wrong.
@@ -2265,7 +2293,7 @@ impl Client {
                         let attempt = self.prepare_link(0);
                         upgrade = Some(Box::pin(timeout(UPGRADE_TIMEOUT, attempt)));
                     }
-                    link.send(ClientFrame::Ping);
+                    link.ping();
                     probed_at = Some(Instant::now());
                     let wait = if cause == Cause::Woke { PROBE_AFTER_WAKE } else { PROBE_AFTER_CHANGE };
                     probe = Some(tokio::time::Instant::now() + wait);
@@ -2298,7 +2326,7 @@ impl Client {
                             // the stream may have come back while the spare was opening, and then
                             // it is the better one: nothing is in flight on it that a move
                             // would have to repeat.
-                            if link.last_heard.elapsed() < SPARE_AFTER / 2 {
+                            if self.lag(link) < SPARE_AFTER / 2 {
                                 vlog!(1, "the spare connection is open, but the stream answers again: keeping the stream");
                             } else {
                                 vlog!(1, "the spare connection is open: moving to it");
@@ -2322,10 +2350,13 @@ impl Client {
                     // it, so that none goes out alone.
                     if link.last_heard.elapsed() >= PING_EVERY / 2 {
                         self.ack_output(&link.out, true);
-                        link.send(ClientFrame::Ping);
+                        link.ping();
                     }
                     self.unstick_status().await;
                     let silent = link.last_heard.elapsed();
+                    // the server may be heard while it hears nothing: a ping or typed input
+                    // without an answer is as bad as silence.
+                    let lag = self.lag(link);
                     let stall_after = link
                         .quic
                         .as_ref()
@@ -2340,20 +2371,20 @@ impl Client {
                     } else {
                         self.params.stream_dead_after
                     };
-                    if link.quic.is_none() && silent > patience {
-                        vlog!(1, "nothing heard for {silent:?} on a stream: giving it up");
+                    if link.quic.is_none() && lag > patience {
+                        vlog!(1, "no answer for {lag:?} on a stream: giving it up");
                         return Ok(Pumped::Lost);
                     }
                     if link.quic.is_none() {
-                        if silent > SPARE_AFTER
+                        if lag > SPARE_AFTER
                             && spare.is_none()
                             && upgrade.is_none()
                             && Instant::now() >= spare_not_before
                         {
-                            vlog!(1, "nothing heard for {silent:?} on a stream: opening a spare connection");
+                            vlog!(1, "no answer for {lag:?} on a stream: opening a spare connection");
                             let attempt = self.prepare_link(self.current);
                             spare = Some(Box::pin(timeout(SPARE_TIMEOUT, attempt)));
-                        } else if silent < SPARE_AFTER / 2 && spare.is_some() {
+                        } else if lag < SPARE_AFTER / 2 && spare.is_some() {
                             vlog!(1, "the stream answers again: dropping the spare connection");
                             spare = None;
                         }
