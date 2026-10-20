@@ -22,11 +22,11 @@ See `SPEC.md` for the design and the threat model.
 ### The client
 
 Download the archive for your system from the
-[releases](https://github.com/audivir/ssj/releases) page, check it against `SHA256SUMS`, and
+[releases](https://github.com/zshsetup/ssj/releases) page, check it against `SHA256SUMS`, and
 unpack it:
 
 ```shell
-curl -LO https://github.com/audivir/ssj/releases/latest/download/ssj-VERSION-TARGET.tar.gz
+curl -LO https://github.com/zshsetup/ssj/releases/latest/download/ssj-VERSION-TARGET.tar.gz
 tar xzf ssj-VERSION-TARGET.tar.gz
 ```
 
