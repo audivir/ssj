@@ -177,6 +177,17 @@ struct TcpProxy {
     addr: SocketAddr,
     kill: tokio::sync::watch::Sender<u64>,
     swallow: Arc<AtomicBool>,
+    /// The connections made so far, and how many of the oldest are swallowed.
+    made: Arc<AtomicUsize>,
+    blind: Arc<AtomicUsize>,
+}
+
+impl TcpProxy {
+    /// Swallows what the connections that exist now carry, and nothing of the later ones.
+    fn blind_the_existing(&self) {
+        self.blind
+            .store(self.made.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
 }
 
 async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
@@ -185,8 +196,13 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
     let (kill, killed) = tokio::sync::watch::channel(0u64);
     let swallow = Arc::new(AtomicBool::new(false));
     let swallowing = swallow.clone();
+    let made = Arc::new(AtomicUsize::new(0));
+    let blind = Arc::new(AtomicUsize::new(0));
+    let (made_by_proxy, blind_by_proxy) = (made.clone(), blind.clone());
     tokio::spawn(async move {
         while let Ok((client, _)) = listener.accept().await {
+            let number = made_by_proxy.fetch_add(1, Ordering::Relaxed);
+            let blind = blind_by_proxy.clone();
             let mut killed = killed.clone();
             // only a kill from now on ends this connection.
             killed.borrow_and_update();
@@ -198,15 +214,16 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
                 let (mut cr, mut cw) = client.into_split();
                 let (mut ur, mut uw) = upstream.into_split();
                 let swallowing_up = swallowing.clone();
+                let blind_up = blind.clone();
                 let up = async move {
                     let mut buf = vec![0u8; 16 * 1024];
                     while let Ok(n) = cr.read(&mut buf).await {
                         if n == 0 {
                             break;
                         }
-                        if !swallowing_up.load(Ordering::Relaxed)
-                            && uw.write_all(&buf[..n]).await.is_err()
-                        {
+                        let swallowed = swallowing_up.load(Ordering::Relaxed)
+                            || number < blind_up.load(Ordering::Relaxed);
+                        if !swallowed && uw.write_all(&buf[..n]).await.is_err() {
                             break;
                         }
                     }
@@ -217,9 +234,9 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
                         if n == 0 {
                             break;
                         }
-                        if !swallowing.load(Ordering::Relaxed)
-                            && cw.write_all(&buf[..n]).await.is_err()
-                        {
+                        let swallowed = swallowing.load(Ordering::Relaxed)
+                            || number < blind.load(Ordering::Relaxed);
+                        if !swallowed && cw.write_all(&buf[..n]).await.is_err() {
                             break;
                         }
                     }
@@ -236,6 +253,8 @@ async fn start_tcp_proxy(server: SocketAddr) -> TcpProxy {
         addr,
         kill,
         swallow,
+        made,
+        blind,
     }
 }
 
@@ -1290,6 +1309,31 @@ async fn a_silent_tcp_path_is_given_up_after_a_while_and_replaced() {
     proxy.swallow.store(false, Ordering::Relaxed);
     proxy.kill.send_modify(|generation| *generation += 1);
     terminal.wait_for("got:during").await;
+    terminal.settle().await;
+    assert_eq!(terminal.got_lines(), ["got:before", "got:during"]);
+}
+
+// A stream that goes silent gets a spare connection after a few seconds, and the session moves to
+// it, long before the stream would be given up for good. The old connection stays swallowed.
+#[tokio::test]
+async fn a_silent_stream_is_replaced_by_a_spare_long_before_it_is_given_up() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    // the stream would be given up after a minute.
+    let mut terminal = start_client_tcp(&server, client_id, proxy.addr, Duration::from_secs(60));
+    terminal.type_line("before").await;
+    terminal.wait_for("got:before").await;
+
+    proxy.blind_the_existing();
+    terminal.type_line("during").await;
+    let began = std::time::Instant::now();
+    terminal.wait_for("got:during").await;
+    assert!(
+        began.elapsed() < Duration::from_secs(20),
+        "the session waited {:?}",
+        began.elapsed()
+    );
     terminal.settle().await;
     assert_eq!(terminal.got_lines(), ["got:before", "got:during"]);
 }

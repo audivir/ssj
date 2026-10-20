@@ -93,6 +93,17 @@ const SEQUENCE_PATIENCE: Duration = Duration::from_secs(2);
 /// does not report one all the time.
 const STALL_MIN: Duration = Duration::from_secs(2);
 const STALL_MAX: Duration = Duration::from_secs(10);
+/// A stream that has heard nothing for this long gets a spare: a second connection is opened
+/// beside it, and the session moves to whichever works. Giving the stream up only after
+/// [`STREAM_DEAD_AFTER`] would leave a flaky link (a train) without a session for that long, and
+/// the stream itself may be in the long backoff of TCP when the network is back.
+const SPARE_AFTER: Duration = Duration::from_secs(3);
+/// Time a spare gets to open before a new one replaces it. A connection that was started on a dead
+/// path has lost its first packets and retries them with growing pauses, so a fresh one finds a
+/// returning network sooner than an old one does.
+const SPARE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Pause after a spare that failed outright, so that a broken login does not become a loop.
+const SPARE_PAUSE: Duration = Duration::from_secs(2);
 /// A change of network produces many notifications. One reaction follows when they stop.
 const CHANGE_QUIET: Duration = Duration::from_millis(300);
 /// Time the server gets to answer after the client moved to a new network path, before the client
@@ -2066,6 +2077,9 @@ impl Client {
         let mut resizes = Debounce::new(RESIZE_QUIET);
         // QUIC tried again on a new network while the session runs over a stream.
         let mut upgrade: Option<Upgrade> = None;
+        // a second connection over the same stream transport, opened while the stream is silent.
+        let mut spare: Option<Upgrade> = None;
+        let mut spare_not_before = Instant::now();
         // when to make the program draw again, after debug lines were written over the screen.
         let mut redraw_at: Option<tokio::time::Instant> = None;
         // the channels to the agent live as long as the link.
@@ -2277,6 +2291,20 @@ impl Client {
                         ),
                     }
                 }
+                result = async { spare.as_mut().expect("guarded").await }, if spare.is_some() => {
+                    spare = None;
+                    match result {
+                        Ok(Ok(better)) => {
+                            vlog!(1, "the spare connection is open: moving to it");
+                            return Ok(Pumped::Switch(better, self.current));
+                        }
+                        Ok(Err(error)) => {
+                            vlog!(1, "the spare connection failed: {error}");
+                            spare_not_before = Instant::now() + SPARE_PAUSE;
+                        }
+                        Err(_) => vlog!(1, "the spare connection did not open in time: trying a new one"),
+                    }
+                }
                 () = async { tokio::time::sleep_until(redraw_at.expect("guarded")).await }, if redraw_at.is_some() => {
                     redraw_at = None;
                     redraw(self.size, &link.out).await;
@@ -2301,6 +2329,20 @@ impl Client {
                     if link.quic.is_none() && silent > self.params.stream_dead_after {
                         vlog!(1, "nothing heard for {silent:?} on a stream: giving it up");
                         return Ok(Pumped::Lost);
+                    }
+                    if link.quic.is_none() {
+                        if silent > SPARE_AFTER
+                            && spare.is_none()
+                            && upgrade.is_none()
+                            && Instant::now() >= spare_not_before
+                        {
+                            vlog!(1, "nothing heard for {silent:?} on a stream: opening a spare connection");
+                            let attempt = self.prepare_link(self.current);
+                            spare = Some(Box::pin(timeout(SPARE_TIMEOUT, attempt)));
+                        } else if silent < SPARE_AFTER / 2 && spare.is_some() {
+                            vlog!(1, "the stream answers again: dropping the spare connection");
+                            spare = None;
+                        }
                     }
                     if silent > stall_after {
                         stalled = true;
