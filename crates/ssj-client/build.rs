@@ -9,10 +9,10 @@ use clap_complete::Shell;
 #[path = "src/options.rs"]
 mod options;
 
-/// What the options cannot show: the config files and the cache.
 /// The words that are commands when they stand first, and not hosts.
 const COMMANDS: &str = "list attach kill detach install edit";
 
+/// What the options cannot show: the config files and the cache.
 const COMMAND: &str = r#".SH RUNNING A COMMAND
 \fBssj\fR \fIDESTINATION\fR \fICOMMAND\fR... runs the command in the session instead of the shell,
 as \fBssh\fR does, and ends with its exit code. The login shell of the host runs it, so pipes,
@@ -150,15 +150,6 @@ fn main() {
         .render(&mut page)
         .expect("render the man page");
     page.extend_from_slice(COMMAND.as_bytes());
-    page.extend_from_slice(FILES.as_bytes());
-    fs::write(out.join("ssj.1"), page).expect("write the man page");
-    // the options for a command word, whose options may stand after the destination.
-    let long_options = command
-        .get_arguments()
-        .filter_map(|arg| arg.get_long())
-        .map(|long| format!("--{long}"))
-        .collect::<Vec<_>>()
-        .join(" ");
     // the options that take a value: the word after one of them is not a destination
     let value_options = command
         .get_arguments()
@@ -170,6 +161,62 @@ fn main() {
         })
         .collect::<Vec<_>>()
         .join(" ");
+    // the long options that each command reads, in the order of the table
+    let command_longs: Vec<(&str, Vec<String>)> = options::COMMAND_OPTIONS
+        .iter()
+        .map(|(word, ids)| {
+            let longs = ids
+                .iter()
+                .map(|id| {
+                    command
+                        .get_arguments()
+                        .find(|arg| arg.get_id() == id)
+                        .and_then(|arg| arg.get_long())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| panic!("COMMAND_OPTIONS names {id}, which is no option"))
+                })
+                .collect();
+            (*word, longs)
+        })
+        .collect();
+    let dashed = |longs: &[String]| {
+        longs
+            .iter()
+            .map(|long| format!("--{long}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // the commands with their options in the man page
+    let mut commands_page = String::from(
+        ".SH COMMANDS\nThe options that each command reads. Every option may stand before the command word, and these also after the destination.\n",
+    );
+    for (word, longs) in &command_longs {
+        let list = longs
+            .iter()
+            .map(|long| format!("\\fB\\-\\-{}\\fR", long.replace('-', "\\-")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        commands_page.push_str(&format!(".TP\n\\fBssj {word}\\fR\n{list}\n"));
+    }
+    page.extend_from_slice(commands_page.as_bytes());
+    page.extend_from_slice(FILES.as_bytes());
+    fs::write(out.join("ssj.1"), page).expect("write the man page");
+    // the arms of the `case` of Bash and of the `switch` of Fish
+    let bash_cases = command_longs
+        .iter()
+        .map(|(word, longs)| format!("            {word}) opts=\"{}\" ;;", dashed(longs)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let fish_cases = command_longs
+        .iter()
+        .map(|(word, longs)| {
+            format!(
+                "        case {word}\n            contains -- $argv[1] {}",
+                longs.join(" ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     for (shell, file) in [
         (Shell::Bash, "ssj.bash"),
         (Shell::Zsh, "_ssj"),
@@ -183,7 +230,14 @@ fn main() {
             text = text
                 .lines()
                 .map(|line| match line.strip_prefix("complete -c ssj ") {
-                    Some(rest) => format!("complete -c ssj -n __ssj_options_allowed {rest}"),
+                    Some(rest) => {
+                        let name = format!(" {rest}")
+                            .split(" -l ")
+                            .nth(1)
+                            .and_then(|tail| tail.split(' ').next().map(str::to_owned))
+                            .expect("every option has a long name");
+                        format!("complete -c ssj -n '__ssj_option_allowed {name}' {rest}")
+                    }
                     None => line.to_owned(),
                 })
                 .collect::<Vec<_>>()
@@ -194,7 +248,9 @@ fn main() {
             &dynamic(shell)
                 .replace("__VALUE_OPTIONS__", &value_options)
                 .replace("__COMMANDS__", COMMANDS)
-                .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|")),
+                .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|"))
+                .replace("__BASH_OPTION_CASES__", &bash_cases)
+                .replace("__FISH_OPTION_CASES__", &fish_cases),
         );
         if shell == Shell::Zsh {
             // the names of the sessions for `--name`.
@@ -223,7 +279,8 @@ _ssj_words() {
     fi
     if [[ $words[1] == (__COMMAND_PATTERN__) ]]; then
         # the options of a command may stand after the destination (`ssj install host --server-binary`)
-        if [[ $PREFIX == -* ]]; then compadd -- __OPTIONS__; return; fi
+        local -A opts=(__OPTION_TABLE__)
+        if [[ $PREFIX == -* ]]; then compadd -- ${=opts[$words[1]]}; return; fi
         if (( CURRENT == 2 )); then
             _ssj_hosts
         elif [[ ( $CURRENT -eq 3 && $words[1] == attach ) || ( $CURRENT -ge 3 && $words[1] == (kill|detach) ) ]]; then
@@ -239,8 +296,13 @@ _ssj_words() {
     fi
 }
 "#;
+            let table = command_longs
+                .iter()
+                .map(|(word, longs)| format!("{word} '{}'", dashed(longs)))
+                .collect::<Vec<_>>()
+                .join(" ");
             let helpers = helpers
-                .replace("__OPTIONS__", &long_options)
+                .replace("__OPTION_TABLE__", &table)
                 .replace("__COMMANDS__", COMMANDS)
                 .replace("__COMMAND_PATTERN__", &COMMANDS.replace(' ', "|"));
             // `#compdef` must stay the first line, or the completion is not found.
@@ -304,9 +366,13 @@ _ssj_sessions() {
     # the options stand before the destination, or after a command word: the words after any other
     # destination are for the command on the host (`ssj host ls -l`)
     if [[ $current == -* ]]; then
+        local opts=
         case ${pos[0]-} in
-            ''|__COMMAND_PATTERN__) _ssj "$1" "$current" "$previous" ;;
+            '') _ssj "$1" "$current" "$previous"; return ;;
+__BASH_OPTION_CASES__
+            *) return ;;
         esac
+        COMPREPLY=($(compgen -W "$opts" -- "$current"))
         return
     fi
     local hosts=
@@ -380,11 +446,19 @@ function __ssj_words
         end
     end
 end
-# the options stand before the destination, or after a command word: the words after any other
-# destination are for the command on the host (`ssj host ls -l`)
-function __ssj_options_allowed
+# the options stand anywhere before the destination, and after a command word only those that the
+# command reads: the words after any other destination are for the command on the host
+# (`ssj host ls -l`)
+function __ssj_option_allowed
     set -l words (__ssj_words)
-    test (count $words) -eq 0; or contains -- $words[1] __COMMANDS__
+    if test (count $words) -eq 0
+        return 0
+    end
+    switch $words[1]
+__FISH_OPTION_CASES__
+        case '*'
+            return 1
+    end
 end
 function __ssj_wants_host
     set -l words (__ssj_words)
@@ -414,7 +488,7 @@ complete -c ssj -n '__ssj_wants_sessions' -f -a '(__ssj_sessions_of_host)'
 complete -c ssj -n 'test (count (__ssj_words)) -eq 0' -f -a '__COMMANDS__'
 complete -c ssj -n 'test (count (__ssj_words)) -eq 0' -f -a '(__fish_print_hostnames)'
 complete -c ssj -n '__ssj_wants_host' -f -a '(__fish_print_hostnames)'
-complete -c ssj -n '__ssj_options_allowed' -l name -x -a '(ssj --complete 2>/dev/null)'
+complete -c ssj -n '__ssj_option_allowed name' -l name -x -a '(ssj --complete 2>/dev/null)'
 "#
         }
         _ => "",

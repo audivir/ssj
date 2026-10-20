@@ -125,6 +125,13 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert!(hosts("ssj install me@box --ser", 3).contains("--server-binary"));
     assert!(hosts("ssj kill me@box --fo", 3).contains("--force"));
     assert_eq!(hosts("ssj me@box ls --ser", 3), "");
+    // only the options that the command reads
+    assert_eq!(
+        hosts("ssj edit me@box -", 3),
+        "--verbose --log-file --ssh-command"
+    );
+    assert!(!hosts("ssj kill me@box -", 3).contains("--json"));
+    assert!(hosts("ssj list me@box -", 3).contains("--json"));
     assert_eq!(hosts("ssj me@box ''", 2), "");
     assert_eq!(hosts("ssj attach -- ''", 3), "");
     assert_eq!(hosts("ssj --name x attach ''", 4), "boxa boxb");
@@ -198,6 +205,12 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
         "{offered}"
     );
     assert!(options("install --ser", 2, "--ser").contains(" --server-binary"));
+    // only the options that the command reads
+    let install = options("install me@box -", 3, "-");
+    assert!(install.contains(" --server-binary") && !install.contains(" --transport"));
+    let kill = options("kill me@box -", 3, "-");
+    assert!(kill.contains(" --force") && !kill.contains(" --json"));
+    assert!(options("list me@box -", 3, "-").contains(" --json"));
     assert!(options("kill me@box --fo", 3, "--fo").contains(" --force"));
     // after the host of a command for the host the words are files.
     assert_eq!(options("me@box ls --ser", 3, "--ser"), "files");
@@ -282,6 +295,7 @@ fn fish_offers_the_commands_and_the_hosts() {
             .any(|l| l.starts_with("--server-binary"))
     };
     assert!(options("ssj install me@box --ser"));
+    assert!(!options("ssj list me@box --ser"));
     assert!(options("ssj --ser"));
     assert!(!options("ssj me@box ls --ser"));
 }

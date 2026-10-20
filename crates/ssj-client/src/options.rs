@@ -25,6 +25,81 @@ const PAIRS: [[&str; 4]; 3] = [
     ["install", "no_install", "install", "install / --no-install"],
 ];
 
+/// The options that each command reads, by the id of the argument. Before the command word every
+/// option may stand, since the word is not known yet; after it only these make sense, and the
+/// completions and the man page show only these. The words after a destination that is not a
+/// command belong to the command on the host and have none.
+// `build.rs` includes this file for the completions and the man page; the crate uses it in a test.
+#[allow(dead_code)]
+pub const COMMAND_OPTIONS: [(&str, &[&str]); 6] = [
+    (
+        "list",
+        &[
+            "verbose",
+            "log_file",
+            "ssh_command",
+            "server_path",
+            "server_arg",
+            "json",
+        ],
+    ),
+    (
+        "attach",
+        &[
+            "verbose",
+            "quiet",
+            "log_file",
+            "transport",
+            "local_echo",
+            "congestion",
+            "compress",
+            "ssh_command",
+            "server_path",
+            "server_arg",
+            "port_range",
+            "install",
+            "no_install",
+            "download_url",
+            "server_binary",
+            "udp_host",
+            "escape_char",
+            "detach_key",
+        ],
+    ),
+    (
+        "kill",
+        &[
+            "verbose",
+            "log_file",
+            "ssh_command",
+            "server_path",
+            "server_arg",
+            "force",
+        ],
+    ),
+    (
+        "detach",
+        &[
+            "verbose",
+            "log_file",
+            "ssh_command",
+            "server_path",
+            "server_arg",
+        ],
+    ),
+    (
+        "install",
+        &[
+            "verbose",
+            "log_file",
+            "ssh_command",
+            "download_url",
+            "server_binary",
+        ],
+    ),
+    ("edit", &["verbose", "log_file", "ssh_command"]),
+];
+
 /// The command for parsing and for `--help`. The help shows a flag and its counterpart on one line
 /// (`--auto-attach / --no-auto-attach`), the way `typer` does: the flag gets that text as its long
 /// name, which nobody types, and keeps the real name as a hidden alias. The counterpart is hidden.
