@@ -123,3 +123,52 @@ fn the_default_answer_is_yes_and_only_a_clear_no_or_a_stray_word_declines() {
         assert!(!accepts(no), "{no:?}");
     }
 }
+
+#[test]
+fn a_linux_host_with_a_new_enough_glibc_gets_the_gnu_build_and_any_other_the_musl_build() {
+    let cases = [
+        // glibc 2.17 or newer: the gnu build.
+        (
+            "SSJ TARGET Linux x86_64\nSSJ LIBC glibc 2.39\n",
+            "x86_64-unknown-linux-gnu",
+        ),
+        (
+            "SSJ TARGET Linux aarch64\nSSJ LIBC glibc 2.17\n",
+            "aarch64-unknown-linux-gnu",
+        ),
+        (
+            "SSJ TARGET Linux x86_64\nSSJ LIBC glibc 2.35.1\n",
+            "x86_64-unknown-linux-gnu",
+        ),
+        (
+            "SSJ TARGET Linux x86_64\nSSJ LIBC glibc 3.0\n",
+            "x86_64-unknown-linux-gnu",
+        ),
+        // older glibc, no answer (musl has none), or an answer that is not glibc: the static build.
+        (
+            "SSJ TARGET Linux x86_64\nSSJ LIBC glibc 2.16\n",
+            "x86_64-unknown-linux-musl",
+        ),
+        (
+            "SSJ TARGET Linux x86_64\nSSJ LIBC \n",
+            "x86_64-unknown-linux-musl",
+        ),
+        (
+            "SSJ TARGET Linux aarch64\nSSJ LIBC musl 1.2\n",
+            "aarch64-unknown-linux-musl",
+        ),
+        (
+            "SSJ TARGET Linux x86_64\nSSJ LIBC glibc x.y\n",
+            "x86_64-unknown-linux-musl",
+        ),
+        // macOS has one build whatever the answer.
+        (
+            "SSJ TARGET Darwin arm64\nSSJ LIBC glibc 2.39\n",
+            "aarch64-apple-darwin",
+        ),
+    ];
+    for (output, triple) in cases {
+        let target = parse_target(output.as_bytes()).unwrap();
+        assert_eq!(target.triple(), triple, "{output:?}");
+    }
+}

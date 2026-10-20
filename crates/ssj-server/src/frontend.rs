@@ -114,6 +114,7 @@ impl Frontend {
             udp,
             tcp,
             fingerprint: identity.fingerprint(),
+            new: false,
         })
     }
 

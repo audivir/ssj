@@ -13,26 +13,48 @@ use crate::vlog;
 /// Largest server file the client uploads.
 pub const MAX_BINARY: u64 = 64 * 1024 * 1024;
 
+/// The oldest glibc that the `gnu` builds run on (they are linked against it by `zig`).
+pub const MIN_GLIBC: (u32, u32) = (2, 17);
+
 /// Systems that have a server build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     LinuxX86_64,
     LinuxAarch64,
+    /// A Linux host with a glibc that the `gnu` build runs on.
+    LinuxX86_64Gnu,
+    LinuxAarch64Gnu,
     MacArm64,
 }
 
 impl Target {
-    /// Name of the build. Linux builds are static (musl) and run on any distribution.
+    /// Name of the build. The `gnu` build is for hosts with a glibc of [`MIN_GLIBC`] or newer, and
+    /// the static `musl` build runs on any other distribution.
     pub fn triple(self) -> &'static str {
         match self {
             Self::LinuxX86_64 => "x86_64-unknown-linux-musl",
             Self::LinuxAarch64 => "aarch64-unknown-linux-musl",
+            Self::LinuxX86_64Gnu => "x86_64-unknown-linux-gnu",
+            Self::LinuxAarch64Gnu => "aarch64-unknown-linux-gnu",
             Self::MacArm64 => "aarch64-apple-darwin",
         }
     }
 }
 
-/// Reads the answer of `uname -sm`, which has to be in a line of its own: `SSJ TARGET <os> <arch>`.
+/// The version in an answer of `getconf GNU_LIBC_VERSION`, such as `glibc 2.35`.
+fn glibc_version(line: &[u8]) -> Option<(u32, u32)> {
+    let text = std::str::from_utf8(line).ok()?;
+    let version = text.trim().strip_prefix("glibc ")?;
+    let (major, rest) = version.split_once('.')?;
+    let minor: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// Reads the answer of the probe: `SSJ TARGET <os> <arch>` from `uname -sm`, which has to be in a
+/// line of its own, and optionally `SSJ LIBC glibc <version>` from `getconf GNU_LIBC_VERSION`.
+///
+/// A Linux host with a glibc of [`MIN_GLIBC`] or newer gets the `gnu` build, and any other (musl,
+/// no `getconf`, an older glibc) the static `musl` build.
 pub fn parse_target(stdout: &[u8]) -> Result<Target, String> {
     let lines: Vec<&[u8]> = stdout
         .split(|b| *b == b'\n')
@@ -41,7 +63,14 @@ pub fn parse_target(stdout: &[u8]) -> Result<Target, String> {
     let [system] = lines[..] else {
         return Err("the host did not report its system".to_owned());
     };
+    let glibc = stdout
+        .split(|b| *b == b'\n')
+        .filter_map(|line| line.strip_prefix(b"SSJ LIBC "))
+        .find_map(glibc_version)
+        .is_some_and(|version| version >= MIN_GLIBC);
     match system {
+        b"Linux x86_64" if glibc => Ok(Target::LinuxX86_64Gnu),
+        b"Linux aarch64" if glibc => Ok(Target::LinuxAarch64Gnu),
         b"Linux x86_64" => Ok(Target::LinuxX86_64),
         b"Linux aarch64" => Ok(Target::LinuxAarch64),
         b"Darwin arm64" => Ok(Target::MacArm64),
@@ -54,7 +83,10 @@ pub fn parse_target(stdout: &[u8]) -> Result<Target, String> {
 
 /// Asks the host for its system and CPU, and returns the matching release target.
 pub async fn detect_target(args: &Args) -> Result<Target, String> {
-    let command = sh_command(r#"printf 'SSJ TARGET %s\n' "$(uname -sm)""#, &[]);
+    let command = sh_command(
+        r#"printf 'SSJ TARGET %s\n' "$(uname -sm)"; printf 'SSJ LIBC %s\n' "$(getconf GNU_LIBC_VERSION 2>/dev/null)""#,
+        &[],
+    );
     let remote = run_remote_command(args, &command, Vec::new()).await?;
     if !remote.status.success() {
         return Err(format!(

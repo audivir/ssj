@@ -387,6 +387,16 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
 }
 
 #[test]
+fn the_first_line_names_the_session_when_it_has_a_name() {
+    let (seen, code) = terminal_session(&["--name", "work"]);
+    assert_eq!(code, Some(7));
+    assert!(
+        seen.contains("[started session work (") && seen.contains(") on me@localhost over udp]"),
+        "{seen:?}"
+    );
+}
+
+#[test]
 fn quiet_leaves_out_the_lines_about_connecting_and_disconnecting() {
     let (seen, code) = terminal_session(&["-q"]);
     assert_eq!(code, Some(7));

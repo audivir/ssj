@@ -43,6 +43,9 @@ pub struct Connect {
     pub udp: Option<u16>,
     pub tcp: Option<u16>,
     pub fingerprint: [u8; 32],
+    /// The server made the session for this client, which a fifth field `new` on the line says.
+    /// `false` for a session that ran, and for a server that does not say.
+    pub new: bool,
 }
 
 /// Failure to read a line of the bootstrap.
@@ -55,7 +58,7 @@ pub enum BootstrapError {
 }
 
 /// Formats the line, including the final newline:
-/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint>`.
+/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new]`.
 pub fn format_connect(connect: &Connect) -> String {
     let port = |kind: &str, port: Option<u16>| match port {
         Some(port) => format!("{kind}:{port}"),
@@ -69,6 +72,9 @@ pub fn format_connect(connect: &Connect) -> String {
     );
     for byte in connect.fingerprint {
         line.push_str(&format!("{byte:02x}"));
+    }
+    if connect.new {
+        line.push_str(" new");
     }
     line.push('\n');
     line
@@ -99,7 +105,8 @@ pub fn parse_connect(output: &[u8]) -> Result<Option<Connect>, BootstrapError> {
 
 fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
     let mut parts = fields.split(|&b| b == b' ');
-    let (Some(id), Some(udp), Some(tcp), Some(fingerprint), None) = (
+    let (Some(id), Some(udp), Some(tcp), Some(fingerprint), flag, None) = (
+        parts.next(),
         parts.next(),
         parts.next(),
         parts.next(),
@@ -107,6 +114,11 @@ fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
         parts.next(),
     ) else {
         return Err(BootstrapError::Malformed);
+    };
+    let new = match flag {
+        None => false,
+        Some(b"new") => true,
+        Some(_) => return Err(BootstrapError::Malformed),
     };
     let id = std::str::from_utf8(id)
         .ok()
@@ -117,6 +129,7 @@ fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
         udp: parse_transport(udp, b"udp:")?,
         tcp: parse_transport(tcp, b"tcp:")?,
         fingerprint: parse_fingerprint(fingerprint)?,
+        new,
     })
 }
 

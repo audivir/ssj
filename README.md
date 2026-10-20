@@ -84,6 +84,10 @@ Where `ssj install` takes the file from:
 - With `--server-binary FILE`, exactly that file, with no download. Take it from the release
   assets (`ssj-server-<TARGET>`) when the client cannot reach GitHub.
 
+Which build the host gets: `ssj` asks the host for its system and libc. Linux with glibc 2.17 or
+newer gets the `gnu` build, and any other Linux (musl, such as Alpine, or an older glibc) the
+static `musl` build. macOS has one build.
+
 Safety of the transfer:
 
 - The download is checked against `SHA256SUMS`.
@@ -113,7 +117,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 | `ssj user@host` | Starts a session. |
 | `ssj --name work user@host` | Joins the session `work`, or starts it. |
 | `ssj attach user@host [ID]` | Joins a running session, for example after a restart. `ID` is an id or a name. |
-| `ssj list user@host` | Lists sessions with state and age. `--json` prints JSON. |
+| `ssj list user@host` | Lists sessions with state, age, and name, under a header on a terminal. `--json` prints JSON. |
 | `ssj kill user@host [ID...]` | Ends one or more sessions. |
 | `ssj detach user@host [ID...]` | Makes the clients leave; the sessions keep running. |
 | `ssj user@host -- make -j8` | Runs a command in a session that survives jumps (see below). |
@@ -146,10 +150,10 @@ Run `ssj --help` or `man ssj` for the full list.
 ### Ending and leaving
 
 Without the message of the day of a login, nothing else says when a session begins. On a terminal
-`ssj` prints `[started session ID on user@host over udp]` first (`[attached to session ID ...]`
-when the session ran already), `[disconnected from user@host]` when the shell ends, and
-`[detached from session; it keeps running: ssj attach user@host]` when you leave on purpose. `-q`
-turns these lines off.
+`ssj` prints `[started session work (ID) on user@host over udp]` first (`attached to session` when
+the session ran already; the name is left out when the session has none), `[disconnected from user@host]`
+when the shell ends, and `[detached from session; it keeps running: ssj attach user@host]` when you
+leave on purpose. `-q` turns these lines off.
 
 Ending a session stops the shell. Leaving it keeps the shell running.
 

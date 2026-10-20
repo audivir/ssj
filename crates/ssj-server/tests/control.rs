@@ -331,6 +331,8 @@ fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
     let first = Identity::generate();
     let launched = launch_with(&runtime, &first, free_range(), "cat", &["--name", "work"]);
     let id = launched.connect.id.clone();
+    // the server says that it made the session, so that the client can name what it did.
+    assert!(launched.connect.new);
 
     let sessions = list(&runtime);
     assert_eq!(sessions.len(), 1);
@@ -340,12 +342,14 @@ fn a_named_session_is_listed_joined_again_by_its_name_and_ended_by_it() {
     let second = Identity::generate();
     let joined = launch_with(&runtime, &second, free_range(), "cat", &["--name", "work"]);
     assert_eq!(joined.connect.id, id);
+    assert!(!joined.connect.new);
     assert_ne!(joined.connect.fingerprint, launched.connect.fingerprint);
     assert_eq!(list(&runtime).len(), 1);
 
     // another name is another session.
     let other = launch_with(&runtime, &first, free_range(), "cat", &["--name", "play"]);
     assert_ne!(other.connect.id, id);
+    assert!(other.connect.new);
     assert_eq!(list(&runtime).len(), 2);
 
     // by name: attach, and kill.

@@ -57,7 +57,12 @@ jobs:
           tool: cargo-zigbuild
       - name: Build with cargo-zigbuild
         if: matrix.zig
-        run: cargo zigbuild --release -p ssj-client -p ssj-server --target ${{ matrix.target }}
+        # the gnu builds are linked against glibc 2.17, which `ssj install` relies on (MIN_GLIBC); the
+        # files stay in the directory of the target without the version
+        run: |
+          target="${{ matrix.target }}"
+          case "$target" in *-gnu) zig_target="$target.2.17" ;; *) zig_target="$target" ;; esac
+          cargo zigbuild --release -p ssj-client -p ssj-server --target "$zig_target"
       - name: Build natively
         if: ${{ !matrix.zig }}
         run: cargo build --release -p ssj-client -p ssj-server --target ${{ matrix.target }}

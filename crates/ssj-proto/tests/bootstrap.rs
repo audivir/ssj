@@ -13,6 +13,7 @@ fn connect() -> Connect {
         udp: Some(60123),
         tcp: Some(40123),
         fingerprint,
+        new: false,
     }
 }
 
@@ -292,5 +293,30 @@ mod start_line {
                 "{bad:?}"
             );
         }
+    }
+}
+
+#[test]
+fn the_new_flag_is_an_optional_fifth_field_and_nothing_else_is() {
+    let mut connect = connect();
+    assert!(!connect.new);
+    let plain = format_connect(&connect);
+    assert!(!plain.contains(" new"), "{plain:?}");
+    assert_eq!(parse_connect(plain.as_bytes()), Ok(Some(connect.clone())));
+
+    connect.new = true;
+    let flagged = format_connect(&connect);
+    assert!(flagged.ends_with(" new\n"), "{flagged:?}");
+    assert_eq!(parse_connect(flagged.as_bytes()), Ok(Some(connect)));
+    assert_eq!(flagged.matches('\n').count(), 1, "one line");
+
+    // any other fifth field, and a sixth, are errors
+    for tail in [" old", " NEW", " new new", " new x", " "] {
+        let line = format!("{}{tail}\n", plain.trim_end());
+        assert_eq!(
+            parse_connect(line.as_bytes()),
+            Err(BootstrapError::Malformed),
+            "{tail:?}"
+        );
     }
 }

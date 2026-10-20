@@ -90,12 +90,14 @@ fn replies_survive_a_round_trip() {
             udp: Some(60123),
             tcp: Some(40123),
             fingerprint: fingerprint(),
+            new: false,
         }),
         Reply::Connect(Connect {
             id: SessionId::parse("abcdef012345").unwrap(),
             udp: None,
             tcp: None,
             fingerprint: fingerprint(),
+            new: false,
         }),
         Reply::Info(info(SessionState::Connected)),
         Reply::Info(info(SessionState::Disconnected)),
@@ -175,6 +177,7 @@ fn a_reply_with_more_than_one_line_is_refused() {
         udp: Some(1234),
         tcp: None,
         fingerprint: fingerprint(),
+        new: false,
     }));
     assert!(parse_reply(connect.as_bytes()).is_ok());
     assert_eq!(

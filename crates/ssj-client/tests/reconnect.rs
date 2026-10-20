@@ -453,6 +453,7 @@ fn start_client_inner(
             udp: Some(server.addr.port()),
             tcp: Some(server.tcp_addr.port()),
             fingerprint: server.fingerprint,
+            new: false,
         },
         tiers,
         attempt_timeout,

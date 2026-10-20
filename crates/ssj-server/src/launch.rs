@@ -243,13 +243,19 @@ pub fn run_parent(args: &Args) -> ExitCode {
         let _ = child.kill();
         return report_child_failure(&mut child);
     };
-    if parse_connect(&reply).ok().flatten().is_none() {
+    let Some(mut connect) = parse_connect(&reply).ok().flatten() else {
         // a child that printed something else may still run, and waiting for it would hang.
         let _ = child.kill();
         return report_child_failure(&mut child);
-    }
+    };
+    // this server made the session, and only it can tell the client so.
+    connect.new = true;
     let mut out = std::io::stdout();
-    if out.write_all(&reply).and_then(|_| out.flush()).is_err() {
+    if out
+        .write_all(format_connect(&connect).as_bytes())
+        .and_then(|_| out.flush())
+        .is_err()
+    {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS

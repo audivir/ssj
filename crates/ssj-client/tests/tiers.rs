@@ -101,6 +101,7 @@ async fn a_stream_that_is_slow_to_open_is_not_given_up_after_the_short_first_tim
             udp: None,
             tcp: None,
             fingerprint: identity.fingerprint(),
+            new: false,
         },
         identity,
         tiers: vec![

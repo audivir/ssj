@@ -198,9 +198,20 @@ pub struct Params {
     pub compress: bool,
     /// The socket of the local ssh agent, to offer it to the session.
     pub agent: Option<PathBuf>,
-    /// The destination for the line that says the session began (`[started session ...]`), or
-    /// `None` for no line (`-q`, or no terminal).
-    pub announce: Option<String>,
+    /// What the line that says the session began (`[started session ...]`) names, or `None` for no
+    /// line (`-q`, or no terminal).
+    pub announce: Option<Announce>,
+}
+
+/// What the first line of a session names besides its id.
+#[derive(Clone, Debug)]
+pub struct Announce {
+    pub destination: String,
+    /// The name of the session, when the user gave one.
+    pub name: Option<String>,
+    /// Whether the server made the session for this client. A server that does not say counts as
+    /// no: the line then says `attached to`.
+    pub started: bool,
 }
 
 /// The terminal side of a session, so that tests can stand in for it.
@@ -705,17 +716,39 @@ async fn list_sessions(args: &Args) -> u8 {
     if infos.is_empty() {
         println!("no sessions");
     }
-    for info in infos {
-        println!(
-            "{}  {:<12}  {:>4}  protocol {}  {}",
-            info.id.as_str(),
-            state_word(info.state),
-            format_age(info.age_secs),
-            info.protocol,
-            info.name.as_ref().map_or("-", |name| name.as_str())
-        );
+    // a header helps a person and breaks a script, so only a terminal gets one.
+    let header = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    for line in list_lines(&infos, header) {
+        println!("{line}");
     }
     0
+}
+
+/// The lines of `ssj list`, with a header line if `header` is set.
+pub fn list_lines(infos: &[SessionInfo], header: bool) -> Vec<String> {
+    let id_width = infos
+        .iter()
+        .map(|i| i.id.as_str().len())
+        .max()
+        .unwrap_or(0)
+        .max(2);
+    let row = |id: &str, state: &str, age: &str, protocol: &str, name: &str| {
+        format!("{id:<id_width$}  {state:<12}  {age:>4}  {protocol:<10}  {name}")
+    };
+    let mut lines = Vec::new();
+    if header && !infos.is_empty() {
+        lines.push(row("ID", "STATE", "AGE", "PROTOCOL", "NAME"));
+    }
+    for info in infos {
+        lines.push(row(
+            info.id.as_str(),
+            state_word(info.state),
+            &format_age(info.age_secs),
+            &format!("protocol {}", info.protocol),
+            info.name.as_ref().map_or("-", |name| name.as_str()),
+        ));
+    }
+    lines
 }
 
 async fn kill_session(args: &Args, mut ids: Vec<String>) -> u8 {
@@ -937,6 +970,7 @@ async fn connect_session(
             prefetch(&args)
         );
         let connect = connect?;
+        let new = connect.new;
         vlog!(
             1,
             "the server runs: session {}, udp {:?}, tcp {:?}",
@@ -950,10 +984,10 @@ async fn connect_session(
             "transports in order: {}",
             tiers.iter().map(Tier::name).collect::<Vec<_>>().join(", ")
         );
-        Ok::<_, String>((connect, env, tiers, agent))
+        Ok::<_, String>((connect, new, env, tiers, agent))
     }
     .await;
-    let (connect, env, tiers, agent) = match prepared {
+    let (connect, new_session, env, tiers, agent) = match prepared {
         Ok(prepared) => prepared,
         Err(message) => {
             eprintln!("ssj: {message}");
@@ -961,6 +995,7 @@ async fn connect_session(
         }
     };
 
+    let connect_id = connect.id.as_str().to_owned();
     let raw = match RawMode::enable() {
         Ok(raw) => raw,
         Err(err) => {
@@ -1012,7 +1047,16 @@ async fn connect_session(
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
             compress: args.compress == Some(true),
             agent,
-            announce: (raw.is_some() && !args.quiet).then(|| args.destination.clone()),
+            announce: (raw.is_some() && !args.quiet).then(|| Announce {
+                destination: args.destination.clone(),
+                started: new_session,
+                // `--name work` and `ssj attach host work` name the session, and an id does not
+                name: extra
+                    .iter()
+                    .rfind(|word| !word.starts_with("--"))
+                    .filter(|word| word.as_str() != connect_id)
+                    .cloned(),
+            }),
         },
         io,
     )
@@ -1476,18 +1520,25 @@ impl Client {
                 }
                 Attempt::Linked(mut link) => {
                     if !self.linked_once
-                        && let Some(destination) = &self.params.announce
+                        && let Some(Announce {
+                            destination,
+                            name,
+                            started,
+                        }) = &self.params.announce
                     {
                         // without the message of the day of a login, nothing else says when the
                         // session begins. The terminal is raw by now, hence the carriage return.
-                        let what = if matches!(hello, Hello::Start { .. }) {
+                        let what = if *started || matches!(hello, Hello::Start { .. }) {
                             "started session"
                         } else {
                             "attached to session"
                         };
+                        let id = self.params.connect.id.as_str();
+                        let session = name
+                            .as_ref()
+                            .map_or_else(|| id.to_owned(), |name| format!("{name} ({id})"));
                         let line = format!(
-                            "[{what} {} on {destination} over {}]\r\n",
-                            self.params.connect.id.as_str(),
+                            "[{what} {session} on {destination} over {}]\r\n",
                             self.params.tiers[self.current].name()
                         );
                         let _ = self.io.output.write_all(line.as_bytes()).await;

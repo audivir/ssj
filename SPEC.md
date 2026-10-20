@@ -40,7 +40,9 @@ the workspace root):
    is visible to other users in `ps`.
 1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
    range and a TCP port on the loopback address, prints the session id, both ports, and the server
-   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint>`), and detaches from the `ssh` channel. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
+   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new]`), and detaches from the `ssh` channel. The
+   optional fifth field `new` says that this server has just made the session; a session that ran, and a server that
+   does not say, leave it out, and the client then reads the first line as `attached to session`. The range defaults to 60000 to 61000 and is set with `--port-range LOW:HIGH`, which
    the client also accepts and passes on to `ssj-server`. `--port-range 0` takes any port that the
    kernel gives, for hosts where the range is full or filtered anyway.
 1. Client reads the line, closes the `ssh` connection, and connects over the best transport (see
@@ -368,6 +370,8 @@ redraw.
   section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
   the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left
   out.
+- `ssj list` prints one line for each session (id, state, age, protocol, name). On a terminal a
+  header line (`ID STATE AGE PROTOCOL NAME`) comes first; a pipe gets the rows alone.
 - `ssj list --json` prints a JSON array of `{"id", "name", "state", "age_secs", "protocol"}`.
   The name is `null` for an unnamed session.
 - Completion of session ids and names reads a cache, never the network. Every `ssj list` writes
@@ -818,8 +822,10 @@ Leaving (the shell keeps running):
   at the start of a line (right after a newline or at the start of the session). Then:
   - `~.` detaches: the client sends `Detach`, prints `[detached from session; it keeps running: ssj attach <DESTINATION>]`, and exits with code 0.
   - The client prints two more lines, so that the start and the end of a session are visible
-    without the message of the day of a login: `[started session <ID> on <DESTINATION> over <TRANSPORT>]`
-    (or `[attached to session ...]` when the session ran already) once the first connection is up,
+    without the message of the day of a login: `[started session <NAME> (<ID>) on <DESTINATION> over <TRANSPORT>]`
+    once the first connection is up. The name and the brackets around the id are left out when the
+    session has no name the user gave. The first word is `started` for a session that the server made for this client (its `CONNECT`
+    line says `new`) and `attached to` for one that ran. The line goes in front of the output of the session,
     and `[disconnected from <DESTINATION>]` after the shell has ended. The first goes to the
     terminal in raw mode, ahead of the output of the session, and the second to the standard error
     output. These two appear only when the standard input is a terminal (the detach line appears
@@ -1242,7 +1248,7 @@ Bootstrap (client):
 - The client starts `ssh` with an argument vector and never through a shell. A host argument that
   starts with `-` is rejected, to prevent option injection such as `-oProxyCommand`.
 - `ssh` runs without a terminal, so output is not altered and stdin is not echoed.
-- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint>`, of
+- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new]`, of
   bounded length, and ignores other output such as banners and `.bashrc` noise. Remote text is
   never printed to the terminal unfiltered, because it could contain escape sequences.
 - The server reads the client fingerprint from stdin with a length limit and a timeout.
@@ -1292,12 +1298,13 @@ UDP phase:
 - macOS target: arm64 only (one release binary).
 - Release binaries are cross-compiled with `cargo-zigbuild` (Linux targets) and built natively
   on macOS. Each target ships `ssj` and `ssj-server`.
-- Automatic installs use the static `musl` build, because it runs on every distribution. The
-  `glibc` builds are published for packages and for those who want them. Performance is expected
-  to be the same: the work is network I/O and encryption, and `ring` brings its own assembly for
-  the ciphers, so the C library hardly matters. This is to be measured, not assumed: CI runs the
-  paste and throughput tests on both builds, and `glibc` becomes the default only if it is
-  clearly faster (more than 10 percent) in a test on a real link.
+- Automatic installs pick the build by the libc of the host. The probe that asks for the system
+  (`uname -sm`) also asks `getconf GNU_LIBC_VERSION`: a Linux host with glibc 2.17 or newer gets the
+  `gnu` build (linked by `zig` against glibc 2.17, `.2.17` in the release workflow), and every other
+  Linux host (musl, an older glibc, no answer) gets the static `musl` build, which runs on any
+  distribution. The hosts that match are nearly all of them; the choice is the `gnu` build because
+  it is the native one there. Whether it is faster is not established: the work is network I/O and
+  encryption, and `ring` brings its own assembly for the ciphers.
 - Server code uses only portable POSIX calls (via `rustix`), so no Linux-only APIs such as
   `epoll` or `/proc` outside of optional, feature-gated code.
 
