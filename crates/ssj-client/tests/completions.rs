@@ -168,3 +168,110 @@ fn fish_offers_the_sessions_of_the_host_after_attach_and_kill() {
     // --name offers the names of all hosts.
     assert_eq!(case("ssj --name "), "build other work");
 }
+
+/// Options with a fixed set of values, and the values.
+const FIXED: [(&str, &str); 4] = [
+    ("--local-echo", "auto off"),
+    ("--compress", "auto off"),
+    ("--congestion", "auto bbr cubic"),
+    ("--transport", "auto stdio tcp udp"),
+];
+
+#[test]
+fn bash_completes_the_values_of_options_with_a_fixed_set() {
+    if !installed("bash") {
+        return;
+    }
+    let file = generated("ssj.bash");
+    // what bash does: it splits the words at the `=`, and calls the function with the command,
+    // the word under the cursor, and the one before it.
+    let case = |words: &str, cword: usize| {
+        let code = format!(
+            "source '{}'\nCOMP_WORDS=({words}); COMP_CWORD={cword}; \
+             _ssj_sessions ssj \"${{COMP_WORDS[COMP_CWORD]}}\" \"${{COMP_WORDS[COMP_CWORD-1]}}\"; \
+             printf '%s\\n' \"${{COMPREPLY[@]}}\"",
+            file.display()
+        );
+        let mut values: Vec<String> = run("bash", &["-c", &code], &fake_ssj())
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        values.sort();
+        values.join(" ")
+    };
+    for (option, values) in FIXED {
+        // after a space
+        assert_eq!(
+            case(&format!("ssj {option} ''"), 2),
+            values,
+            "{option} <TAB>"
+        );
+        let first = &values[..1];
+        let wanted: Vec<&str> = values.split(' ').filter(|v| v.starts_with(first)).collect();
+        assert_eq!(
+            case(&format!("ssj {option} {first}"), 2),
+            wanted.join(" "),
+            "{option} {first}<TAB>"
+        );
+        // after the `=`, with nothing typed and with the start of a value
+        assert_eq!(
+            case(&format!("ssj {option} ="), 2),
+            values,
+            "{option}=<TAB>"
+        );
+        assert_eq!(
+            case(&format!("ssj {option} = {first}"), 3),
+            wanted.join(" "),
+            "{option}={first}<TAB>"
+        );
+    }
+}
+
+#[test]
+fn fish_completes_the_values_of_options_with_a_fixed_set() {
+    if !installed("fish") {
+        return;
+    }
+    let file = generated("ssj.fish");
+    let case = |line: &str| {
+        let code = format!("source '{}'; complete -C '{line}'", file.display());
+        let out = run("fish", &["-c", &code], &fake_ssj());
+        let mut values: Vec<String> = out
+            .lines()
+            .filter_map(|l| l.split('\t').next())
+            .map(|v| {
+                v.trim_start_matches(|c| c != '=')
+                    .trim_start_matches('=')
+                    .to_owned()
+            })
+            .collect();
+        values.sort();
+        values.join(" ")
+    };
+    for (option, values) in FIXED {
+        assert_eq!(case(&format!("ssj {option} ")), values, "{option} <TAB>");
+        assert_eq!(case(&format!("ssj {option}=")), values, "{option}=<TAB>");
+    }
+}
+
+#[test]
+fn zsh_lists_the_values_of_options_with_a_fixed_set() {
+    let text = std::fs::read_to_string(generated("_ssj")).unwrap();
+    for (option, values) in FIXED {
+        let mut sorted: Vec<&str> = values.split(' ').collect();
+        // clap lists the values in the order of the definition, which the help also shows.
+        sorted.sort_unstable();
+        let line = text
+            .lines()
+            .find(|l| l.contains(&format!("'{option}=[")))
+            .unwrap_or_else(|| panic!("no line for {option}"));
+        let listed = line
+            .rsplit_once(":(")
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .map(|(values, _)| values)
+            .unwrap();
+        let mut listed: Vec<&str> = listed.split(' ').collect();
+        listed.sort_unstable();
+        assert_eq!(listed, sorted, "{option}");
+    }
+}

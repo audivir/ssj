@@ -2295,8 +2295,15 @@ impl Client {
                     spare = None;
                     match result {
                         Ok(Ok(better)) => {
-                            vlog!(1, "the spare connection is open: moving to it");
-                            return Ok(Pumped::Switch(better, self.current));
+                            // the stream may have come back while the spare was opening, and then
+                            // it is the better one: nothing is in flight on it that a move
+                            // would have to repeat.
+                            if link.last_heard.elapsed() < SPARE_AFTER / 2 {
+                                vlog!(1, "the spare connection is open, but the stream answers again: keeping the stream");
+                            } else {
+                                vlog!(1, "the spare connection is open: moving to it");
+                                return Ok(Pumped::Switch(better, self.current));
+                            }
                         }
                         Ok(Err(error)) => {
                             vlog!(1, "the spare connection failed: {error}");

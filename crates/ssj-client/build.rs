@@ -10,6 +10,21 @@ use clap_complete::Shell;
 mod options;
 
 /// What the options cannot show: the config files and the cache.
+const COMMAND: &str = r#".SH RUNNING A COMMAND
+\fBssj\fR \fIDESTINATION\fR \fICOMMAND\fR... runs the command in the session instead of the shell,
+as \fBssh\fR does, and ends with its exit code. The login shell of the host runs it, so pipes,
+\fB&&\fR, and \fBcd\fR work. The session survives a lost connection like any other, and can be joined
+with \fBssj attach\fR.
+.PP
+As with \fBssh\fR, everything after the destination belongs to the command, options included:
+\fBssj host ls \-la\fR runs \fBls \-la\fR on the host. Options of \fBssj\fR go before the destination
+(\fBssj \-\-local\-echo auto host make \-j4\fR). A \fB\-\-\fR right after the destination is optional.
+.PP
+The commands of \fBssj\fR (\fBlist\fR, \fBattach\fR, \fBkill\fR, \fBdetach\fR, \fBinstall\fR, \fBedit\fR)
+keep their options after the destination: \fBssj list host \-\-json\fR. A host with the name of one
+of them is written \fBssj attach \-\- ls\fR.
+"#;
+
 const FILES: &str = r#".SH FILES
 All config files are flat \fIkey = value\fR lines, a strict subset of TOML. A typo in a key is an
 error with the line number, and a file that others can write is refused. Options on the command
@@ -131,6 +146,7 @@ fn main() {
     clap_mangen::Man::new(options::command().version(env!("CARGO_PKG_VERSION")))
         .render(&mut page)
         .expect("render the man page");
+    page.extend_from_slice(COMMAND.as_bytes());
     page.extend_from_slice(FILES.as_bytes());
     fs::write(out.join("ssj.1"), page).expect("write the man page");
     for (shell, file) in [
@@ -191,6 +207,14 @@ fn dynamic(shell: Shell) -> &'static str {
 _ssj_sessions() {
     local current=${COMP_WORDS[COMP_CWORD]}
     local previous=${COMP_WORDS[COMP_CWORD-1]}
+    # `--option=value`: bash splits the word at the `=`, and the value is a word of its own
+    if [[ $current == = ]]; then
+        current=
+        # bash 3 does not pass the word to the function and reads it from here
+        COMP_WORDS[COMP_CWORD]=
+    elif [[ $previous == = ]]; then
+        previous=${COMP_WORDS[COMP_CWORD-2]}
+    fi
     # ssj attach|kill|detach HOST <name>: the sessions of that host
     case ${COMP_WORDS[1]} in
         attach|kill|detach)
@@ -209,7 +233,7 @@ _ssj_sessions() {
             [[ ${#COMPREPLY[@]} -gt 0 ]] && return
             ;;
     esac
-    _ssj "$@"
+    _ssj "$1" "$current" "$previous"
 }
 complete -F _ssj_sessions -o bashdefault -o default ssj
 "#

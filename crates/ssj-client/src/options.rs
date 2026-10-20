@@ -2,6 +2,7 @@
 //! so `build.rs` includes it to generate the completions and the man page. Every value is text
 //! here, and `cli::parse` checks it.
 
+use clap::builder::PossibleValuesParser;
 use clap::{CommandFactory, Parser};
 
 /// The flags that have a counterpart which turns them off: the id of each, its name, and the
@@ -86,19 +87,39 @@ pub struct Options {
     pub no_forward_agent: bool,
 
     /// How to reach the server: auto, udp, tcp, or stdio
-    #[arg(long, value_name = "WAY", overrides_with = "transport")]
+    #[arg(
+        long,
+        value_name = "WAY",
+        overrides_with = "transport",
+        value_parser = PossibleValuesParser::new(["auto", "udp", "tcp", "stdio"])
+    )]
     pub transport: Option<String>,
 
     /// Show typed characters before the server echoes them: off or auto
-    #[arg(long, value_name = "WHEN", overrides_with = "local_echo")]
+    #[arg(
+        long,
+        value_name = "WHEN",
+        overrides_with = "local_echo",
+        value_parser = PossibleValuesParser::new(["off", "auto"])
+    )]
     pub local_echo: Option<String>,
 
     /// How fast to send: auto (default), bbr, or cubic
-    #[arg(long, value_name = "WAY", overrides_with = "congestion")]
+    #[arg(
+        long,
+        value_name = "WAY",
+        overrides_with = "congestion",
+        value_parser = PossibleValuesParser::new(["auto", "bbr", "cubic"])
+    )]
     pub congestion: Option<String>,
 
     /// Compress input and output while the link is the limit: off or auto
-    #[arg(long, value_name = "WHEN", overrides_with = "compress")]
+    #[arg(
+        long,
+        value_name = "WHEN",
+        overrides_with = "compress",
+        value_parser = PossibleValuesParser::new(["off", "auto"])
+    )]
     pub compress: Option<String>,
 
     /// Command that replaces ssh, split at whitespace
