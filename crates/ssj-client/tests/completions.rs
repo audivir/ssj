@@ -132,6 +132,12 @@ fn zsh_asks_for_commands_hosts_and_the_sessions_of_the_host() {
     assert_eq!(case("attach other@host ''", 3), "names:");
     // list and install take nothing more.
     assert_eq!(case("list me@box ''", 3), "");
+    // after the destination come the words of the command for the host, and no host.
+    assert_eq!(case("me@box ''", 2), "");
+    assert_eq!(case("me@box rm ''", 3), "");
+    assert_eq!(case("me@box rm -rf ''", 4), "");
+    // a host that is called like a command, after the dashes
+    assert_eq!(case("attach -- ''", 3), "");
 }
 
 #[test]
