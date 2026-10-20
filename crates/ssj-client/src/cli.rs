@@ -112,9 +112,9 @@ pub struct Args {
     pub remote_command: Option<String>,
     /// Host name or address for the UDP connection when it differs from the destination.
     pub udp_host: Option<String>,
-    /// The patterns of the config file, or the default ones.
+    /// The patterns of the config file. They come on top of the `SendEnv` of `ssh`.
     pub send_env: EnvFilter,
-    /// The patterns of `--send-env`. They come on top of `send_env` and of the `SendEnv` of `ssh`.
+    /// The patterns of `--send-env`, on top of the others.
     pub send_env_add: Vec<String>,
     /// Overrides the setting of the config file.
     pub auto_install: Option<AutoInstall>,
@@ -178,7 +178,7 @@ impl Args {
             server_args: Vec::new(),
             remote_command: None,
             udp_host: None,
-            send_env: EnvFilter::default_patterns(),
+            send_env: EnvFilter::none(),
             send_env_add: Vec::new(),
             auto_install: None,
             download_url: None,
@@ -640,7 +640,7 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
         server_args,
         remote_command,
         udp_host: options.udp_host,
-        send_env: EnvFilter::default_patterns(),
+        send_env: EnvFilter::none(),
         send_env_add: options.send_env.clone(),
         auto_install,
         download_url: options.download_url,

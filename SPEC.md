@@ -1159,21 +1159,20 @@ always draws over a clean place.
 Works like `SendEnv` and `AcceptEnv` in `ssh`: the client selects variables, the server filters
 them.
 
-- Client: the variables sent are those that match any of these patterns (shell-style `*` and `?`),
-  and `TERM`:
-  - `send_env` of `client.toml`, or `TERM`, `LANG`, and `LC_*` when the file has none (the file
-    replaces this default, so `send_env = []` sends nothing but `TERM`);
-  - every `--send-env PATTERN` of the command line (repeatable), which comes on top, as `SendEnv`
-    does in `ssh`;
-  - the `SendEnv` patterns that `ssh` has for the destination, from its command line,
-    `~/.ssh/config`, and the system files, read with `ssh -G` (2 seconds at most, only when the
-    command is `ssh`, and an answer that fails is no patterns). So a variable that `ssh` would send
-    is sent by `ssj` too.
+- Client: `ssj` sends what `ssh` sends, and `TERM`. The patterns (shell-style `*` and `?`) are:
+  - the `SendEnv` of `ssh` for the destination, from its command line, `~/.ssh/config`, and the
+    system files, read with `ssh -G` (2 seconds at most, and only when the command is `ssh`). When
+    `ssh` gives no answer (another command, an error), `LANG` and `LC_*` stand in for it, so that
+    the host does not lose the locale. An answer without a `SendEnv` sends no locale, as `ssh` does;
+  - `send_env` of `client.toml` (a list, empty by default), on top;
+  - every `--send-env PATTERN` of the command line (repeatable), on top, as `-o SendEnv` is in
+    `ssh`.
     `TERM` is always sent, as `ssh` sends it with the request for the terminal: a shell without it
     takes the terminal for a dumb one, and the prompt and the line editor draw wrongly.
 - Server: the accepted names come from the server config file (`server.toml` in the config
-  directory below, key `accept_env`), with the same default. They are never taken from the command line that the
-  client passes through `ssh`, since that would let the client override the filter.
+  directory below, key `accept_env`), default: `TERM`, `LANG`, and `LC_*`. They are never taken
+  from the command line that the client passes through `ssh`, since that would let the client
+  override the filter.
 - The variables travel in the session start frame inside the encrypted QUIC connection, never in
   the `ssh` bootstrap command.
 - They are applied once, when the shell is created. After a reconnect the client does not resend

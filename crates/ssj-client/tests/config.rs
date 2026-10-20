@@ -16,7 +16,8 @@ fn defaults_apply_without_a_file_or_with_an_empty_one() {
     assert_eq!(defaults.auto_install, AutoInstall::Ask);
     assert_eq!(defaults.escape, Some(b'~'));
     assert_eq!(defaults.ssh_command, ["ssh"]);
-    assert!(defaults.send_env.matches("TERM") && defaults.send_env.matches("LC_ALL"));
+    // the variables come from the SendEnv of ssh; the file only adds.
+    assert!(defaults.send_env.patterns().is_empty());
 }
 
 #[test]
@@ -35,19 +36,17 @@ fn every_key_is_read() {
         ["ssh", "-J", "jump", "-o", "ForwardAgent=no"]
     );
     assert!(config.send_env.matches("EDITOR") && config.send_env.matches("MY_VAR"));
-    assert!(
-        !config.send_env.matches("LANG"),
-        "a list replaces the defaults"
-    );
+    assert!(!config.send_env.matches("LANG"), "nothing else is in it");
     assert_eq!(
         Config::from_text("escape_char = \"none\"").unwrap().escape,
         None
     );
     assert!(
-        !Config::from_text("send_env = []")
+        Config::from_text("send_env = []")
             .unwrap()
             .send_env
-            .matches("TERM")
+            .patterns()
+            .is_empty()
     );
 }
 
@@ -100,7 +99,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     plain.apply_config(&config);
     assert_eq!(plain.ssh_command, ["my-ssh"]);
     assert_eq!(plain.escape, Some(b'#'));
-    assert!(plain.send_env.matches("ONLY") && !plain.send_env.matches("TERM"));
+    assert!(plain.send_env.matches("ONLY") && !plain.send_env.matches("LANG"));
     assert_eq!(plain.auto_install, Some(AutoInstall::Always));
 
     // each flag beats its key, and leaves the other keys alone.

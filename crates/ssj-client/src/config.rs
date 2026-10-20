@@ -5,7 +5,7 @@
 //! escape_char = "~"               # one character, or "none"
 //! detach_key = "none"             # "none" (default) or a key such as "ctrl-]" that detaches
 //! ssh_command = "ssh -J jump"     # replaces `ssh`
-//! send_env = ["TERM", "LANG", "LC_*"]
+//! send_env = []
 //! auto_attach = false             # `ssj host` joins the only session that has no client
 //! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
 //! congestion = "auto"             # "auto" (default), "bbr", or "cubic": how fast to send
@@ -62,7 +62,7 @@ impl Default for Config {
             escape: Some(b'~'),
             detach_key: None,
             ssh_command: vec!["ssh".to_owned()],
-            send_env: EnvFilter::default_patterns(),
+            send_env: EnvFilter::none(),
             transport: Transport::default(),
             auto_attach: false,
             forward_agent: false,

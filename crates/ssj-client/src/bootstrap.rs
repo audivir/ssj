@@ -28,9 +28,9 @@ pub fn shell_quote(text: &str) -> String {
 
 /// The patterns of `SendEnv` that `ssh` has for the destination (its command line, `~/.ssh/config`,
 /// and the system files), as `ssh -G` prints them. `ssh` sends these variables to the host, and
-/// `ssj` sends them as well. Only the real `ssh` is asked, since another program may not know `-G`,
-/// and no answer is no patterns.
-pub async fn ssh_send_env(args: &Args) -> Vec<String> {
+/// `ssj` sends them as well. Only the real `ssh` is asked, since another program may not know `-G`;
+/// `None` means that there is no answer, which is not the same as an answer without patterns.
+pub async fn ssh_send_env(args: &Args) -> Option<Vec<String>> {
     let program = &args.ssh_command[0];
     if Path::new(program)
         .file_name()
@@ -38,7 +38,7 @@ pub async fn ssh_send_env(args: &Args) -> Vec<String> {
         != Some("ssh")
         || args.destination.starts_with('-')
     {
-        return Vec::new();
+        return None;
     }
     let mut ssh = Command::new(program);
     ssh.args(&args.ssh_command[1..])
@@ -49,10 +49,14 @@ pub async fn ssh_send_env(args: &Args) -> Vec<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let Ok(Ok(output)) = timeout(Duration::from_secs(2), ssh.output()).await else {
-        return Vec::new();
-    };
-    parse_send_env(&String::from_utf8_lossy(&output.stdout))
+    let output = timeout(Duration::from_secs(2), ssh.output())
+        .await
+        .ok()?
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // a real answer starts with the host name.
+    (output.status.success() && text.lines().any(|line| line.starts_with("hostname ")))
+        .then(|| parse_send_env(&text))
 }
 
 /// The `sendenv` lines of the output of `ssh -G`, one pattern on each line. A pattern that `ssj`

@@ -264,21 +264,34 @@ fn agent_socket(args: &Args) -> Result<Option<PathBuf>, String> {
     }
 }
 
-/// Selected variables of the local environment: the configured or default patterns, those of
-/// `--send-env`, and those of `SendEnv` in the config of `ssh`, which sends them too.
+/// Selected variables of the local environment, see [`send_patterns`].
 async fn local_env(args: &Args) -> Result<Env, String> {
     let from_ssh = crate::bootstrap::ssh_send_env(args).await;
     vlog!(2, "SendEnv of ssh: {from_ssh:?}");
-    let own = args.send_env_add.iter().cloned();
-    let filter = args
-        .send_env
-        .extended(own.clone().chain(from_ssh))
-        // too many patterns with those of ssh: the own ones are the user's choice.
-        .or_else(|_| args.send_env.extended(own))
+    let filter = send_patterns(&args.send_env, &args.send_env_add, from_ssh)
         .map_err(|e| format!("--send-env: {e:?}"))?;
     let vars = std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
     selected_env(vars, &filter)
+}
+
+/// The patterns of the variables to send: what `ssh` sends for the destination (`from_ssh`), or
+/// `TERM`, `LANG`, and `LC_*` when `ssh` gave no answer, then the `send_env` of the config file and
+/// the `--send-env` patterns on top.
+fn send_patterns(
+    config: &EnvFilter,
+    added: &[String],
+    from_ssh: Option<Vec<String>>,
+) -> Result<EnvFilter, ssj_proto::PatternError> {
+    let own = config.patterns().iter().chain(added).cloned();
+    let fallback = EnvFilter::default_patterns();
+    match from_ssh {
+        // too many patterns with those of ssh: the own ones are the user's choice.
+        Some(patterns) => EnvFilter::new(patterns)
+            .and_then(|filter| filter.extended(own.clone()))
+            .or_else(|_| fallback.extended(own)),
+        None => fallback.extended(own),
+    }
 }
 
 /// The variables that `filter` selects, and always `TERM`: the shell needs the terminal type
@@ -2656,6 +2669,30 @@ mod tests {
     fn term_is_sent_even_when_the_user_names_other_variables() {
         assert_eq!(names(vec!["LC_THEME".to_owned()]), ["TERM", "LC_THEME"]);
         assert_eq!(names(vec![]), ["TERM"]);
+    }
+
+    fn texts(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn what_ssh_sends_is_sent_and_without_an_answer_the_default_is() {
+        let none = EnvFilter::none();
+        let ssh = send_patterns(&none, &texts(&["A"]), Some(texts(&["LC_THEME"]))).unwrap();
+        assert!(ssh.matches("LC_THEME") && ssh.matches("A"));
+        // ssh sends no locale here, and neither does ssj.
+        assert!(!ssh.matches("LANG") && !ssh.matches("LC_ALL"));
+        let nothing = send_patterns(&none, &[], Some(Vec::new())).unwrap();
+        assert!(!nothing.matches("LANG"));
+        let fallback = send_patterns(&none, &texts(&["A"]), None).unwrap();
+        assert!(fallback.matches("LANG") && fallback.matches("LC_ALL") && fallback.matches("A"));
+    }
+
+    #[test]
+    fn the_config_file_adds_to_ssh() {
+        let config = EnvFilter::new(texts(&["EDITOR"])).unwrap();
+        let both = send_patterns(&config, &texts(&["A"]), Some(texts(&["LANG"]))).unwrap();
+        assert!(both.matches("EDITOR") && both.matches("A") && both.matches("LANG"));
     }
 
     #[test]

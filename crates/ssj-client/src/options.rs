@@ -183,7 +183,7 @@ pub struct Options {
     #[arg(long, value_name = "KEY", overrides_with = "detach_key")]
     pub detach_key: Option<String>,
 
-    /// Environment variable pattern to send as well as the default ones (repeatable)
+    /// Environment variable pattern to send as well as the SendEnv of ssh (repeatable)
     #[arg(long, value_name = "PATTERN")]
     pub send_env: Vec<String>,
 

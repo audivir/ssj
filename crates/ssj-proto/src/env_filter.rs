@@ -25,6 +25,11 @@ impl EnvFilter {
     /// Longest pattern, in bytes.
     pub const MAX_PATTERN_LEN: usize = 256;
 
+    /// A list without a pattern: it matches nothing.
+    pub fn none() -> Self {
+        Self(Vec::new())
+    }
+
     pub fn new(patterns: Vec<String>) -> Result<Self, PatternError> {
         if patterns.len() > Self::MAX_PATTERNS {
             return Err(PatternError::TooMany);
@@ -44,6 +49,11 @@ impl EnvFilter {
             }
         }
         Ok(Self(patterns))
+    }
+
+    /// The patterns in the order they were given.
+    pub fn patterns(&self) -> &[String] {
+        &self.0
     }
 
     /// This list followed by `more`, without a pattern twice.
