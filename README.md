@@ -217,14 +217,17 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 
 ### Running a command
 
-`ssj user@host -- COMMAND...` runs the command in the session instead of the shell, as
+`ssj user@host COMMAND...` runs the command in the session instead of the shell, as
 `ssh user@host COMMAND` does, and ends with its exit code.
 
 - The login shell of the host runs it (`$SHELL -l -c 'COMMAND'`), so pipes, `&&`, and `cd` work.
 - A long `make` or a `tail -f` survives a network change or a closed laptop like any other
   session. You can join it from another terminal (it has a name in `ssj list`).
-- Options of `ssj` stay before the host (`ssj --local-echo auto host`), so options of the command
-  need the `--`: `ssj host -- ls -l`. Without options of its own, `ssj host uptime` works too.
+- As with `ssh`, everything after the host belongs to the command, options included:
+  `ssj host ls -l`, `ssj host make -j4`. Options of `ssj` go before the host
+  (`ssj --local-echo auto host make -j4`). A `--` after the host is optional.
+- The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) keep their options
+  after the host: `ssj list host --json`.
 - The command has a terminal, as with `ssh -t`: its output has carriage returns, and a program
   can ask for the terminal size. Standard input goes to it as typed.
 - `--name` and `--auto-attach` are refused with a command, since a session that runs already

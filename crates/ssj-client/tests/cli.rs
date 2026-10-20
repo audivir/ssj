@@ -521,7 +521,34 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
             "host",
             Some("echo hi there"),
         ),
-        // options of the command come after `--`, and options of ssj may stay in front or behind.
+        // as with `ssh`, everything after the destination is the command, options included.
+        (
+            vec!["host", "ls", "-l"],
+            Command::Connect,
+            "host",
+            Some("ls -l"),
+        ),
+        (
+            vec!["--local-echo", "auto", "host", "make", "-j4"],
+            Command::Connect,
+            "host",
+            Some("make -j4"),
+        ),
+        (
+            vec!["host", "--name", "x"],
+            Command::Connect,
+            "host",
+            Some("--name x"),
+        ),
+        (
+            vec!["a", "b", "--", "ls"],
+            Command::Connect,
+            "a",
+            Some("b -- ls"),
+        ),
+        // the commands of ssj keep their options after the destination.
+        (vec!["list", "host", "--json"], Command::List, "host", None),
+        // the `--` is optional, and options of ssj stay in front.
         (
             vec!["host", "--", "ls", "-l"],
             Command::Connect,
@@ -573,16 +600,13 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
     for bad in [
         // no destination, or more than one in front of the command.
         vec!["--", "ls"],
-        vec!["a", "b", "--", "ls"],
         vec!["list", "host", "--", "ls"],
         // an empty command
         vec!["host", "--", ""],
         vec!["host", "--", " "],
-        // an existing session would not run it.
+        // an existing session would not run it (the options come before the destination).
         vec!["--name", "work", "host", "--", "ls"],
-        vec!["host", "--auto-attach", "--", "ls"],
-        // an option of the command without `--` is an option of ssj.
-        vec!["host", "ls", "-l"],
+        vec!["--auto-attach", "host", "ls"],
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }

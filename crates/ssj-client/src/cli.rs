@@ -278,10 +278,71 @@ pub fn parse_detach_key(text: &str) -> Result<Option<u8>, String> {
     Ok(Some(byte))
 }
 
+/// Where the first two positional words of the command line are (`None` when there are fewer).
+///
+/// Options that take a value are skipped together with their value, so that the value is not
+/// taken for a word.
+fn positionals(args: &[String]) -> [Option<usize>; 2] {
+    let command = crate::options::command();
+    let takes_value = |long: Option<&str>, short: Option<char>| {
+        command.get_arguments().any(|arg| {
+            let found = long.is_some_and(|l| arg.get_long() == Some(l))
+                || short.is_some_and(|c| arg.get_short() == Some(c))
+                || long.is_some_and(|l| arg.get_all_aliases().is_some_and(|a| a.contains(&l)));
+            found && arg.get_action().takes_values()
+        })
+    };
+    let mut found = [None, None];
+    let mut count = 0;
+    let mut index = 0;
+    while index < args.len() && count < 2 {
+        let word = args[index].as_str();
+        if word == "--" {
+            break;
+        }
+        if let Some(long) = word.strip_prefix("--") {
+            if !long.contains('=') && takes_value(Some(long), None) {
+                index += 1;
+            }
+        } else if let Some(shorts) = word.strip_prefix('-').filter(|s| !s.is_empty()) {
+            for (at, c) in shorts.char_indices() {
+                if takes_value(None, Some(c)) {
+                    if at + c.len_utf8() == shorts.len() {
+                        index += 1;
+                    }
+                    break;
+                }
+            }
+        } else {
+            found[count] = Some(index);
+            count += 1;
+        }
+        index += 1;
+    }
+    found
+}
+
 /// Parses the arguments of the command line.
+///
+/// As with `ssh`, everything after the destination belongs to the command that runs in the
+/// session, options included (`ssj host ls -l`). The exception are the commands of `ssj`
+/// (`ssj list host --json`), which keep their options after the destination.
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let args: Vec<String> = args.into_iter().collect();
+    let [first, second] = positionals(&args);
+    let mut tail = Vec::new();
+    let mut head = args;
+    if let Some(first) = first {
+        let is_command = is_command_word(&head[first]) && second.is_some();
+        if !is_command {
+            tail = head.split_off(first + 1);
+            if tail.first().is_some_and(|word| word == "--") {
+                tail.remove(0);
+            }
+        }
+    }
     let parsed = crate::options::command()
-        .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(args))
+        .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(head))
         .and_then(|matches| Options::from_arg_matches(&matches));
     let options = match parsed {
         Ok(options) => options,
@@ -291,7 +352,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         // help and version go to the output and end the program.
         Err(error) => error.exit(),
     };
-    from_options(options)
+    from_options(options, &tail)
 }
 
 /// Words that are commands of `ssj` when a destination follows them.
@@ -302,15 +363,12 @@ fn is_command_word(word: &str) -> bool {
     )
 }
 
-fn from_options(options: Options) -> Result<Args, String> {
-    // A command for the session comes after `--`, or, as with `ssh`, after the destination when
-    // that is not one of our own command words (`ssj host make -j4` needs `--` for the `-j4`).
-    let mut words = options.words.clone();
-    let mut remote_command = None;
-    if !options.command.is_empty() {
-        remote_command = Some(options.command.join(" "));
-    } else if words.len() >= 2 && !is_command_word(&words[0]) {
-        remote_command = Some(words.split_off(1).join(" "));
+fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
+    // A command for the session is everything after the destination, as with `ssh`.
+    let words = options.words.clone();
+    let remote_command = (!tail.is_empty()).then(|| tail.join(" "));
+    if remote_command.is_none() && !options.command.is_empty() {
+        return Err("a command of ssj takes no command to run after `--`".to_owned());
     }
     if let Some(command) = &remote_command {
         if command.trim().is_empty() {

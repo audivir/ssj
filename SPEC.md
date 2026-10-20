@@ -962,12 +962,15 @@ The session starts the command and not an interactive shell, and ends with its e
 - The command has a terminal like every session (the output of `ssh -t host command`): the
   session survives a lost connection, the command can be joined again with `ssj attach`, and the
   exit status is that of the shell.
-- Where the command starts: after `--`, or without it after the destination, when the first word
-  is not one of the commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`). With the
-  dashes there must be exactly one word before them, the destination, so a host with the name of
-  a command is `ssj attach -- ls`. Options of `ssj` may stand anywhere before the `--`; an option
-  after the destination without dashes is one of `ssj`, which is why `ssj host ls -l` is refused
-  and `ssj host -- ls -l` works.
+- Where the command starts, as with `ssh`: right after the destination, the first word that is
+  not an option (or the value of one). Everything after it, options included, belongs to the
+  command: `ssj host ls -l`, `ssj host make -j4`, and `ssj host --name x` runs `--name x` on the
+  host. A `--` directly after the destination is dropped, so `ssj host -- ls -l` works too.
+  Options of `ssj` stand before the destination.
+- The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) are the
+  exception: when a second word follows a command word, the line is one of those commands, and
+  its options may stand anywhere (`ssj list host --json`). A host with the name of a command is
+  written `ssj attach -- ls` (a command word with nothing after it but the dashes).
 - `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
   `attach`, since the shell of a session that runs already is not started again.
 
