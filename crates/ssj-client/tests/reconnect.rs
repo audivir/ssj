@@ -1338,6 +1338,64 @@ async fn a_silent_stream_is_replaced_by_a_spare_long_before_it_is_given_up() {
     assert_eq!(terminal.got_lines(), ["got:before", "got:during"]);
 }
 
+// The move to a spare happens while the user types and the shell answers. Every line must arrive
+// once and in order, whether it was typed before the stream went silent, while it was silent, or
+// after the move.
+#[tokio::test]
+async fn typing_through_the_move_to_a_spare_loses_and_repeats_no_line() {
+    let client_id = Identity::generate();
+    let server = start_server(ECHO_LINES, client_id.fingerprint());
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    let mut terminal = start_client_tcp(&server, client_id, proxy.addr, Duration::from_secs(60));
+
+    // 100 lines, 100 ms apart: the stream goes silent at line 20 and the spare takes over a few
+    // seconds later, in the middle of the typing.
+    for i in 0..100 {
+        terminal.type_line(&format!("l{i}")).await;
+        if i == 20 {
+            proxy.blind_the_existing();
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    terminal.wait_for("got:l99").await;
+    terminal.settle().await;
+
+    let expected: Vec<String> = (0..100).map(|i| format!("got:l{i}")).collect();
+    assert_eq!(terminal.got_lines(), expected);
+    assert!(
+        proxy.made.load(Ordering::Relaxed) >= 2,
+        "the spare connection was never made"
+    );
+}
+
+// The same for output: a job that prints all the time while the stream goes silent and the spare
+// takes over. Nothing the job wrote may be missing or twice.
+#[tokio::test]
+async fn output_through_the_move_to_a_spare_loses_and_repeats_no_line() {
+    let client_id = Identity::generate();
+    let server = start_server(
+        "stty -opost -echo; i=1; while [ $i -le 200 ]; do echo out$i; i=$((i+1)); sleep 0.05; done; echo FINISHED; read x",
+        client_id.fingerprint(),
+    );
+    let proxy = start_tcp_proxy(server.tcp_addr).await;
+    let mut terminal = start_client_tcp(&server, client_id, proxy.addr, Duration::from_secs(60));
+
+    terminal.wait_for("out20").await;
+    proxy.blind_the_existing();
+    terminal.wait_for("FINISHED").await;
+    terminal.settle().await;
+
+    let lines: Vec<&str> = terminal
+        .seen
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("out"))
+        .collect();
+    let expected: Vec<String> = (1..=200).map(|i| format!("out{i}")).collect();
+    assert_eq!(lines, expected);
+    assert!(proxy.made.load(Ordering::Relaxed) >= 2, "no spare was made");
+}
+
 // A terminal that reads nothing for a while is a client that is too slow. The job must not wait
 // for it. When the terminal reads again, the client shows how much it missed, and the end of the
 // output is intact.
