@@ -168,7 +168,8 @@ fn zsh_complete(lines: &[&str]) -> Option<Vec<String>> {
         "export PATH='{}':$PATH\n\
          fpath=('{}' $fpath)\n\
          autoload -U compinit; compinit -u -d '{}/zcompdump'\n\
-         _ssh_hosts() {{ compadd -- boxa boxb }}\n\
+         _ssh_hosts() {{ compadd -- boxa boxb box-c }}\n\
+         zstyle ':completion:*' matcher-list 'm:{{[:lower:][:upper:]}}={{[:upper:][:lower:]}}' 'r:|=*' 'l:|=* r:|=*'\n\
          LISTMAX=1000; setopt AUTO_LIST; unsetopt AUTO_MENU LIST_AMBIGUOUS; PS1='> '\n",
         dir.display(),
         completions.parent().unwrap().display(),
@@ -474,7 +475,7 @@ const READS: [(&str, &str); 6] = [
 
 /// What a line must offer when the tab key is pressed at its end, and what it must not. `FILES`
 /// stands for the files of the directory (`afile`; for bash an empty answer, which bash
-/// completes with the files), and no word at all for nothing. The hosts are `boxa` and `boxb`,
+/// completes with the files), and no word at all for nothing. The hosts are `boxa`, `boxb`, and `box-c` (a dash that a matcher could take for a typed `-`),
 /// the sessions `work` and `build` (`work` when they have a client), and `other` is one more.
 struct Position {
     line: String,
@@ -492,6 +493,7 @@ fn positions() -> Vec<Position> {
     let stock = [
         "boxa",
         "boxb",
+        "box-c",
         "work",
         "build",
         "other",
@@ -515,7 +517,7 @@ fn positions() -> Vec<Position> {
         });
     };
     let words = |text: &str| -> Vec<String> { text.split(' ').map(str::to_owned).collect() };
-    let hosts = || words("boxa boxb");
+    let hosts = || words("boxa boxb box-c");
     let files = || words("FILES");
     let none = || Vec::new();
     let commands = "list attach kill detach install edit connect";
@@ -558,7 +560,7 @@ fn positions() -> Vec<Position> {
         for (name, values) in [
             ("transport", "auto udp tcp stdio"),
             ("compress", "off auto"),
-            ("udp-host", "boxa boxb"),
+            ("udp-host", "boxa boxb box-c"),
             ("log-file", "FILES"),
             ("server-binary", "FILES"),
             // free text: nothing, and no files either
@@ -647,7 +649,7 @@ fn bash_offers_what_each_position_takes() {
     for position in positions() {
         let words: Vec<String> = position.line.split(' ').map(|w| format!("'{w}'")).collect();
         let code = format!(
-            "source '{}'\n_known_hosts_real() {{ COMPREPLY=(boxa boxb); }}\n\
+            "source '{}'\n_known_hosts_real() {{ COMPREPLY=(boxa boxb box-c); }}\n\
              COMP_WORDS=({}); COMP_CWORD={}; \
              _ssj_sessions ssj \"${{COMP_WORDS[COMP_CWORD]}}\" \"${{COMP_WORDS[COMP_CWORD-1]}}\"; \
              printf '%s\\n' \"${{COMPREPLY[@]}}\"",
@@ -678,7 +680,7 @@ fn fish_offers_what_each_position_takes() {
     std::fs::write(dir.join("afile"), "").unwrap();
     for position in positions() {
         let code = format!(
-            "function __fish_print_hostnames; printf 'boxa\\nboxb\\n'; end; source '{}'; \
+            "function __fish_print_hostnames; printf 'boxa\\nboxb\\nbox-c\\n'; end; source '{}'; \
              complete -C '{}'",
             file.display(),
             position.line
@@ -718,6 +720,16 @@ fn zsh_offers(part: usize, parts: usize) {
     for (position, text) in positions.iter().zip(&shown) {
         let offered: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
         check("zsh", position, &offered, false);
+        // the `matcher-list` of oh-my-zsh has three matchers, and a completion that ends with a
+        // failure is run for each of them, so that its words are shown three times
+        for word in position.must.iter().filter(|w| w.starts_with('-')) {
+            let times = offered.iter().filter(|w| *w == word).count();
+            assert!(
+                times <= 2,
+                "zsh: {:?} shows {word} {times} times",
+                position.line
+            );
+        }
     }
 }
 

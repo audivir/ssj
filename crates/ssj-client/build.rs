@@ -363,7 +363,10 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
     assert!(text.contains(end), "the end of the case of the commands");
     text = text.replacen(
         end,
-        "            (*)\n[[ -n $line[1] ]] && _files\n;;\n        esac\n    ;;\nesac",
+        // the status is that of the completion: with several matchers (the `matcher-list` of
+        // oh-my-zsh has three) a function that ends with 1 is run again for the next matcher,
+        // and the lists of all of them are shown
+        "            (*)\n[[ -n $line[1] ]] && _files && ret=0\n;;\n        esac\n    ;;\nesac\n    return ret",
         1,
     );
     // `#compdef` must stay the first line, or the completion is not found.
