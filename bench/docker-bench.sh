@@ -28,6 +28,8 @@
 #                                 frames, with times) into target/ssj-client-log.txt
 #   PROBE=1                       no ssj: measure what `ssh -W` does to two small writes in a row
 #                                 (bench/wprobe.py), at several gaps
+#   UDPSTAT=1                     print the UDP counters of the client container before and after
+#                                 (RcvbufErrors counts datagrams that a full socket buffer dropped)
 #   TRACE=1                       print the socket options that sshd sets (TCP_NODELAY and such)
 #
 # Examples: bench/docker-bench.sh --raw-bulk --bulk-mb 64 --samples 100
@@ -39,6 +41,7 @@ NETEM=${NETEM-delay 40ms loss 1%}
 BUILD=${BUILD:-1}
 CAPTURE=${CAPTURE:-0}
 TRACE=${TRACE:-0}
+UDPSTAT=${UDPSTAT:-0}
 CLIENT_LOG=${CLIENT_LOG:-0}
 PROBE=${PROBE:-0}
 CLIENT=${CLIENT:-container}
@@ -144,6 +147,8 @@ if [ \"$PROBE\" = 1 ]; then
     exit 0
 fi
 ssj=/target/release/ssj
+udpstat() { if [ \"$UDPSTAT\" = 1 ]; then echo \"\$1: \$(grep -E '^Udp:' /proc/net/snmp | tail -1 | tr '\\n' ' ')\"; fi; }
+udpstat before
 if [ \"$CLIENT_LOG\" = 1 ]; then
     printf '#!/bin/sh\nexec /target/release/ssj -vvv --log-file /tmp/ssj-log.\$\$ \"\$@\"\n' > /usr/local/bin/ssj-log
     chmod +x /usr/local/bin/ssj-log
@@ -152,6 +157,7 @@ fi
 cd /src && python3 bench/bench.py --host root@server --ssj \$ssj \
     --server /target/release/ssj-server $*
 status=\$?
+udpstat after
 if [ \"$CLIENT_LOG\" = 1 ]; then
     for f in /tmp/ssj-log.*; do echo \"== \$f\"; cat \"\$f\"; done > /out/ssj-client-log.txt
 fi
