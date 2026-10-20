@@ -77,6 +77,11 @@ The server file lands on the host here:
 └── ssj-server-p1              # `p1` is the protocol version; other versions sit side by side
 ```
 
+Running it again upgrades a host: it replaces the file of the same protocol with the one of your
+client's version and says which version it replaced. Sessions that run keep their old process
+until they end, and new ones use the new file. `--install` only fills in a missing file and never
+replaces one.
+
 Where `ssj install` takes the file from:
 
 - By default, a download of the file for the host from the release of the same version, over

@@ -698,6 +698,7 @@ Location and name:
   uses its own.
 - Installing a newer release with the same protocol replaces the file of that protocol by atomic
   rename, which does not disturb a running session, since the running process keeps its old file.
+  `ssj install` prints the version it replaced; `--install` never replaces a file.
 - The client starts the server by this absolute path and does not rely on `PATH`, because the
   `PATH` of a non-interactive `ssh` command often lacks `~/.local/bin`. `--server-path` overrides
   the location for servers installed elsewhere (for example by an administrator).

@@ -693,8 +693,9 @@ async fn the_detach_command_tells_the_client_to_leave_and_the_shell_keeps_runnin
 
 #[tokio::test]
 async fn an_attach_makes_the_program_redraw_by_changing_the_size_and_back() {
-    // the shell reports the size at every SIGWINCH.
-    let script = "trap 'echo size:$(stty size)' WINCH; echo ready; while true; do sleep 0.05; done";
+    // the shell reports the size at every SIGWINCH, and sees one within 10 ms: the server waits
+    // 60 ms between the two sizes, and two signals that come before the shell looks are one.
+    let script = "trap 'echo size:$(stty size)' WINCH; echo ready; while true; do sleep 0.01; done";
     let (conns, rx) = mpsc::channel(4);
     let session = tokio::spawn(Session::new(Direct, config(script)).run(rx));
     let harness = Harness {

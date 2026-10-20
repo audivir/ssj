@@ -40,6 +40,9 @@ fn server_binary() -> PathBuf {
 
 fn fake_ssh(script: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
+    // the first build of the server takes a minute on a slow machine, and a test that times itself
+    // must not count it.
+    server_binary();
     let dir =
         std::env::temp_dir().join(format!("ssj-e2e-{}-{}", std::process::id(), rand_suffix()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -954,6 +957,24 @@ fn install_uploads_checks_and_makes_the_default_path_work() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["ssj-server-p1"]);
+
+    // an installed file of the same protocol is replaced, and the output says which one.
+    let again = host.ssj(
+        &ssh,
+        &[
+            "install",
+            "--server-binary",
+            dir.to_str().unwrap(),
+            "user@localhost",
+        ],
+        "",
+    );
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    assert!(
+        text(&again.stdout).contains("(replaced ssj-server "),
+        "{}",
+        text(&again.stdout)
+    );
 
     // and a session starts through the default path, without --server-path.
     let session = host.session_words(&[]);

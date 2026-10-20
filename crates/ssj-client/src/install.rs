@@ -134,8 +134,12 @@ if ! "$tmp" --version >/dev/null 2>&1; then
   echo "the uploaded server cannot run in $dir (is it on a noexec mount?)" >&2
   exit 5
 fi
+was=$("$dir/ssj-server-p__PROTOCOL__" --version 2>/dev/null || true)
 mv -f "$tmp" "$dir/ssj-server-p__PROTOCOL__"
 trap - EXIT
+if [ -n "$was" ]; then
+  echo "SSJ REPLACED $was"
+fi
 echo "SSJ INSTALLED $dir/ssj-server-p__PROTOCOL__""#;
 
 /// Uploads the server file for the host and returns the path it was installed at.
@@ -186,8 +190,17 @@ pub async fn install(args: &Args) -> Result<String, String> {
         .split(|b| *b == b'\n')
         .filter_map(|line| line.strip_prefix(b"SSJ INSTALLED "))
         .collect();
+    // an older file of the same protocol is replaced; the sessions that run keep their process.
+    let replaced = remote
+        .stdout
+        .split(|b| *b == b'\n')
+        .find_map(|line| line.strip_prefix(b"SSJ REPLACED "))
+        .map(|was| sanitize(was, 100));
     match installed[..] {
-        [path] => Ok(sanitize(path, 300)),
+        [path] => Ok(match replaced {
+            Some(was) => format!("{} (replaced {was})", sanitize(path, 300)),
+            None => sanitize(path, 300),
+        }),
         _ => Err("the host did not confirm the installation".to_owned()),
     }
 }
