@@ -561,11 +561,16 @@ fn positions() -> Vec<Position> {
             ("udp-host", "boxa boxb"),
             ("log-file", "FILES"),
             ("server-binary", "FILES"),
-            // free text: the shells fall back to the files
-            ("download-url", "FILES"),
+            // free text: nothing, and no files either
+            ("download-url", ""),
+            ("ssh-command", ""),
         ] {
             let read = reads.split(' ').any(|r| r == name);
-            let offered = if read { words(values) } else { none() };
+            let offered = if read && !values.is_empty() {
+                words(values)
+            } else {
+                none()
+            };
             add(&format!("ssj {command} me@box --{name} "), offered);
         }
     }

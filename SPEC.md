@@ -398,8 +398,8 @@ redraw.
   that completes nothing (so that its `_arguments` does not offer the options before a dash), Bash
   through the default completion that follows an empty answer, Fish by its default for words that
   no rule takes.
-- Options with a free text (`--ssh-command`, `--download-url`, and the like) complete files in all
-  three shells, which is what they do without a hint. An option that the command does not read
+- Options with a free text (`--ssh-command`, `--download-url`, and the like) complete nothing in
+  all three shells, files included. An option that the command does not read
   completes nothing, and no sessions are offered while the value of an option is being typed.
 - One table in `completions.rs` (`positions`) says for every position what it offers and what it
   does not: the start, each command with its host, ids, options, and the values of every option,

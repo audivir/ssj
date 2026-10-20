@@ -159,6 +159,21 @@ fn main() {
         })
         .collect::<Vec<_>>()
         .join(" ");
+    // the options with a free text: no fixed values, no file or host, and not the session name
+    let free_options: Vec<String> = command
+        .get_arguments()
+        .filter(|arg| arg.get_action().takes_values())
+        .filter(|arg| arg.get_possible_values().is_empty())
+        .filter(|arg| {
+            !matches!(
+                arg.get_value_hint(),
+                clap::ValueHint::FilePath | clap::ValueHint::AnyPath | clap::ValueHint::Hostname
+            )
+        })
+        .filter_map(|arg| arg.get_long())
+        .filter(|long| *long != "name")
+        .map(str::to_owned)
+        .collect();
     // the commands with their options in the man page
     let mut page_commands = String::from(
         ".SH COMMANDS\nThe options that each command reads. Every option may stand before the command word, and these also after the destination.\n",
@@ -188,9 +203,9 @@ fn main() {
         clap_complete::generate(shell, &mut tree.clone(), "ssj", &mut text);
         let text = String::from_utf8(text).expect("the completions are text");
         let text = match shell {
-            Shell::Bash => bash(&text, &value_options),
-            Shell::Zsh => zsh(&text, &value_options),
-            Shell::Fish => fish(&text, &value_options),
+            Shell::Bash => bash(&text, &value_options, &free_options),
+            Shell::Zsh => zsh(&text, &value_options, &free_options),
+            Shell::Fish => fish(&text, &value_options, &free_options),
             _ => text,
         };
         fs::write(out.join(file), text).expect("write the completion");
@@ -308,7 +323,7 @@ _ssj_session_ids() {
 
 /// The zsh file: the functions of `clap` with the hosts of the ssh config, the sessions, and the
 /// files for the words after a destination that is no command.
-fn zsh(text: &str, value_options: &str) -> String {
+fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
     let mut text = text
         .replace(":_hosts'", ":_ssj_hosts'")
         .replace(":id:_default'", ":id:_ssj_session_ids'")
@@ -352,6 +367,21 @@ fn zsh(text: &str, value_options: &str) -> String {
         1,
     );
     // `#compdef` must stay the first line, or the completion is not found.
+    // an option with a free text completes nothing, where the default would offer files
+    let text = text
+        .lines()
+        .map(|line| {
+            let free = free_options
+                .iter()
+                .any(|long| line.contains(&format!("--{long}=[")));
+            if free {
+                line.replace(":_default'", ":_ssj_nothing'")
+            } else {
+                line.to_owned()
+            }
+        })
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
     let helpers = ZSH_HELPERS.replace("__VALUE_OPTIONS__", value_options);
     match text.split_once('\n') {
         Some((first, rest)) => format!("{first}\n{helpers}{rest}"),
@@ -362,9 +392,15 @@ fn zsh(text: &str, value_options: &str) -> String {
 /// The bash file: the function of `clap` and, in front of it, the one that is registered. It
 /// finds the words that are no options, and offers the hosts and the sessions to them, and leaves
 /// the options and their values to `clap`.
-fn bash(text: &str, value_options: &str) -> String {
+fn bash(text: &str, value_options: &str, free_options: &[String]) -> String {
     let commands = ABOUT.map(|(word, _)| word).join(" ");
+    let free = free_options
+        .iter()
+        .map(|long| format!("--{long}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     let wrapper = BASH_WRAPPER
+        .replace("__FREE_OPTIONS__", &free)
         .replace("__VALUE_OPTIONS__", value_options)
         .replace("__COMMANDS__", &commands);
     format!("{text}{wrapper}")
@@ -408,6 +444,12 @@ _ssj_sessions() {
     [[ $first == connect && ${#pos[@]} -gt 1 ]] && is_command=
     if [[ -z $first || -n $is_command ]]; then
         if [[ $value_options == *" $previous "* ]]; then
+            # a free text has nothing to offer, and no files
+            if [[ " __FREE_OPTIONS__ " == *" $previous "* ]]; then
+                compopt +o default +o bashdefault 2>/dev/null
+                COMPREPLY=()
+                return
+            fi
             # an option that the command does not read has no values: ask `clap` for its options
             if [[ -n $first ]]; then
                 local saved=${COMP_WORDS[COMP_CWORD]}
@@ -476,7 +518,7 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
 
 /// The fish file: the rules of `clap`, which find the command word with `argparse`, and the rules
 /// for the hosts and the sessions. The options of `connect` stand before its destination only.
-fn fish(text: &str, value_options: &str) -> String {
+fn fish(text: &str, value_options: &str, free_options: &[String]) -> String {
     let commands = ABOUT.map(|(word, _)| word).join(" ");
     let text = text.replace(
         "__fish_ssj_using_subcommand connect\"",
@@ -498,6 +540,20 @@ fn fish(text: &str, value_options: &str) -> String {
         )
         .collect::<Vec<_>>()
         .join("\n");
+    // the options with a free text complete nothing, files included
+    let text = text
+        .lines()
+        .map(|line| {
+            let free = free_options
+                .iter()
+                .any(|long| line.contains(&format!(" -l {long} ")) && line.ends_with(" -r"));
+            if free {
+                format!("{line} -f\n")
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect::<String>();
     // the commands that keep their options after the destination, with the words after it
     // for the parser, not for the host
     let option_commands = ABOUT
