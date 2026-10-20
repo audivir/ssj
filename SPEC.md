@@ -482,6 +482,21 @@ On a link of 40 ms each way and 1 % loss (real packets, no loopback) one run gav
 trip is 80 ms). Without a link (1 GB/s on the bridge): `ssh` 171 MB/s and 15 ms, `ssj` UDP
 184 MB/s and 0.87 ms, TCP 163 MB/s and 1.2 ms, the `ssh` channel 187 MB/s and 1.4 ms.
 
+On a simulated train ride (`NETEM=train`: 80 ms delay with 40 ms jitter, bursts of loss of about 4
+percent in all, and outages of 4, 5, and 6 s, ten to twelve per client): `ssh` recovered in 1 to
+28 s, `ssj` over UDP in 0.3 to 0.7 s. TCP and the `ssh` channel took a median of about 0.3 s, and
+about 7 percent of their outages (6 of 72 in the last run) took 1 to 6 s (worst 4.3 s). The cause
+is the TCP of the new connection, which loses packets during its login as well; the floor of such a
+recovery is one login, 2 to 3 s. A standby connection that stays open would not remove this: it
+stalls in the same outage, so it would only help when the working one is stuck on a link that is
+still partly alive, and it would cost a session on the host for every client. `ssj` does not keep one.
+
+Side note on TCP: on a lossy link the congestion control of the server decides the rate of the TCP
+and `ssh` transports, since the server sends the output. With `net.ipv4.tcp_congestion_control=bbr`
+on the server (40 ms, 1 % loss) `ssh` went from 0.3 to 6.7 MB/s, `ssj` TCP from 0.2 to 9.8, and the
+`ssh` channel from 0.4 to 9.2. That is a setting for the administrator of the host: `ssj` runs
+without root and does not change it. Compression helps without it (`tcp-z` 4.2 to 15.3 MB/s).
+
 Each number is one run on one machine (the Linux ones in a container on an aarch64 virtual
 machine, with `sshd` in the same container), so differences of a few percent are noise. The bulk
 column is MB/s, the latency is the median in milliseconds, and the paste is 8 MiB (2 MiB on the

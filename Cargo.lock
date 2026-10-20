@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "ssj-client"
-version = "0.1.0-rc6"
+version = "0.1.0-rc7"
 dependencies = [
  "clap",
  "clap_complete",
@@ -938,11 +938,11 @@ dependencies = [
 
 [[package]]
 name = "ssj-config"
-version = "0.1.0-rc6"
+version = "0.1.0-rc7"
 
 [[package]]
 name = "ssj-net"
-version = "0.1.0-rc6"
+version = "0.1.0-rc7"
 dependencies = [
  "quinn",
  "quinn-proto",
@@ -956,14 +956,14 @@ dependencies = [
 
 [[package]]
 name = "ssj-proto"
-version = "0.1.0-rc6"
+version = "0.1.0-rc7"
 dependencies = [
  "zstd",
 ]
 
 [[package]]
 name = "ssj-server"
-version = "0.1.0-rc6"
+version = "0.1.0-rc7"
 dependencies = [
  "pty-process",
  "quinn",
