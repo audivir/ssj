@@ -378,7 +378,20 @@ server port is local, as on a host. The binaries are the static musl builds. Mor
 `CLIENT_LOG=1` runs the client with `-vvv` and keeps the log (`target/ssj-client-log.txt`),
 `TRACE=1` prints the socket options of `sshd`, and `PROBE=1` runs `bench/wprobe.py`.
 `bench.py --jitter-ms` adds a random gap between the keystrokes and the `stalls` column counts
-the echoes that took 10 ms more than the median.
+the echoes that took 10 ms more than the median (a run in which every echo is slow shows none,
+so read the median too). `CLIENT=host` runs the client on the machine you sit at, with its own
+TCP stack, against the server container behind a published port (UDP cannot reach the container:
+`--only ssh,tcp,stdio`, and leave `NETEM` empty). `TARGET_VOLUME` and `CLIENT_BIN` pick another
+build, which is how a release is compared with the working tree. `bench/check.py` checks the
+JSON of a clean and a lossy run against wide limits (UDP keystroke median under 5 ms, TCP and the
+`ssh` channel under 10 ms, at most 1 percent stalls, UDP at least three times as fast as `ssh` at
+1 percent loss); `bench.yml` runs both and the check on a GitHub runner.
+
+On a Mac (Darwin arm64, OpenSSH 10.3, `CLIENT=host`, 1500 keystrokes with random gaps, no link
+simulated): the released 0.1.0-rc5 needed a median of 45.4 ms per keystroke over TCP (every one
+of them waited for the acknowledgement timer), the working tree 2.9 ms (slowest 6.8 ms, no
+stalls). The `ssh` channel was fast in both (2.4 and 2.8 ms), and plain `ssh` had a median of 11.9
+ms.
 
 On a link of 40 ms each way and 1 % loss (real packets, no loopback) one run gave: `ssh` 0.2 MB/s,
 `ssj` UDP 6.2 MB/s, `ssj` UDP with compression 25.9 MB/s, `ssj` TCP and the `ssh` channel

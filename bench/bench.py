@@ -15,6 +15,7 @@ import os
 import pty
 import random
 import select
+import shlex
 import statistics
 import subprocess
 import sys
@@ -100,6 +101,7 @@ class Terminal:
 
 
 def clients(args):
+    base = shlex.split(args.ssh_command)
     ssj = [args.ssj, "--server-path", args.server, "--ssh-command", args.ssh_command]
     if not args.allow_drop:
         # every byte must arrive for the numbers to mean the same for every client
@@ -108,8 +110,8 @@ def clients(args):
         ssj += ["--congestion", args.congestion]
     compress = ["--compress", "auto"]
     return {
-        "ssh": ["ssh", "-tt", "-o", "BatchMode=yes", args.host],
-        "ssh-C": ["ssh", "-tt", "-C", "-o", "BatchMode=yes", args.host],
+        "ssh": [*base, "-tt", "-o", "BatchMode=yes", args.host],
+        "ssh-C": [*base, "-tt", "-C", "-o", "BatchMode=yes", args.host],
         "udp": ssj + ["--transport", "udp", args.host],
         "udp-z": ssj + compress + ["--transport", "udp", args.host],
         "tcp": ssj + ["--transport", "tcp", args.host],
@@ -177,6 +179,7 @@ def latency(argv, samples, jitter_ms=0):
         "median_ms": round(statistics.median(times), 2),
         "p95_ms": round(times[int(len(times) * 0.95) - 1], 2),
         "max_ms": round(times[-1], 2),
+        "samples": samples,
         # echoes that took more than 10 ms over the median: a stall and not a slow link
         "stalls": sum(1 for t in times if t > statistics.median(times) + 10),
     }

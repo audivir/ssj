@@ -1,6 +1,8 @@
 name: Benchmark
-# Compares ssh with ssj and the glibc build of the server with the musl build, on a clean machine.
-# It prints numbers and gates nothing. Start it by hand.
+# Compares ssh with ssj between two containers, a client and a server, with the link simulated on
+# their network interfaces (bench/docker-bench.sh), so that the numbers are those of a host and not
+# of a loopback. A clean link and a lossy one. The limits are in bench/check.py and are wide. Start
+# it by hand.
 on:
   workflow_dispatch:
     inputs:
@@ -14,39 +16,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-      - name: Install zig
-        uses: mlugg/setup-zig@v2
-      - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-      - name: Build the client, and the server for glibc and musl
-        run: |
-          cargo build --release -p ssj-client -p ssj-server
-          cargo zigbuild --release -p ssj-server --target x86_64-unknown-linux-musl
-      - name: Let ssh log in to this machine
-        run: |
-          sudo apt-get update && sudo apt-get install -y openssh-server
-          sudo systemctl start ssh
-          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
-          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-          ssh-keyscan localhost >> ~/.ssh/known_hosts
-          ssh -o BatchMode=yes localhost true
-      - name: Run the benchmark
+      - name: Clean link
         run: |
           mkdir -p results
-          client=target/release/ssj
-          for build in gnu musl; do
-            if [ "$build" = gnu ]; then server=target/release/ssj-server; else server=target/x86_64-unknown-linux-musl/release/ssj-server; fi
-            python3 bench/bench.py --host localhost --ssj "$client" --server "$server" --json > "results/$build.json"
-            python3 bench/bench.py --host localhost --ssj "$client" --server "$server" --netem "${{ inputs.netem }}" --bulk-mb 32 --json > "results/$build-netem.json"
-          done
-          for f in results/*.json; do echo "== $f"; cat "$f"; done | tee -a "$GITHUB_STEP_SUMMARY"
+          NETEM= bench/docker-bench.sh --raw-bulk --bulk-mb 128 --samples 400 --jitter-ms 100 --rounds 2 --json > results/clean.json
+      - name: Lossy link
+        env:
+          NETEM: ${{ inputs.netem }}
+        run: |
+          BUILD=0 bench/docker-bench.sh --raw-bulk --bulk-mb 16 --samples 100 --jitter-ms 100 --rounds 1 --json > results/lossy.json
+      - name: Check the limits
+        run: python3 bench/check.py results/clean.json results/lossy.json | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: bench-results
           path: results
