@@ -176,7 +176,7 @@ fn main() {
         .collect();
     // the commands with their options in the man page
     let mut page_commands = String::from(
-        ".SH COMMANDS\nThe options that each command reads. Every option may stand before the command word, and these also after the destination.\n",
+        ".SH COMMANDS\nThe options that each command reads. They may stand before the command word or after the destination; any other option is an error.\n",
     );
     for (word, ids) in options::COMMAND_OPTIONS {
         let list = ids
