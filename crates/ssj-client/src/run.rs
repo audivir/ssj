@@ -15,8 +15,8 @@ use ssj_proto::control::{Reply, SessionInfo, SessionState, parse_reply};
 use ssj_proto::frame::MAX_DATA_LEN;
 use ssj_proto::resume::check_welcome;
 use ssj_proto::{
-    ClientFrame, Env, ErrorCode, ExitStatus, Hello, Peek, ReplayBuffer, ServerFrame, WindowSize,
-    decode_server, peek_server,
+    ClientFrame, Env, EnvFilter, ErrorCode, ExitStatus, Hello, Peek, ReplayBuffer, ServerFrame,
+    WindowSize, decode_server, peek_server,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::signal::unix::{SignalKind, signal};
@@ -267,8 +267,20 @@ fn agent_socket(args: &Args) -> Result<Option<PathBuf>, String> {
 /// Selected variables of the local environment.
 fn local_env(args: &Args) -> Result<Env, String> {
     let vars = std::env::vars_os()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .filter(|(name, _)| args.send_env.matches(name))
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+    selected_env(vars, &args.send_env)
+}
+
+/// The variables that `filter` selects, and always `TERM`: the shell needs the terminal type
+/// whatever else the user sends, as with `ssh`, which sends it with the request for the terminal.
+/// Without it the shell takes the terminal for a dumb one and draws its prompt wrongly.
+fn selected_env(
+    vars: impl IntoIterator<Item = (String, String)>,
+    filter: &EnvFilter,
+) -> Result<Env, String> {
+    let vars = vars
+        .into_iter()
+        .filter(|(name, _)| name == "TERM" || filter.matches(name))
         .collect();
     Env::new(vars).map_err(|e| format!("the selected environment is not valid: {e:?}"))
 }
@@ -2608,5 +2620,37 @@ impl Client {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vars() -> Vec<(String, String)> {
+        [
+            ("TERM", "xterm-ghostty"),
+            ("LC_THEME", "dark"),
+            ("HOME", "/h"),
+        ]
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .to_vec()
+    }
+
+    fn names(filter: Vec<String>) -> Vec<String> {
+        let env = selected_env(vars(), &EnvFilter::new(filter).unwrap()).unwrap();
+        env.iter().map(|(name, _)| name.to_owned()).collect()
+    }
+
+    #[test]
+    fn term_is_sent_even_when_the_user_names_other_variables() {
+        assert_eq!(names(vec!["LC_THEME".to_owned()]), ["TERM", "LC_THEME"]);
+        assert_eq!(names(vec![]), ["TERM"]);
+    }
+
+    #[test]
+    fn the_default_selection_does_not_send_a_variable_twice() {
+        let env = selected_env(vars(), &EnvFilter::default_patterns()).unwrap();
+        assert_eq!(env.len(), 2);
     }
 }

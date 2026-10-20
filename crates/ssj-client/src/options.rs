@@ -183,7 +183,7 @@ pub struct Options {
     #[arg(long, value_name = "KEY", overrides_with = "detach_key")]
     pub detach_key: Option<String>,
 
-    /// Environment variable pattern to send (repeatable)
+    /// Environment variable pattern to send (repeatable); TERM is always sent
     #[arg(long, value_name = "PATTERN")]
     pub send_env: Vec<String>,
 
