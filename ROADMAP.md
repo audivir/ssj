@@ -7,22 +7,15 @@ Order: performance (2), then the release (3).
 
 ## 2. Performance
 
-- Shorten the start further (measured in `SPEC.md`, "Start and end of a session"):
-  - When UDP does not answer, start the next transport after a short time and keep whichever
-    connects first, instead of waiting 1.5 s and then opening a second `ssh`.
-  - The retry for every new client costs one round trip. Skipping it while few unvalidated
-    handshakes are in progress would save that, at the price of an amplification of up to three
-    times for a spoofed address, so it needs a decision.
+- The retry for every new client costs one round trip. Skipping it while few unvalidated
+  handshakes are in progress would save that, at the price of an amplification of up to three
+  times for a spoofed address, so it needs a decision (recommended: keep the retry).
 - Larger UDP socket buffers (a safe setter such as `socket2`), to be measured on Linux.
-- Run `bench.yml` once on GitHub to confirm the numbers on a clean machine. It has never run, and
-  the benchmark by hand in containers showed no difference between glibc and musl, so nothing
-  depends on it. Then gate on the numbers.
 
 ## 3. Release
 
-- Push the repository to a remote so that `ci.yml`, `fuzz.yml`, and `supply-chain.yml` run. They have never run, and the Linux tests have never been executed anywhere. Expect to fix things.
-- Manual checks that no CI machine can do: the macOS and Linux network watch (switch Wi-Fi, sleep the laptop), listed in `cargo run -p ssj-client --example netwatch`.
-- A tagged release (`v0.1.0`) and a first run of the release workflow. The `PROTOCOLS.md` row and the golden file for protocol 1 exist.
+- Manual checks that no CI machine can do: the macOS and Linux network watch (switch Wi-Fi, sleep the laptop), listed in `cargo run -p ssj-client --example netwatch`; a real jump host.
+- A tagged release (`v0.1.0`). The `PROTOCOLS.md` row and the golden file for protocol 1 exist.
 
 ## Known limits that stay until someone fixes them
 
