@@ -137,6 +137,8 @@ pub struct Args {
     pub json: bool,
     /// How much to tell (`-v` counted), 0 to 3.
     pub verbose: u8,
+    /// No lines about connecting, disconnecting, and detaching (`-q`).
+    pub quiet: bool,
     /// Where the output of `-v` goes instead of the terminal.
     pub log_file: Option<PathBuf>,
     /// Never prompt and give up early: for refreshes that nobody waits for.
@@ -186,6 +188,7 @@ impl Args {
             congestion: None,
             json: false,
             verbose: 0,
+            quiet: false,
             log_file: None,
             batch: false,
             explicit: Explicit::default(),
@@ -562,6 +565,7 @@ fn from_options(options: Options, tail: &[String]) -> Result<Args, String> {
         congestion,
         json: options.json,
         verbose: options.verbose.min(3),
+        quiet: options.quiet,
         log_file: options.log_file.map(PathBuf::from),
         batch: options.batch,
     })

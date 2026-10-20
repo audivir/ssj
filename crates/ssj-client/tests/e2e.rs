@@ -279,9 +279,9 @@ fn failed_bootstrap_shows_remote_text_without_control_characters() {
     );
 }
 
-/// Runs the client on a pseudo-terminal, as a user would, and returns what the terminal shows.
-#[test]
-fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
+/// Runs the client on a pseudo-terminal, as a user would, with `extra` words in front. It types
+/// `stty size` and `exit 7`, and returns what the terminal showed and the exit code.
+fn terminal_session(extra: &[&str]) -> (String, Option<i32>) {
     use std::io::{Read, Write};
     use std::sync::mpsc;
 
@@ -290,6 +290,7 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
     let (pty, pts) = pty_process::blocking::open().unwrap();
     pty.resize(pty_process::Size::new(31, 97)).unwrap();
     let mut child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
+        .args(extra)
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args([
@@ -362,7 +363,35 @@ fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
         );
         std::thread::sleep(Duration::from_millis(50));
     };
-    assert_eq!(status.code(), Some(7));
+    // what the client printed on its way out
+    while let Ok(bytes) = rx.recv_timeout(Duration::from_millis(500)) {
+        seen.push_str(&String::from_utf8_lossy(&bytes));
+    }
+    (seen, status.code())
+}
+
+#[test]
+fn client_on_a_terminal_passes_the_window_size_and_exits_without_hanging() {
+    let (seen, code) = terminal_session(&[]);
+    assert!(seen.contains("31 97"), "{seen:?}");
+    assert_eq!(code, Some(7));
+    // without the message of the day, these lines say when the session begins and ends.
+    assert!(
+        seen.contains("[connected to me@localhost: session "),
+        "{seen:?}"
+    );
+    assert!(
+        seen.contains("[disconnected from me@localhost]"),
+        "{seen:?}"
+    );
+}
+
+#[test]
+fn quiet_leaves_out_the_lines_about_connecting_and_disconnecting() {
+    let (seen, code) = terminal_session(&["-q"]);
+    assert_eq!(code, Some(7));
+    assert!(!seen.contains("[connected"), "{seen:?}");
+    assert!(!seen.contains("[disconnected"), "{seen:?}");
 }
 
 fn short_dir() -> PathBuf {

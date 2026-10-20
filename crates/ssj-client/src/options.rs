@@ -62,6 +62,10 @@ pub struct Options {
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
 
+    /// Do not print the lines about connecting, disconnecting, and detaching
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+
     /// Write the -v output to this file and not to the terminal
     #[arg(long, value_name = "FILE", overrides_with = "log_file")]
     pub log_file: Option<String>,

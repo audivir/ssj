@@ -958,6 +958,15 @@ async fn connect_session(
         }
     };
 
+    // without the message of the day of a login, nothing else says when the session starts.
+    notice(
+        &args,
+        &format!(
+            "[connected to {}: session {}]",
+            args.destination,
+            connect.id.as_str()
+        ),
+    );
     let raw = match RawMode::enable() {
         Ok(raw) => raw,
         Err(err) => {
@@ -1016,15 +1025,17 @@ async fn connect_session(
     drop(raw);
 
     match result {
-        Ok(Finished::Exited(code)) => code,
+        Ok(Finished::Exited(code)) => {
+            notice(&args, &format!("[disconnected from {}]", args.destination));
+            code
+        }
         Ok(Finished::HungUp) => 129,
         Ok(Finished::Detached) => {
             let port = args.ssh_port.map(|p| format!(":{p}")).unwrap_or_default();
-            // after a hangup the terminal is gone, and `eprintln!` would panic on the error.
-            let _ = std::io::Write::write_fmt(
-                &mut std::io::stderr(),
-                format_args!(
-                    "[detached from session; it keeps running: ssj attach {}{port}]\n",
+            notice(
+                &args,
+                &format!(
+                    "[detached from session; it keeps running: ssj attach {}{port}]",
                     args.destination
                 ),
             );
@@ -1035,6 +1046,17 @@ async fn connect_session(
             1
         }
     }
+}
+
+/// Prints a line about the session on the terminal, unless `-q` is given or the standard input is
+/// not a terminal (a script does not want it). After a hangup the terminal is gone, and
+/// `eprintln!` would panic on the error, so the write ignores errors.
+fn notice(args: &Args, text: &str) {
+    use std::io::IsTerminal;
+    if args.quiet || !std::io::stdin().is_terminal() {
+        return;
+    }
+    let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("{text}\n"));
 }
 
 /// Bytes asked from the stream at a time.

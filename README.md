@@ -137,12 +137,18 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 | `-A` | Agent forwarding. |
 | `--local-echo auto`, `--compress auto` | See "Local echo" and "Compression". |
 | `-v`, `-vv`, `-vvv`, `--log-file FILE` | Debug output. |
+| `-q`, `--quiet` | No lines about connecting, disconnecting, and detaching. |
 
 Run `ssj --help` or `man ssj` for the full list.
 
 ## Sessions
 
 ### Ending and leaving
+
+Without the message of the day of a login, nothing else says when a session begins. On a terminal
+`ssj` prints `[connected to user@host: session ID]` first, `[disconnected from user@host]` when the
+shell ends, and `[detached from session; it keeps running: ssj attach user@host]` when you leave on
+purpose. `-q` turns these lines off.
 
 Ending a session stops the shell. Leaving it keeps the shell running.
 

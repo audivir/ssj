@@ -817,6 +817,12 @@ Leaving (the shell keeps running):
 - An escape key sequence detaches on purpose. As in `ssh`, the escape character `~` counts only
   at the start of a line (right after a newline or at the start of the session). Then:
   - `~.` detaches: the client sends `Detach`, prints `[detached from session; it keeps running: ssj attach <DESTINATION>]`, and exits with code 0.
+  - The client prints two more lines, so that the start and the end of a session are visible
+    without the message of the day of a login: `[connected to <DESTINATION>: session <ID>]` before
+    the terminal goes into raw mode, and `[disconnected from <DESTINATION>]` after the shell has
+    ended. They go to the standard error output, only when the standard input is a terminal, and
+    `-q` (`--quiet`) turns them and the detach line off. Errors are not affected, and a hangup
+    prints nothing, since the terminal is gone.
   - `~~` sends a literal `~`.
   - `~?` prints the list of escape sequences.
   - Any other character after `~` is sent as typed, including the `~`.
