@@ -1,4 +1,4 @@
-use ssj_config::parse;
+use ssj_config::{Table, parse};
 
 #[test]
 fn empty_files_and_comments_are_fine() {
@@ -41,8 +41,6 @@ fn syntax_errors_name_their_line() {
         ("\n\na = b", 3),
         ("a", 1),
         ("= \"x\"", 1),
-        ("A = \"x\"", 1),
-        ("a-b = \"x\"", 1),
         ("a = \"x\"\na = \"y\"", 2),
         ("a = \"unterminated", 1),
         ("a = \"x\" y", 1),
@@ -51,9 +49,6 @@ fn syntax_errors_name_their_line() {
         ("a = [\"x\"", 1),
         ("a = [x]", 1),
         ("a = [\"x\"] y", 1),
-        ("a = [[\"x\"]]", 1),
-        ("[section]", 1),
-        ("a = 1.5", 1),
     ] {
         let error = parse(text)
             .err()
@@ -108,16 +103,6 @@ fn wrong_types_and_leftover_keys_are_errors_with_the_line() {
     );
 }
 
-// A comment sign inside a string, even after an escaped quote, belongs to the string.
-#[test]
-fn comment_detection_follows_the_strings() {
-    let mut table = parse("a = \"x \\\" # still inside\" # real comment\n").unwrap();
-    assert_eq!(
-        table.take_text("a").unwrap(),
-        Some("x \" # still inside".to_owned())
-    );
-}
-
 #[test]
 fn unsigned_numbers_are_read_and_checked() {
     let mut table = parse("size = 4194304\nzero = 0\nneg = -1\ntext = \"5\"\n").unwrap();
@@ -148,4 +133,27 @@ fn booleans_are_true_or_false_and_nothing_else() {
             "{text}: {error}"
         );
     }
+}
+
+#[test]
+fn keys_that_no_program_asks_for_are_errors_with_the_line() {
+    for text in [
+        "\nA = \"x\"",
+        "\na-b = \"x\"",
+        "\n[section]",
+        "\na.b = 1",
+        "\na = 1.5",
+    ] {
+        let error = parse(text).and_then(Table::finish).unwrap_err();
+        assert!(error.starts_with("line 2:"), "{text:?}: {error}");
+    }
+}
+
+#[test]
+fn a_list_must_hold_strings() {
+    let error = parse("\na = [[\"x\"]]")
+        .unwrap()
+        .take_list("a")
+        .unwrap_err();
+    assert!(error.starts_with("line 2:"), "{error}");
 }

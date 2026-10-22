@@ -65,14 +65,17 @@ fn mistakes_are_errors_that_name_the_problem() {
         ),
         (
             "auto_install = \"never\"\nauto_install = \"always\"",
-            "line 2: auto_install is set twice",
+            "line 2: duplicate key",
         ),
         (
             "escape_char = \"ab\"",
             "escape_char: expected one printable",
         ),
         ("escape_char = \"\"", "escape_char: expected one printable"),
-        ("escape_char = \"\\t\"", "line 1:"),
+        (
+            "escape_char = \"\\t\"",
+            "escape_char: expected one printable",
+        ),
         ("ssh_command = \"   \"", "ssh_command is empty"),
         (
             "ssh_command = [\"ssh\"]",

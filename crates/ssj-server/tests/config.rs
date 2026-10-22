@@ -95,7 +95,7 @@ fn mistakes_are_errors_that_name_the_problem() {
             "away_after: expected a number of seconds above 0",
         ),
         ("port_range = 5", "line 1: port_range must be a string"),
-        ("detached_timeout = -5", "must not be negative"),
+        ("detached_timeout = -5", "not negative"),
         ("detached_timeout = \"soon\"", "number of seconds"),
         ("max_detached = true", "line 1: max_detached must be"),
         (

@@ -397,7 +397,7 @@ output (zstd) while the link is the limit.
 
 ## Configuration
 
-Both files are flat `key = value` lines, a strict subset of TOML.
+Both files are flat `key = value` lines of TOML, without tables.
 
 - A typo in a key is an error with the line number.
 - A file that others can write is refused.

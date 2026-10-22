@@ -33,6 +33,7 @@ ssj-server = { path = "crates/ssj-server", version = "0.1.0" }
 system-configuration = "0.8.0"
 tokio = "1.53.3"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
+toml = { version = "1.1.8", default-features = false, features = ["parse", "std"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 zstd = { version = "0.14.3", default-features = false }
 

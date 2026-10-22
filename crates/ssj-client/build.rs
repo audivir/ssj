@@ -27,7 +27,7 @@ listed under COMMANDS. A host with the name of one of them is written \fBssj con
 "#;
 
 const FILES: &str = r#".SH FILES
-All config files are flat \fIkey = value\fR lines, a strict subset of TOML. A typo in a key is an
+All config files are flat \fIkey = value\fR lines of TOML, without tables. A typo in a key is an
 error with the line number, and a file that others can write is refused. Options on the command
 line override the file.
 .TP
