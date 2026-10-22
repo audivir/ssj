@@ -1269,7 +1269,8 @@ prediction as in `mosh` is out of scope.
   and still verifies the handshake signature. A fingerprint comparison alone would let anyone who
   has seen the public certificate impersonate that side.
 - TLS session resumption and 0-RTT are disabled, since 0-RTT data can be replayed.
-- Dependencies are kept minimal and checked with `cargo audit` and `cargo deny` in CI.
+- A maintained crate is preferred over code of our own where it does the same job. Dependencies
+  are checked with `cargo audit` and `cargo deny` in CI.
 - Fuzz the frame parser in `ssj-proto`.
 
 ## Hardening requirements
