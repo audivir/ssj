@@ -424,7 +424,7 @@ the server is built by the client.
 ### Editing the config files
 
 `ssj edit` opens `client.toml` in `$EDITOR` (then `$VISUAL`, then `vi`; a command with arguments
-such as `code -w` works). `ssj edit user@host` does the same for `server.toml` on the host.
+such as `code -w` works, but it is split like shell words and not run by a shell). `ssj edit user@host` does the same for `server.toml` on the host.
 
 - A new file starts with every setting as a comment.
 - The text is judged as soon as the editor ends: the client checks `client.toml` itself, and

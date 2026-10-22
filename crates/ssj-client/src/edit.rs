@@ -15,7 +15,6 @@ use std::fs;
 use std::io::{BufRead, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::bootstrap::{run_remote, run_remote_command, sh_command};
 use crate::cli::Args;
@@ -30,38 +29,6 @@ pub fn editor() -> String {
         .filter_map(|name| std::env::var(name).ok())
         .find(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "vi".to_owned())
-}
-
-/// Runs the editor on `file` and waits. The editor may have arguments (`code -w`), so the shell
-/// splits the command, as it does for `git`.
-fn run_editor(editor: &str, file: &Path) -> Result<(), String> {
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(format!("{editor} \"$1\""))
-        .arg("ssj-edit")
-        .arg(file)
-        .status()
-        .map_err(|e| format!("cannot run the editor {editor:?}: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("the editor {editor:?} ended with {status}"))
-    }
-}
-
-/// Writes the text to `edit.toml` in the private directory. The name ends in `.toml`, for the
-/// highlighting.
-fn write_temp(dir: &Path, text: &str) -> Result<PathBuf, String> {
-    let path = dir.join("edit.toml");
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|e| format!("cannot make {}: {e}", path.display()))?;
-    file.write_all(text.as_bytes())
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    Ok(path)
 }
 
 /// Whether to open the editor again after an error. Anything but `d` or `n` means yes.
@@ -86,33 +53,34 @@ where
     Fut: std::future::Future<Output = Result<(), String>>,
 {
     let editor = editor();
-    // the directory (mode 0700) and the file in it go when `dir` is dropped.
-    let dir = tempfile::Builder::new()
-        .prefix("ssj-edit-")
-        .tempdir()
-        .map_err(|e| format!("cannot make a temporary directory: {e}"))?;
-    let path = write_temp(dir.path(), initial)?;
-    async {
-        loop {
-            vlog!(1, "running the editor {editor:?} on {}", path.display());
-            run_editor(&editor, &path)?;
-            let text = fs::read_to_string(&path)
-                .map_err(|e| format!("cannot read the edited file: {e}"))?;
-            if text == initial {
-                return Ok(None);
-            }
-            match judge(text.clone()).await {
-                Ok(()) => return Ok(Some(text)),
-                Err(message) => {
-                    eprintln!("ssj: the file is not valid, and not saved: {message}");
-                    if !ask_again() {
-                        return Ok(None);
-                    }
+    let mut text = initial.to_owned();
+    loop {
+        vlog!(1, "running the editor {editor:?}");
+        // the text is judged here, so the editor needs no check of whether the file was saved.
+        let Some(edited) = dialoguer::Editor::new()
+            .executable(&editor)
+            .extension(".toml")
+            .require_save(false)
+            .trim_newlines(false)
+            .edit(&text)
+            .map_err(|e| format!("cannot run the editor {editor:?}: {e}"))?
+        else {
+            return Ok(None);
+        };
+        if edited == initial {
+            return Ok(None);
+        }
+        match judge(edited.clone()).await {
+            Ok(()) => return Ok(Some(edited)),
+            Err(message) => {
+                eprintln!("ssj: the file is not valid, and not saved: {message}");
+                if !ask_again() {
+                    return Ok(None);
                 }
+                text = edited;
             }
         }
     }
-    .await
 }
 
 /// Why a text could not be saved.
@@ -183,7 +151,7 @@ fn save_local(path: &Path, original: &str, text: &str) -> Result<(), SaveError> 
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(other(&format!("cannot read {}", path.display()), err)),
     };
-    if sha256_hex(current.as_bytes()) != sha256_hex(original.as_bytes()) {
+    if current != original {
         return Err(SaveError::Changed);
     }
     let written = (|| -> std::io::Result<()> {
