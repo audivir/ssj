@@ -426,8 +426,8 @@ redraw.
   0700, the file is replaced by rename. `ssj --complete [DESTINATION]` prints the names of one host
   or of all, and starts `ssj --batch list <destination>` in the background for each list older
   than 10 seconds. `--batch` adds `-o BatchMode=yes -o ConnectTimeout=2` to the `ssh` command, so
-  that a refresh never asks for a passphrase or a key, and takes a lock file next to the list so
-  that one refresh per host runs at a time (a lock older than 30 seconds is stale). Lines read
+  that a refresh never asks for a passphrase or a key, and takes a lock (`flock`) on a file next to the
+  list so that one refresh per host runs at a time; the lock goes with the process. Lines read
   back from the cache are checked again: a name must be a valid selector, and the destination must
   parse as one without a port, since it reaches `ssh` later.
 - The id or name comes after the destination (`ssj attach host ID`), so the completion knows the

@@ -10,9 +10,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-/// A lock older than this is left over from a refresh that died.
-const LOCK_STALE: Duration = Duration::from_secs(30);
-
 /// The list of a host is refreshed when it is older than this.
 pub const REFRESH_AFTER: Duration = Duration::from_secs(10);
 
@@ -167,43 +164,23 @@ fn origin_of(text: &str) -> Option<Origin> {
     Some(Origin { destination, port })
 }
 
-/// Held while one process refreshes the list of a host. Others see it and leave at once.
+/// Held while one process refreshes the list of a host. Others see it and leave at once. The lock
+/// goes with the process, so a refresh that dies leaves nothing behind.
 pub struct Refresh {
-    path: PathBuf,
+    _lock: fs::File,
 }
 
 impl Refresh {
     pub fn acquire(dir: &Path, host: &str) -> Option<Self> {
         ensure(dir).ok()?;
-        let path = dir.join(format!("{}.lock", file_name(host)));
-        for _ in 0..2 {
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-            {
-                Ok(_) => return Some(Self { path }),
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let old = fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| SystemTime::now().duration_since(t).ok())
-                        .is_some_and(|age| age > LOCK_STALE);
-                    if !old {
-                        return None;
-                    }
-                    let _ = fs::remove_file(&path);
-                }
-                Err(_) => return None,
-            }
-        }
-        None
-    }
-}
-
-impl Drop for Refresh {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(dir.join(format!("{}.lock", file_name(host))))
+            .ok()?;
+        file.try_lock().ok()?;
+        Some(Self { _lock: file })
     }
 }

@@ -134,18 +134,9 @@ fn save_local(path: &Path, original: &str, text: &str) -> Result<(), SaveError> 
         .mode(0o600)
         .open(&lock_path)
         .map_err(|e| other(&format!("cannot open {}", lock_path.display()), e))?;
-    // another editor holds it for the blink of a save, so a few tries are enough.
-    let mut tries = 0;
-    while rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive).is_err() {
-        tries += 1;
-        if tries > 50 {
-            return Err(SaveError::Other(format!(
-                "{} is locked by another ssj edit",
-                lock_path.display()
-            )));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    // another editor holds it for the blink of a save.
+    lock.lock()
+        .map_err(|e| other(&format!("cannot lock {}", lock_path.display()), e))?;
     let current = match fs::read_to_string(path) {
         Ok(current) => current,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
