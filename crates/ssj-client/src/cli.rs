@@ -2,12 +2,13 @@
 
 use std::path::PathBuf;
 
+use clap::FromArgMatches;
+use clap::error::ErrorKind;
+use clap::parser::ValueSource;
 use ssj_net::Compress;
-use ssj_proto::{EnvFilter, PROTOCOL, SessionName, is_selector};
+use ssj_proto::{EnvFilter, PROTOCOL, SessionName};
 
 use crate::config::AutoInstall;
-use clap::FromArgMatches;
-
 use crate::options::{COMMANDS, Options};
 
 /// Where the server file is, as seen on the remote host.
@@ -248,129 +249,99 @@ pub fn parse_detach_key(text: &str) -> Result<Option<u8>, String> {
     Ok(Some(byte))
 }
 
-/// Where the first two positional words of the command line are (`None` when there are fewer).
-///
-/// Options that take a value are skipped together with their value, so that the value is not
-/// taken for a word.
-fn positionals(args: &[String]) -> [Option<usize>; 2] {
-    let command = crate::options::command();
-    let takes_value = |long: Option<&str>, short: Option<char>| {
-        command.get_arguments().any(|arg| {
-            let found = long.is_some_and(|l| arg.get_long() == Some(l))
-                || short.is_some_and(|c| arg.get_short() == Some(c))
-                || long.is_some_and(|l| arg.get_all_aliases().is_some_and(|a| a.contains(&l)));
-            found && arg.get_action().takes_values()
-        })
-    };
-    let mut found = [None, None];
-    let mut count = 0;
-    let mut index = 0;
-    while index < args.len() && count < 2 {
-        let word = args[index].as_str();
-        if word == "--" {
-            break;
-        }
-        if let Some(long) = word.strip_prefix("--") {
-            if !long.contains('=') && takes_value(Some(long), None) {
-                index += 1;
-            }
-        } else if let Some(shorts) = word.strip_prefix('-').filter(|s| !s.is_empty()) {
-            for (at, c) in shorts.char_indices() {
-                if takes_value(None, Some(c)) {
-                    if at + c.len_utf8() == shorts.len() {
-                        index += 1;
-                    }
-                    break;
-                }
-            }
-        } else {
-            found[count] = Some(index);
-            count += 1;
-        }
-        index += 1;
-    }
-    found
-}
-
 /// Parses the arguments of the command line.
 ///
 /// As with `ssh`, everything after the destination belongs to the command that runs in the
 /// session, options included (`ssj host ls -l`). The exception are the commands of `ssj`
-/// (`ssj list host --json`), which keep their options after the destination.
+/// (`ssj list host --json`), which keep their options after the destination. A command word is a
+/// command only when a destination follows it: alone it is the name of a host.
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let args: Vec<String> = args.into_iter().collect();
-    let [first, second] = positionals(&args);
-    // `ssj kill --help`: a command word alone is not a host, and the help is its own
-    if let Some(first) = first
-        && second.is_none()
-        && args.iter().any(|a| a == "--help" || a == "-h")
-        && let Some(text) = command_help(&args[first])
-    {
-        println!("{text}");
-        std::process::exit(0);
-    }
-    let mut head = args;
-    let (mut first, mut second) = (first, second);
-    // `ssj connect HOST [COMMAND]...` is the plain connection, for a host that is named like a
-    // command and without the warning of a lone command word
-    let mut explicit = false;
-    if let Some(at) = first
-        && head[at] == "connect"
-    {
-        if second.is_none() {
-            return Err("usage: ssj connect user@host [COMMAND]...".to_owned());
+    let command = crate::options::command();
+    let parse = |args: &[String]| {
+        let words = std::iter::once("ssj").chain(args.iter().map(String::as_str));
+        command.clone().try_get_matches_from(words)
+    };
+    // `ssj list` alone or `ssj list -- ls`: the host `list`, as `ssj connect list` would be
+    let lone = |matches: &clap::ArgMatches| {
+        matches
+            .subcommand()
+            .is_some_and(|(_, sub)| escaped(sub) && sub.get_one::<String>("destination").is_none())
+    };
+    let matches = match parse(&args) {
+        Ok(matches) if !lone(&matches) => matches,
+        Err(error) if error.kind() != ErrorKind::MissingRequiredArgument => {
+            return Err(render(error));
         }
-        head.remove(at);
-        [first, second] = positionals(&head);
-        explicit = true;
-    }
-    if !explicit
-        && second.is_none()
-        && let Some(at) = first
-        && let Some(hint) = lone_command_hint(&head[at])
-    {
-        eprintln!("ssj: warning: {hint}");
-    }
-    let mut tail = Vec::new();
-    let mut word = None;
-    if let Some(first) = first {
-        let is_command = !explicit && is_command_word(&head[first]) && second.is_some();
-        if is_command {
-            word = Some(head[first].clone());
-        } else {
-            tail = head.split_off(first + 1);
-            if tail.first().is_some_and(|word| word == "--") {
-                tail.remove(0);
-            } else if let Some(hint) = tail.first().and_then(|word| misplaced_option(word)) {
-                eprintln!("ssj: warning: {hint}");
+        first => {
+            let connect: Vec<String> = std::iter::once("connect".to_owned())
+                .chain(args.iter().cloned())
+                .collect();
+            match (first, parse(&connect)) {
+                (_, Ok(matches)) => {
+                    if let Some(hint) = lone_host(&matches).and_then(lone_command_hint) {
+                        eprintln!("ssj: warning: {hint}");
+                    }
+                    matches
+                }
+                (Err(error), _) | (_, Err(error)) => return Err(render(error)),
             }
         }
-    }
-    let command = crate::options::command();
-    let matches = match command
-        .clone()
-        .try_get_matches_from(std::iter::once("ssj".to_owned()).chain(head))
-    {
-        Ok(matches) => matches,
-        Err(error) if error.use_stderr() => {
-            return Err(error.render().to_string().trim_end().to_owned());
-        }
-        // help and version go to the output and end the program.
-        Err(error) => error.exit(),
     };
-    if let Some(word) = &word {
-        foreign_option(&command, &matches, word)?;
+    let (word, matches) = match matches.subcommand() {
+        Some((word, sub)) => (Some(word), sub),
+        None => (None, &matches),
+    };
+    if let Some(word) = word.filter(|word| is_command_word(word)) {
+        foreign_option(&command, matches, word)?;
     }
-    let options = Options::from_arg_matches(&matches).map_err(|e| e.to_string())?;
-    from_options(options, &tail, explicit)
+    let options = Options::from_arg_matches(matches).map_err(|e| e.to_string())?;
+    let mut words = strings(matches, "destination").into_iter();
+    let destination = words.next();
+    let mut remote: Vec<String> = words.collect();
+    // `ssj host -- --install` runs it on purpose
+    if remote.first().is_some_and(|word| word == "--") {
+        remote.remove(0);
+    } else if let Some(hint) = remote.first().and_then(|word| misplaced_option(word)) {
+        eprintln!("ssj: warning: {hint}");
+    }
+    if escaped(matches) {
+        return Err("a command of ssj takes no command to run after `--`".to_owned());
+    }
+    let ids = match word {
+        Some("attach" | "kill" | "detach") => strings(matches, "id"),
+        _ => Vec::new(),
+    };
+    from_options(options, word, destination, ids, &remote)
 }
 
-/// The help of a command of `ssj`, or `None` for a word that is not one.
-pub fn command_help(word: &str) -> Option<String> {
-    let mut tree = crate::options::commands();
-    // the usage names the program and the command only in a built tree.
-    tree.build();
-    Some(tree.find_subcommand_mut(word)?.render_help().to_string())
+/// Whether words follow a `--` after a command word (which `connect` does not have).
+fn escaped(matches: &clap::ArgMatches) -> bool {
+    matches.try_contains_id("escaped").unwrap_or(false)
+}
+
+/// The host of `ssj connect HOST`.
+fn lone_host(matches: &clap::ArgMatches) -> Option<&str> {
+    let (_, sub) = matches.subcommand()?;
+    sub.get_many::<String>("destination")?
+        .next()
+        .map(String::as_str)
+}
+
+/// The text of an error of `clap`. Help and version go to the output and end the program.
+fn render(error: clap::Error) -> String {
+    if error.use_stderr() {
+        error.render().to_string().trim_end().to_owned()
+    } else {
+        error.exit()
+    }
+}
+
+/// The values of a positional argument.
+fn strings(matches: &clap::ArgMatches, id: &str) -> Vec<String> {
+    matches
+        .get_many::<String>(id)
+        .map_or_else(Vec::new, |values| values.cloned().collect())
 }
 
 /// A hint for a word after the destination that is an option of `ssj`. The host would run it as
@@ -419,7 +390,6 @@ fn foreign_option(
     matches: &clap::ArgMatches,
     word: &str,
 ) -> Result<(), String> {
-    use clap::parser::ValueSource;
     let allowed = COMMANDS
         .iter()
         .find(|found| found.word == word)
@@ -448,31 +418,13 @@ fn is_command_word(word: &str) -> bool {
     word != "connect" && COMMANDS.iter().any(|found| found.word == word)
 }
 
-fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Args, String> {
-    // A command for the session is everything after the destination, as with `ssh`.
-    let words = options.words.clone();
-    let remote_command = (!tail.is_empty()).then(|| tail.join(" "));
-    if remote_command.is_none() && !options.command.is_empty() {
-        return Err("a command of ssj takes no command to run after `--`".to_owned());
-    }
-    if let Some(command) = &remote_command {
-        if command.trim().is_empty() {
-            return Err("the command is empty".to_owned());
-        }
-        if words.len() != 1 {
-            return Err(
-                "a command to run needs exactly one destination before it (ssj DESTINATION -- COMMAND)"
-                    .to_owned(),
-            );
-        }
-        if options.name.is_some() || options.auto_attach {
-            return Err(
-                "a command cannot be combined with --name or --auto-attach, since a session that runs already would not run it"
-                    .to_owned(),
-            );
-        }
-    }
-    let positionals = &words;
+fn from_options(
+    options: Options,
+    word: Option<&str>,
+    destination: Option<String>,
+    mut ids: Vec<String>,
+    remote: &[String],
+) -> Result<Args, String> {
     if let Some(host) = &options.complete {
         return Ok(Args {
             command: Command::Complete {
@@ -481,6 +433,19 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
             },
             ..Args::blank()
         });
+    }
+    // a command for the session is everything after the destination, as with `ssh`.
+    let remote_command = (!remote.is_empty()).then(|| remote.join(" "));
+    if let Some(command) = &remote_command {
+        if command.trim().is_empty() {
+            return Err("the command is empty".to_owned());
+        }
+        if options.name.is_some() || options.auto_attach {
+            return Err(
+                "a command cannot be combined with --name or --auto-attach, since a session that runs already would not run it"
+                    .to_owned(),
+            );
+        }
     }
     let mut server_args = options.server_arg.clone();
     if let Some(range) = &options.port_range {
@@ -498,66 +463,24 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         (options.auto_attach || options.no_auto_attach).then_some(options.auto_attach);
     let forward_agent =
         (options.forward_agent || options.no_forward_agent).then_some(options.forward_agent);
-    // `list`, `attach`, and `kill` are commands only when a destination follows them.
-    let command_word = positionals
-        .first()
-        .filter(|_| positionals.len() > 1)
-        .map(String::as_str);
-    // `ssj edit` alone is the editor for the local file; a host that is called `edit` is reached
-    // as `ssj connect edit` or `user@edit`.
-    let local_edit = !explicit && positionals.as_slice() == ["edit"];
-    let (command, destination) = match command_word {
-        _ if local_edit => (Command::Edit, String::new()),
-        Some(word) if is_command_word(word) => {
-            let rest = &positionals[1..];
-            let (mut ids, destination) = match rest {
-                [destination] => (Vec::new(), destination.clone()),
-                [destination, ids @ ..]
-                    if matches!(word, "kill" | "detach")
-                        || (ids.len() == 1 && word == "attach") =>
-                {
-                    let mut checked = Vec::new();
-                    for id in ids {
-                        if !is_selector(id) {
-                            return Err("not a valid session id or name".to_owned());
-                        }
-                        checked.push(id.clone());
-                    }
-                    (checked, destination.clone())
-                }
-                _ => {
-                    return Err(format!(
-                        "usage: ssj {word} user@host{}",
-                        match word {
-                            "kill" | "detach" => " [ID...]",
-                            "attach" => " [ID]",
-                            _ => "",
-                        }
-                    ));
-                }
-            };
-            let command = match word {
-                "list" => Command::List,
-                "install" => Command::Install,
-                "edit" => Command::Edit,
-                "attach" => Command::Attach(ids.pop()),
-                "detach" => Command::Detach(ids),
-                _ => Command::Kill(ids),
-            };
-            (command, destination)
-        }
-        _ => match positionals.as_slice() {
-            [destination] => (Command::Connect, destination.clone()),
-            [] => return Err("missing destination (user@host)".to_owned()),
-            _ => return Err("only one destination is allowed".to_owned()),
-        },
+    let command = match word {
+        Some("list") => Command::List,
+        Some("install") => Command::Install,
+        Some("edit") => Command::Edit,
+        Some("attach") => Command::Attach(ids.pop()),
+        Some("kill") => Command::Kill(ids),
+        Some("detach") => Command::Detach(ids),
+        _ => Command::Connect,
     };
-    let (target, ssh_port) = if local_edit {
-        (String::new(), None)
-    } else {
-        let parsed = ssj_proto::destination::parse(&destination)
-            .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
-        (parsed.target(), parsed.port)
+    // `ssj edit` alone is the editor for the local file.
+    let (target, ssh_port) = match destination {
+        Some(destination) => {
+            let parsed = ssj_proto::destination::parse(&destination)
+                .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
+            (parsed.target(), parsed.port)
+        }
+        None if command == Command::Edit => (String::new(), None),
+        None => return Err("missing destination (user@host)".to_owned()),
     };
     // only checked here: the patterns are added to the others when the session starts.
     EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?;

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use clap::{CommandFactory, Parser, ValueHint};
+use clap::{Args, ValueHint};
 use ssj_net::{Compress, Congestion};
 use ssj_proto::SessionName;
 
@@ -128,33 +128,25 @@ pub const COMMANDS: [CommandWord; 7] = [
     },
 ];
 
-/// The command with a subcommand for each command word, for the help of a command, the man page,
-/// and the completions. The parser has one flat list of options ([`command`]), since a word is a
-/// command only when a destination follows it.
+/// The command with a subcommand for each command word and the options that each reads, for the
+/// man page and the completions. [`command`] adds what only the parser needs.
 pub fn commands() -> clap::Command {
-    // the real names of the flags, without the options for internal use.
-    let command = Options::command();
-    let options: Vec<clap::Arg> = command
+    let options: Vec<clap::Arg> = Options::augment_args(clap::Command::new("ssj"))
         .get_arguments()
-        .filter(|arg| arg.get_long().is_some() || arg.get_short().is_some())
-        .filter(|arg| !arg.is_hide_set() && !matches!(arg.get_id().as_str(), "help" | "version"))
+        .filter(|arg| !arg.is_hide_set())
         .cloned()
         .collect();
     let mut tree = clap::Command::new("ssj")
+        .about("A roaming remote shell that survives jumps")
+        .version(env!("CARGO_PKG_VERSION"))
         .disable_help_subcommand(true)
         .args(options.iter().cloned());
-    let destination = || {
-        clap::Arg::new("destination")
-            .index(1)
-            .value_name("DESTINATION")
-            .help("[user@]host[:port], or ssh://[user@]host[:port]")
-            .value_hint(ValueHint::Hostname)
-    };
     let id = || {
         clap::Arg::new("id")
             .index(2)
             .value_name("ID")
             .help("The id or the name of a session")
+            .value_parser(selector)
     };
     for found in COMMANDS {
         let mut sub = clap::Command::new(found.word)
@@ -164,15 +156,7 @@ pub fn commands() -> clap::Command {
             // only `ssj edit` can do without
             .arg(destination().required(found.word != "edit"));
         if found.word == "connect" {
-            // the words after the destination are for the command on the host.
-            sub = sub.args(options.iter().cloned()).arg(
-                clap::Arg::new("remote")
-                    .index(2)
-                    .value_name("COMMAND")
-                    .num_args(0..)
-                    .trailing_var_arg(true)
-                    .value_hint(ValueHint::AnyPath),
-            );
+            sub = sub.args(options.iter().cloned());
         }
         for id in found.options {
             let arg = options
@@ -192,38 +176,80 @@ pub fn commands() -> clap::Command {
     tree
 }
 
-/// The command for parsing and for `--help`. The help shows a flag and its counterpart on one line
-/// (`--auto-attach / --no-auto-attach`), the way `typer` does: the flag gets that text as its long
-/// name, which nobody types, and keeps the real name as a hidden alias. The counterpart is hidden.
+/// The command for parsing and for the help. Without a command word the line is a destination and
+/// the command for the host. The options are global, so that they may stand before the command
+/// word too; each command has the options that it does not read as hidden ones, so that
+/// [`crate::cli::parse`] can name them in its error.
+///
+/// The help shows a flag and its counterpart on one line (`--auto-attach / --no-auto-attach`), the
+/// way `typer` does: the flag gets that text as its long name, which nobody types, and keeps the
+/// real name as a hidden alias. The counterpart is hidden.
 pub fn command() -> clap::Command {
-    let mut command = Options::command();
-    for [on, off, name, shown] in PAIRS {
-        command = command
-            .mut_arg(off, |arg| arg.hide(true))
-            .mut_arg(on, |arg| arg.long(shown).alias(name));
+    let all = Options::augment_args(clap::Command::new("ssj"));
+    let pairs = |mut command: clap::Command| {
+        for [on, off, name, shown] in PAIRS {
+            command = command
+                .mut_arg(off, |arg| arg.hide(true))
+                .mut_arg(on, |arg| arg.long(shown).alias(name));
+        }
+        command
+    };
+    let mut tree = commands()
+        .args(all.get_arguments().filter(|arg| arg.is_hide_set()).cloned())
+        .override_usage(
+            "ssj [OPTIONS] DESTINATION [REMOTE-COMMAND]...\n       ssj [OPTIONS] COMMAND DESTINATION [ID]...",
+        )
+        .arg(line());
+    tree = tree.mut_subcommand("connect", |sub| sub.mut_arg("destination", |_| line()));
+    for found in COMMANDS {
+        tree = tree.mut_subcommand(found.word, |sub| {
+            let missing: Vec<clap::Arg> = all
+                .get_arguments()
+                .filter(|arg| sub.get_arguments().all(|has| has.get_id() != arg.get_id()))
+                .map(|arg| arg.clone().hide(true))
+                .collect();
+            // `ssj list -- ls`: the words after `--` show that `list` is the name of a host
+            let escaped = clap::Arg::new("escaped")
+                .index(sub.get_positionals().count() + 1)
+                .last(true)
+                .num_args(1..)
+                .hide(true);
+            let sub = if found.word == "connect" {
+                sub
+            } else {
+                sub.arg(escaped)
+            };
+            pairs(sub.args(missing))
+        });
     }
-    command
+    pairs(tree).mut_args(|arg| {
+        let option = arg.get_long().is_some() || arg.get_short().is_some();
+        arg.global(option)
+    })
 }
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "ssj",
-    version,
-    about = "A roaming remote shell that survives jumps",
-    override_usage = "ssj [OPTIONS] [COMMAND] DESTINATION [ID]\n       ssj [OPTIONS] DESTINATION REMOTE-COMMAND...",
-    after_help = "Commands: connect DESTINATION [COMMAND]..., list, attach DESTINATION [ID], kill DESTINATION [ID], detach DESTINATION [ID], install, edit [DESTINATION]. A word is a command only when a \
-                  destination follows it.\n\
-                  DESTINATION is [user@]host[:port], ssh://[user@]host[:port], or an IPv6 address."
-)]
+/// The destination, the first word that is no option.
+fn destination() -> clap::Arg {
+    clap::Arg::new("destination")
+        .index(1)
+        .value_name("DESTINATION")
+        .help("[user@]host[:port], or ssh://[user@]host[:port]")
+        .value_hint(ValueHint::Hostname)
+}
+
+/// The destination and the command for the host, which is every word after it, options of `ssj`
+/// included, as with `ssh`.
+fn line() -> clap::Arg {
+    destination()
+        .num_args(1..)
+        .trailing_var_arg(true)
+        .value_names(["DESTINATION", "REMOTE-COMMAND"])
+        .help("[user@]host[:port] or ssh://[user@]host[:port], and a command to run instead of the shell")
+}
+
+/// Container for the options of `ssj`.
+#[derive(Args, Debug)]
 pub struct Options {
-    /// Command, session id or name, and destination
-    #[arg(value_name = "ARGS")]
-    pub words: Vec<String>,
-
-    /// A command to run in the session instead of the shell, after the destination
-    #[arg(last = true, value_name = "REMOTE-COMMAND")]
-    pub command: Vec<String>,
-
     /// Print what is happening: -v for the steps, -vv for details, -vvv for every frame
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -345,6 +371,14 @@ pub struct Options {
     /// Never prompt, give up after 2 seconds (for background refreshes)
     #[arg(long, hide = true)]
     pub batch: bool,
+}
+
+fn selector(text: &str) -> Result<String, &'static str> {
+    if ssj_proto::is_selector(text) {
+        Ok(text.to_owned())
+    } else {
+        Err("not a valid session id or name")
+    }
 }
 
 fn parse_name(text: &str) -> Result<SessionName, &'static str> {

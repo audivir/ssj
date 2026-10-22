@@ -3,7 +3,6 @@
 
 use std::{fs, io, path::Path};
 
-use clap::CommandFactory;
 use clap_complete::Shell;
 use confique::Config as _;
 use confique::meta::{FieldKind, LeafKind, Meta};
@@ -94,10 +93,16 @@ pub fn write(out: &Path) -> io::Result<()> {
         command
     };
     // the completions offer the real flag names, the man page shows a pair on one line.
-    let command = build(options::Options::command());
+    let command = build(options::commands());
     let mut page = Vec::new();
-    clap_mangen::Man::new(options::command().version(env!("CARGO_PKG_VERSION")))
-        .render(&mut page)?;
+    // the commands get a section of their own below, with the options that each reads.
+    let man = clap_mangen::Man::new(options::command());
+    man.render_title(&mut page)?;
+    man.render_name_section(&mut page)?;
+    man.render_synopsis_section(&mut page)?;
+    man.render_description_section(&mut page)?;
+    man.render_options_section(&mut page)?;
+    man.render_version_section(&mut page)?;
     page.extend_from_slice(COMMAND.as_bytes());
     // the options that take a value: the word after one of them is not a destination
     let value_options = command
@@ -185,7 +190,7 @@ fn long_of(command: &clap::Command, id: &str) -> String {
 /// The tree of the commands with what only the generators need. What the hosts have and the
 /// sessions of a host stay with the functions that are added in the shells.
 fn completion_tree() -> clap::Command {
-    let mut tree = options::commands().version(env!("CARGO_PKG_VERSION"));
+    let mut tree = options::commands();
     for found in options::COMMANDS {
         tree = tree.mut_subcommand(found.word, |mut sub| {
             sub = sub
@@ -198,7 +203,16 @@ fn completion_tree() -> clap::Command {
             }
             // nothing is left to say after them, which `_arguments` of zsh would answer with the
             // options even before a dash is typed: a rest that completes nothing keeps them back
-            if !matches!(found.word, "kill" | "detach" | "connect") {
+            // the words after the destination of `connect` are for the command on the host.
+            if found.word == "connect" {
+                let remote = clap::Arg::new("remote")
+                    .index(2)
+                    .value_name("COMMAND")
+                    .num_args(0..)
+                    .trailing_var_arg(true)
+                    .value_hint(clap::ValueHint::AnyPath);
+                sub = sub.arg(remote);
+            } else if !matches!(found.word, "kill" | "detach") {
                 let index = sub.get_positionals().count() + 1;
                 let rest = clap::Arg::new("rest").index(index).value_name("NOTHING");
                 sub = sub.arg(rest.num_args(0..));

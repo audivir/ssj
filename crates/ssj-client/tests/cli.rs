@@ -242,7 +242,7 @@ fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
     assert!(
         args(&["connect"])
             .unwrap_err()
-            .contains("usage: ssj connect")
+            .contains("missing destination")
     );
 }
 
@@ -617,6 +617,8 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
             "list",
             Some("ls"),
         ),
+        // a `--` before the destination ends the options, as with `ssh`.
+        (vec!["--", "ls"], Command::Connect, "ls", None),
         // and without it the command word wins, as always.
         (vec!["attach", "ls"], Command::Attach(None), "ls", None),
         (vec!["list", "ls"], Command::List, "ls", None),
@@ -628,8 +630,7 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
         assert_eq!(parsed.remote_command.as_deref(), remote, "{words:?}");
     }
     for bad in [
-        // no destination, or more than one in front of the command.
-        vec!["--", "ls"],
+        // a command of ssj runs nothing on the host.
         vec!["list", "host", "--", "ls"],
         // an empty command
         vec!["host", "--", ""],

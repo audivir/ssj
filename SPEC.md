@@ -385,11 +385,16 @@ redraw.
   completions: the three shells offer the values after a space and after `=` (Zsh with the doc
   comment of each value), and clap and serde reject anything else with the list.
 - One table in `options.rs` (`COMMANDS`) holds each command word with a line about it, the text
-  of its help, and the options it reads; the parser refuses the others with it. `commands()` turns
-  it into a `clap` command with a subcommand for each word (its options, a destination, and the ids
-  of sessions), which renders `ssj WORD --help` and, in `ssj-assets` (`completion_tree`), the
-  completions. The parser does not use the subcommands, since a word is a command only when a
-  destination follows it. `clap_complete` writes from the tree the options of each command, their
+  of its help, and the options it reads. `commands()` turns it into a `clap` command with a
+  subcommand for each word (its options, a destination, and the ids of sessions), from which
+  `ssj-assets` (`completion_tree`) writes the completions. `command()` adds what the parser needs:
+  the destination and the command for the host when no command word comes first, options that are
+  global so that they may stand before the word too, the options that a command does not read as
+  hidden ones, so that the error can name `client.toml`, and a hidden rest after `--`. The parser
+  and the help of each command (`ssj kill --help`) are those of `clap`. A word is a command only
+  when a destination follows it: when `clap` finds none, the line is parsed again after the word
+  `connect`. An option that stands both before and after the command word counts once, with the
+  value after it (`ssj -v list host -v` is `-v`). `clap_complete` writes from the tree the options of each command, their
   values (the fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and
   files for `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first
   word. What `clap` cannot know is added by `ssj-assets` to each file:
@@ -1125,7 +1130,7 @@ The session starts the command and not an interactive shell, and ends with its e
   `connect`), or `ssj attach -- ls` (a command word with nothing after it but the dashes). A
   command word alone, `ssj list`, is the host as well, with a warning on the standard error that
   names `ssj connect list`; `edit` alone is the editor and has none, and `connect` alone is a
-  usage error.
+  usage error. A `--` before the destination ends the options, as with `ssh`: `ssj -- host`.
 - `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
   `attach`, since the shell of a session that runs already is not started again.
 
