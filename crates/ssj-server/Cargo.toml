@@ -7,6 +7,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+confique.workspace = true
 pty-process = { workspace = true, features = ["async"] }
 quinn.workspace = true
 rustix = { workspace = true, features = ["fs", "process", "stdio", "system"] }

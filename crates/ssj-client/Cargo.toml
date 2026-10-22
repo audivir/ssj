@@ -11,6 +11,7 @@ name = "ssj"
 path = "src/main.rs"
 
 [dependencies]
+confique.workspace = true
 clap = { workspace = true, features = ["derive", "error-context", "help", "std", "usage"] }
 quinn.workspace = true
 rustix = { workspace = true, features = ["fs", "stdio", "termios"] }

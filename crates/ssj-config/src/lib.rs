@@ -1,112 +1,48 @@
-//! The config files of `ssj`: flat `key = value` lines of TOML, without tables.
+//! The config files of `ssj`: flat `key = value` lines of TOML, read into a struct that derives
+//! [`confique::Config`].
 //!
-//! A program reads the keys it knows with the `take_*` functions and then calls
-//! [`Table::finish`], which turns every key left over into an error, so that a typo is not
-//! silently ignored. Errors carry the line number.
+//! The doc comments and defaults of the struct are the documentation of the file: [`template`]
+//! writes them as the file a new user starts with. A key that the struct does not have is an
+//! error, so that a typo is not silently ignored. Errors carry the line number.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use toml::de::{DeTable, DeValue};
+pub use confique::{Config, serde};
 
-/// Container for the keys of a file that have not been read yet, each with its line.
-pub struct Table<'a>(BTreeMap<String, (usize, DeValue<'a>)>);
-
-/// Parses the text of a file.
-pub fn parse(text: &str) -> Result<Table<'_>, String> {
-    let line_of = |offset: usize| text[..offset].matches('\n').count() + 1;
-    let root = DeTable::parse(text)
-        .map_err(|e| {
-            format!(
-                "line {}: {}",
-                line_of(e.span().map_or(0, |s| s.start)),
-                e.message()
-            )
-        })?
-        .into_inner();
-    Ok(Table(
-        root.into_iter()
-            .map(|(key, value)| {
-                let line = line_of(key.span().start);
-                (key.into_inner().into_owned(), (line, value.into_inner()))
-            })
-            .collect(),
-    ))
+/// Defines a `deserialize_with` function that reads a `$from` and turns it into a `$to` with
+/// `$parse`, whose `String` error becomes the message of the key.
+#[macro_export]
+macro_rules! parsed {
+    ($name:ident, $from:ty => $to:ty, $parse:expr) => {
+        fn $name<'de, D: $crate::serde::Deserializer<'de>>(d: D) -> Result<$to, D::Error> {
+            use $crate::serde::{Deserialize, de::Error};
+            let parse: fn($from) -> Result<$to, String> = $parse;
+            parse(<$from>::deserialize(d)?).map_err(D::Error::custom)
+        }
+    };
 }
 
-impl Table<'_> {
-    /// Returns the value of `key` as read by `convert`, or `None` if the key is not set.
-    ///
-    /// `expected` ends the error text `<key> must be ...` when `convert` refuses the value.
-    fn take<T>(
-        &mut self,
-        key: &str,
-        expected: &str,
-        convert: impl FnOnce(&DeValue<'_>) -> Option<T>,
-    ) -> Result<Option<T>, String> {
-        let Some((line, value)) = self.0.remove(key) else {
-            return Ok(None);
-        };
-        convert(&value)
-            .map(Some)
-            .ok_or_else(|| format!("line {line}: {key} must be {expected}"))
-    }
+/// Parses the text of a file, with the defaults of `C` for the keys it leaves out.
+pub fn parse<C: Config>(text: &str) -> Result<C, String> {
+    use confique::Layer;
+    let layer: C::Layer = toml::from_str(text).map_err(|e| {
+        let start = e.span().map_or(0, |s| s.start);
+        let line = text[..start].matches('\n').count() + 1;
+        // an error in a value names its key, which the span of the value does not include.
+        let key = text[text[..start].rfind('\n').map_or(0, |i| i + 1)..start]
+            .split_once('=')
+            .map_or(String::new(), |(key, _)| format!("{}: ", key.trim()));
+        format!("line {line}: {key}{}", e.message())
+    })?;
+    C::from_layer(layer.with_fallback(C::Layer::default_values())).map_err(|e| e.to_string())
+}
 
-    /// A string value, or `None` if the key is not set.
-    pub fn take_text(&mut self, key: &str) -> Result<Option<String>, String> {
-        self.take(key, "a string in double quotes", |v| {
-            v.as_str().map(str::to_owned)
-        })
-    }
-
-    /// `true` or `false`, or `None` if the key is not set.
-    pub fn take_bool(&mut self, key: &str) -> Result<Option<bool>, String> {
-        self.take(key, "true or false", |v| v.as_bool())
-    }
-
-    /// A list of strings, or `None` if the key is not set.
-    pub fn take_list(&mut self, key: &str) -> Result<Option<Vec<String>>, String> {
-        self.take(key, "a list of strings, like [\"a\", \"b\"]", |v| {
-            v.as_array()?
-                .iter()
-                .map(|item| item.get_ref().as_str().map(str::to_owned))
-                .collect()
-        })
-    }
-
-    /// A whole number that is not negative, or `None` if the key is not set.
-    pub fn take_unsigned(&mut self, key: &str) -> Result<Option<u64>, String> {
-        self.take(key, "a whole number that is not negative", |v| {
-            let n = v.as_integer()?;
-            u64::from_str_radix(n.as_str(), n.radix()).ok()
-        })
-    }
-
-    /// Seconds, written as a whole number or as `"none"`. `Some(None)` means `none`.
-    pub fn take_seconds(&mut self, key: &str) -> Result<Option<Option<u64>>, String> {
-        self.take(
-            key,
-            "a number of seconds, not negative, or \"none\"",
-            |v| match v.as_str() {
-                Some("none") => Some(None),
-                Some(_) => None,
-                None => {
-                    let n = v.as_integer()?;
-                    u64::from_str_radix(n.as_str(), n.radix()).ok().map(Some)
-                }
-            },
-        )
-    }
-
-    /// Fails if keys are left, which no program asked for.
-    pub fn finish(self) -> Result<(), String> {
-        match self.0.into_iter().min_by_key(|(_, (line, _))| *line) {
-            None => Ok(()),
-            Some((key, (line, _))) => Err(format!("line {line}: unknown key {key:?}")),
-        }
-    }
+/// Returns the file that a new user starts with: every key as a comment, with its documentation
+/// and default.
+pub fn template<C: Config>() -> String {
+    confique::toml::template::<C>(confique::toml::FormatOptions::default())
 }
 
 /// Path of a file of the program: `$XDG_CONFIG_HOME/ssj/<name>`, default `~/.config/ssj/<name>`.

@@ -1,21 +1,8 @@
 //! The config file `client.toml`.
 //!
-//! ```toml
-//! auto_install = "ask"            # "ask" (default), "always", or "never"
-//! escape_char = "~"               # one character, or "none"
-//! detach_key = "none"             # "none" (default) or a key such as "ctrl-]" that detaches
-//! ssh_command = "ssh -J jump"     # replaces `ssh`
-//! send_env = []
-//! auto_attach = false             # `ssj host` joins the only session that has no client
-//! transport = "auto"              # "auto" (default), "udp", "tcp", or "stdio"
-//! congestion = "auto"             # "auto" (default), "bbr", or "cubic": how fast to send
-//! compress = "off"                # "off" (default) or "auto": when the link is the limit
-//! forward_agent = false           # let programs on the host use the ssh agent of this machine
-//! local_echo = "off"              # "off" (default) or "auto": show typed characters at once
-//! ```
-//!
 //! Flags on the command line override the file.
 
+use ssj_config::parsed;
 use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
@@ -25,7 +12,8 @@ use crate::cli::{
 };
 
 /// What to do when the server is not installed on the host.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ssj_config::serde::Deserialize)]
+#[serde(crate = "ssj_config::serde", rename_all = "lowercase")]
 pub enum AutoInstall {
     /// Ask on a terminal. Without a terminal, do not install.
     #[default]
@@ -36,95 +24,70 @@ pub enum AutoInstall {
     Never,
 }
 
-/// Container for the settings of the client config file.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A byte typed at the terminal, or `None` for none.
+type Key = Option<u8>;
+
+/// Settings of ssj, read at every start. Flags on the command line override them.
+#[derive(Clone, Debug, PartialEq, Eq, confique::Config)]
+#[config(layer_attr(serde(deny_unknown_fields)))]
 pub struct Config {
+    /// "ask", "always", or "never": what to do when the host has no server.
+    #[config(default = "ask")]
     pub auto_install: AutoInstall,
-    /// `None` turns the escape character off.
-    pub escape: Option<u8>,
-    /// A control byte that detaches wherever it is typed; `None` turns it off.
-    pub detach_key: Option<u8>,
+    /// One character, or "none".
+    #[config(default = "~", deserialize_with = escape_char)]
+    pub escape_char: Key,
+    /// "none", or a key such as "ctrl-]" that detaches anywhere.
+    #[config(default = "none", deserialize_with = detach_key)]
+    pub detach_key: Key,
+    /// Replaces ssh, such as "ssh -J jump".
+    #[config(default = "ssh", deserialize_with = ssh_command)]
     pub ssh_command: Vec<String>,
+    /// More variables to send, besides TERM and the SendEnv of ssh.
+    #[config(default = [], deserialize_with = send_env)]
     pub send_env: EnvFilter,
+    /// "auto", "udp", "tcp", or "stdio".
+    #[config(default = "auto", deserialize_with = transport)]
     pub transport: Transport,
+    /// `ssj host` joins the only session without a client.
+    #[config(default = false)]
     pub auto_attach: bool,
+    /// Let programs on the host use your ssh agent (-A).
+    #[config(default = false)]
     pub forward_agent: bool,
+    /// "off" or "auto": show typed characters at once.
+    #[config(default = "off", deserialize_with = local_echo)]
     pub local_echo: LocalEcho,
-    /// `None` when the file does not say.
+    /// "off" or "auto": compress while the link is the limit. Not set: the server decides.
+    #[config(deserialize_with = compress)]
     pub compress: Option<bool>,
+    /// "auto", "bbr", or "cubic": how fast to send. Not set: the server decides.
+    #[config(deserialize_with = congestion)]
     pub congestion: Option<Congestion>,
 }
 
+parsed!(escape_char, String => Key, |s| parse_escape(&s));
+parsed!(detach_key, String => Key, |s| parse_detach_key(&s));
+parsed!(ssh_command, String => Vec<String>, |s| {
+    let words: Vec<String> = s.split_whitespace().map(str::to_owned).collect();
+    if words.is_empty() { Err("is empty".to_owned()) } else { Ok(words) }
+});
+parsed!(send_env, Vec<String> => EnvFilter, |p| EnvFilter::new(p).map_err(|e| format!("{e:?}")));
+parsed!(transport, String => Transport, |s| parse_transport(&s));
+parsed!(local_echo, String => LocalEcho, |s| parse_local_echo(&s));
+parsed!(compress, String => bool, |s| parse_compress(&s));
+parsed!(congestion, String => Congestion, |s| Congestion::parse(&s));
+
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            auto_install: AutoInstall::default(),
-            escape: Some(b'~'),
-            detach_key: None,
-            ssh_command: vec!["ssh".to_owned()],
-            send_env: EnvFilter::none(),
-            transport: Transport::default(),
-            auto_attach: false,
-            forward_agent: false,
-            local_echo: LocalEcho::Off,
-            compress: None,
-            congestion: None,
-        }
+        Self::from_text("").expect("the defaults are valid")
     }
 }
 
 impl Config {
     /// Parses the text of a config file and rejects unknown keys and bad values.
     pub fn from_text(text: &str) -> Result<Self, String> {
-        let mut table = ssj_config::parse(text)?;
-        let mut config = Self::default();
-        if let Some(word) = table.take_text("auto_install")? {
-            config.auto_install = match word.as_str() {
-                "ask" => AutoInstall::Ask,
-                "always" => AutoInstall::Always,
-                "never" => AutoInstall::Never,
-                _ => {
-                    return Err("auto_install must be \"ask\", \"always\", or \"never\"".to_owned());
-                }
-            };
-        }
-        if let Some(text) = table.take_text("escape_char")? {
-            config.escape = parse_escape(&text).map_err(|e| format!("escape_char: {e}"))?;
-        }
-        if let Some(text) = table.take_text("detach_key")? {
-            config.detach_key = parse_detach_key(&text).map_err(|e| format!("detach_key: {e}"))?;
-        }
-        if let Some(text) = table.take_text("ssh_command")? {
-            let words: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
-            if words.is_empty() {
-                return Err("ssh_command is empty".to_owned());
-            }
-            config.ssh_command = words;
-        }
-        if let Some(patterns) = table.take_list("send_env")? {
-            config.send_env = EnvFilter::new(patterns).map_err(|e| format!("send_env: {e:?}"))?;
-        }
-        if let Some(text) = table.take_text("congestion")? {
-            config.congestion =
-                Some(Congestion::parse(&text).map_err(|e| format!("congestion: {e}"))?);
-        }
-        if let Some(text) = table.take_text("compress")? {
-            config.compress = Some(parse_compress(&text).map_err(|e| format!("compress: {e}"))?);
-        }
-        if let Some(text) = table.take_text("local_echo")? {
-            config.local_echo = parse_local_echo(&text).map_err(|e| format!("local_echo: {e}"))?;
-        }
-        if let Some(on) = table.take_bool("forward_agent")? {
-            config.forward_agent = on;
-        }
-        if let Some(on) = table.take_bool("auto_attach")? {
-            config.auto_attach = on;
-        }
-        if let Some(text) = table.take_text("transport")? {
-            config.transport = parse_transport(&text).map_err(|e| format!("transport: {e}"))?;
-        }
-        table.finish()?;
-        Ok(config)
+        ssj_config::parse(text)
     }
 
     /// Reads `$XDG_CONFIG_HOME/ssj/client.toml` if it exists.
@@ -135,5 +98,10 @@ impl Config {
                 Self::from_text(&text).map_err(|e| format!("{}: {e}", path.display()))
             }
         }
+    }
+
+    /// The text a new file starts with.
+    pub fn template() -> String {
+        ssj_config::template::<Self>()
     }
 }

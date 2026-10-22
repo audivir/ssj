@@ -33,6 +33,8 @@ pub enum Mode {
     Version,
     /// Read a `server.toml` from stdin, print `OK` if it is valid, or the first error.
     CheckConfig,
+    /// Print the `server.toml` that a new user starts with.
+    ConfigTemplate,
     /// End a running session.
     /// End these sessions, or the only one when none is named.
     Kill(Vec<String>),
@@ -333,6 +335,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--list" => out.mode = Mode::List,
             "--version" => out.mode = Mode::Version,
             "--check-config" => out.mode = Mode::CheckConfig,
+            "--config-template" => out.mode = Mode::ConfigTemplate,
             "--port-range" => {
                 let value = args.next().ok_or("--port-range needs a value")?;
                 out.port_range = parse_port_range(&value.to_string_lossy())

@@ -41,6 +41,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(args) if args.mode == Mode::CheckConfig => check_config(),
+        Ok(args) if args.mode == Mode::ConfigTemplate => {
+            print!("{}", ssj_server::config::Config::template());
+            ExitCode::SUCCESS
+        }
         Err(message) => {
             eprintln!("ssj-server: {message}");
             ExitCode::from(2)

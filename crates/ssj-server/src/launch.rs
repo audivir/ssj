@@ -309,7 +309,7 @@ pub fn run_child(mut args: Args) -> ExitCode {
         Ok(runtime) => runtime,
         Err(err) => return fail(&format!("cannot start the runtime: {err}"), 1),
     };
-    runtime.block_on(run_session(args, config.accept_env(), input))
+    runtime.block_on(run_session(args, config.accept_env, input))
 }
 
 async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -> ExitCode {

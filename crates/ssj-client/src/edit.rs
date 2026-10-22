@@ -3,7 +3,7 @@
 //! The text is edited in a private temporary file and judged as soon as the editor ends. A file
 //! that is not valid is never saved: the error is shown and the editor can be opened again, as
 //! `visudo` does. The local file is judged by the client, the remote one by `ssj-server
-//! --check-config` on the host, since only the server knows its own keys.
+//! --check-config` on the host, since only the server knows its own keys and defaults.
 //!
 //! Two editors at the same time must not lose each other's work. The save is a compare and swap: it
 //! happens only if the file still has the content that the editor started from (compared by its
@@ -22,38 +22,6 @@ use crate::cli::Args;
 use crate::config::Config;
 use crate::install::sha256_hex;
 use crate::vlog;
-
-/// What a new `client.toml` starts with: every key, as a comment with its default.
-pub const CLIENT_TEMPLATE: &str = "\
-# Settings of ssj, read at every start. Flags on the command line override them.
-# auto_install = \"ask\"            # \"ask\", \"always\", or \"never\"
-# escape_char = \"~\"               # one character, or \"none\"
-# detach_key = \"none\"           # \"none\" or a key such as \"ctrl-]\" that detaches anywhere
-# ssh_command = \"ssh -J jump\"     # replaces ssh
-# send_env = []
-# transport = \"auto\"              # \"auto\", \"udp\", \"tcp\", or \"stdio\"
-# auto_attach = false             # join the only session without a client
-# local_echo = \"off\"              # \"off\" or \"auto\": show typed characters at once
-# compress = \"off\"                # \"off\" or \"auto\": compress while the link is the limit
-# congestion = \"auto\"             # \"auto\", \"bbr\", or \"cubic\"
-# forward_agent = false           # let programs on the host use your ssh agent
-";
-
-/// What a new `server.toml` starts with.
-pub const SERVER_TEMPLATE: &str = "\
-# Settings of ssj-server, read when a session starts. Flags of the client override them.
-# port_range = \"60000:61000\"       # UDP ports the server may use, \"0\" for any
-# detached_timeout = \"none\"        # seconds without a client, or \"none\"
-# max_detached = \"none\"            # limit even after a deliberate detach
-# replay_capacity = 4194304        # bytes of output kept for a client that is away
-# slow_client = \"drop\"             # \"drop\" or \"wait\"
-# compress = \"off\"                 # \"off\" or \"auto\"
-# congestion = \"auto\"              # \"auto\", \"bbr\", or \"cubic\"
-# live_backlog = 1048576           # bytes that may wait for a connected client (drop)
-# away_after = 10                  # seconds a silent client may block the output (wait)
-# shell = \"/bin/zsh\"               # default: $SHELL
-# accept_env = [\"TERM\", \"LANG\", \"LC_*\"]
-";
 
 /// The editor to run: `$EDITOR`, else `$VISUAL`, else `vi`.
 pub fn editor() -> String {
@@ -280,7 +248,7 @@ async fn edit_local() -> Result<String, String> {
         .map(|(_, text)| text)
         .unwrap_or_default();
     let current = if original.is_empty() {
-        CLIENT_TEMPLATE.to_owned()
+        Config::template()
     } else {
         original.clone()
     };
@@ -353,7 +321,22 @@ async fn edit_remote(args: &Args) -> Result<String, String> {
     let original_digest = sha256_hex(&current.stdout);
     let original = String::from_utf8_lossy(&current.stdout).into_owned();
     let initial = if original.trim().is_empty() {
-        SERVER_TEMPLATE.to_owned()
+        // the server of the host knows its own keys and defaults.
+        let template = run_remote(args, &["--config-template".to_owned()], "").await?;
+        if template.server_missing() {
+            return Err(format!(
+                "ssj-server is not installed on {}; run `ssj install {}` first",
+                args.destination, args.destination
+            ));
+        }
+        if !template.status.success() {
+            return Err(format!(
+                "could not get the template from {}: {}",
+                args.destination,
+                template.error_text()
+            ));
+        }
+        String::from_utf8_lossy(&template.stdout).into_owned()
     } else {
         original.clone()
     };

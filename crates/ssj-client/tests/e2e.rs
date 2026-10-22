@@ -1219,7 +1219,7 @@ fn the_config_file_and_the_flags_decide_in_this_order() {
     let output = host.ssj(&ssh, &["list", "user@localhost"], "");
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        text(&output.stderr).contains("unknown key"),
+        text(&output.stderr).contains("unknown field"),
         "{}",
         text(&output.stderr)
     );
@@ -1996,7 +1996,7 @@ fn edit_without_a_host_changes_client_toml_and_saves_it_privately() {
     let file = config.join("ssj/client.toml");
     let saved = std::fs::read_to_string(&file).unwrap();
     // the template of a new file is kept, and the edit is at the end.
-    assert!(saved.contains("# auto_install"), "{saved}");
+    assert!(saved.contains("#auto_install"), "{saved}");
     assert!(saved.ends_with("compress = \"auto\"\n"), "{saved}");
     assert_eq!(
         std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
@@ -2077,7 +2077,7 @@ fn edit_with_a_host_changes_server_toml_there_after_the_server_has_checked_it() 
     let file = config.join("ssj/server.toml");
     let saved = std::fs::read_to_string(&file).unwrap();
     assert!(
-        saved.contains("# port_range") && saved.ends_with("live_backlog = 300000\n"),
+        saved.contains("#port_range") && saved.ends_with("live_backlog = 300000\n"),
         "{saved}"
     );
     assert_eq!(
@@ -2096,7 +2096,7 @@ fn edit_with_a_host_changes_server_toml_there_after_the_server_has_checked_it() 
     let bad = editor_script(r#"echo 'transport = "tcp"' >> "$1""#);
     let output = ssj_edit(&config, &bad, &["edit", "user@localhost"], "n\n");
     assert!(
-        text(&output.stderr).contains("unknown key"),
+        text(&output.stderr).contains("unknown field"),
         "{}",
         text(&output.stderr)
     );
@@ -2116,24 +2116,26 @@ fn edit_is_the_editor_command_only_alone_or_before_a_host() {
 fn uncommented(template: &str) -> String {
     template
         .lines()
-        .filter_map(|line| line.strip_prefix("# "))
-        .filter(|line| line.split_once(" = ").is_some())
+        .filter_map(|line| line.strip_prefix('#'))
+        .filter(|line| !line.starts_with(' ') && line.split_once(" = ").is_some())
         .map(|line| format!("{line}\n"))
         .collect()
 }
 
 #[test]
 fn the_templates_of_the_two_files_hold_valid_settings_only() {
-    use ssj_client::edit::{CLIENT_TEMPLATE, SERVER_TEMPLATE};
+    use ssj_client::config::Config;
+    let client_template = Config::template();
+    let server_template = ssj_server::config::Config::template();
     // as they are, both are empty files.
-    assert!(ssj_client::config::Config::from_text(CLIENT_TEMPLATE).is_ok());
+    assert!(Config::from_text(&client_template).is_ok());
     // with every setting switched on, the client and the server accept every line.
-    let client = uncommented(CLIENT_TEMPLATE);
-    assert!(client.lines().count() >= 10, "{client}");
-    ssj_client::config::Config::from_text(&client).unwrap();
-    let server = uncommented(SERVER_TEMPLATE);
+    let client = uncommented(&client_template);
+    assert!(client.lines().count() >= 8, "{client}");
+    Config::from_text(&client).unwrap();
+    let server = uncommented(&server_template);
     assert!(server.lines().count() >= 10, "{server}");
-    for text in [SERVER_TEMPLATE, server.as_str()] {
+    for text in [server_template.as_str(), server.as_str()] {
         let mut child = Command::new(server_binary())
             .arg("--check-config")
             .stdin(Stdio::piped())

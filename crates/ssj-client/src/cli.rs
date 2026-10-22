@@ -207,7 +207,7 @@ impl Args {
             self.ssh_command = config.ssh_command.clone();
         }
         if !self.explicit.escape {
-            self.escape = config.escape;
+            self.escape = config.escape_char;
         }
         if !self.explicit.detach_key {
             self.detach_key = config.detach_key;

@@ -14,7 +14,7 @@ fn defaults_apply_without_a_file() {
     let mut a = args(&[]);
     a.apply_config(&config);
     assert_eq!(a, args(&[]));
-    assert!(config.accept_env().matches("TERM") && !config.accept_env().matches("PATH"));
+    assert!(config.accept_env.matches("TERM") && !config.accept_env.matches("PATH"));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn every_key_is_read() {
     assert!(!a.compress);
     assert_eq!(a.congestion, ssj_net::Congestion::Cubic);
     assert_eq!(a.shell.as_deref(), Some(std::path::Path::new("/bin/zsh")));
-    assert!(config.accept_env().matches("EDITOR") && !config.accept_env().matches("LANG"));
+    assert!(config.accept_env.matches("EDITOR") && !config.accept_env.matches("LANG"));
 }
 
 #[test]
@@ -88,16 +88,16 @@ fn accept_env_cannot_be_set_on_the_command_line() {
 #[test]
 fn mistakes_are_errors_that_name_the_problem() {
     for (text, expected) in [
-        ("port_rang = \"1:2\"", "unknown key"),
+        ("port_rang = \"1:2\"", "unknown field `port_rang`"),
         ("port_range = \"1000:2000\"", "port_range: ports below 1024"),
         (
             "away_after = 0",
             "away_after: expected a number of seconds above 0",
         ),
-        ("port_range = 5", "line 1: port_range must be a string"),
-        ("detached_timeout = -5", "not negative"),
+        ("port_range = 5", "line 1: port_range: invalid type"),
+        ("detached_timeout = -5", "expected a number of seconds"),
         ("detached_timeout = \"soon\"", "number of seconds"),
-        ("max_detached = true", "line 1: max_detached must be"),
+        ("max_detached = true", "line 1: max_detached: invalid type"),
         (
             "slow_client = \"block\"",
             "slow_client: expected drop or wait",
@@ -110,7 +110,7 @@ fn mistakes_are_errors_that_name_the_problem() {
         ),
         ("shell = \"zsh\"", "absolute path"),
         ("accept_env = [\"A B\"]", "accept_env: InvalidCharacter"),
-        ("accept_env = \"TERM\"", "line 1: accept_env must be a list"),
+        ("accept_env = \"TERM\"", "line 1: accept_env: invalid type"),
     ] {
         let error = Config::from_text(text).unwrap_err();
         assert!(error.contains(expected), "{text:?}: {error}");

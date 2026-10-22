@@ -270,7 +270,7 @@ fn config_file_is_validated_and_the_server_refuses_a_bad_one() {
     let broken = start(&[]);
     assert_eq!(broken.status.code(), Some(2));
     assert!(broken.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&broken.stderr).contains("accept_env must be a list"));
+    assert!(String::from_utf8_lossy(&broken.stderr).contains("accept_env: invalid type"));
 
     // a file that others can write is refused.
     std::fs::write(&file, "").unwrap();

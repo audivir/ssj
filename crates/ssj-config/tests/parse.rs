@@ -1,159 +1,31 @@
-use ssj_config::{Table, parse};
+use ssj_config::parse;
+
+#[derive(Debug, confique::Config)]
+#[config(layer_attr(serde(deny_unknown_fields)))]
+struct Sample {
+    #[config(default = "x")]
+    name: String,
+    #[config(default = 5)]
+    count: u32,
+}
 
 #[test]
-fn empty_files_and_comments_are_fine() {
-    for text in [
-        "",
-        "\n\n  \n",
-        "# only a comment\n",
-        "   # indented comment\n",
+fn errors_name_their_line_and_a_bad_value_names_its_key() {
+    for (text, expected) in [
+        ("\n\ncount = x", "line 3:"),
+        ("count = \"five\"", "line 1: count: "),
+        ("\nname = 1\n", "line 2: name: "),
+        ("\nnmae = \"y\"", "line 2: unknown field `nmae`"),
+        ("name = \"a\"\nname = \"b\"", "line 2:"),
+        ("[section]", "line 1:"),
     ] {
-        parse(text).unwrap().finish().unwrap();
+        let error = parse::<Sample>(text).unwrap_err();
+        assert!(error.starts_with(expected), "{text:?}: {error}");
     }
 }
 
 #[test]
-fn values_are_read_by_their_type() {
-    let mut table = parse(
-        "name = \"a # b\"  # comment\n\
-         items = [\"x\", \"y z\" ,\"q\\\"r\", ]\n\
-         none = []\n\
-         limit = 90\n\
-         off = \"none\"\n",
-    )
-    .unwrap();
-    assert_eq!(table.take_text("name").unwrap(), Some("a # b".to_owned()));
-    assert_eq!(
-        table.take_list("items").unwrap(),
-        Some(vec!["x".into(), "y z".into(), "q\"r".into()])
-    );
-    assert_eq!(table.take_list("none").unwrap(), Some(vec![]));
-    assert_eq!(table.take_seconds("limit").unwrap(), Some(Some(90)));
-    assert_eq!(table.take_seconds("off").unwrap(), Some(None));
-    assert_eq!(table.take_text("absent").unwrap(), None);
-    table.finish().unwrap();
-}
-
-#[test]
-fn syntax_errors_name_their_line() {
-    for (text, line) in [
-        ("a = ", 1),
-        ("\n\na = b", 3),
-        ("a", 1),
-        ("= \"x\"", 1),
-        ("a = \"x\"\na = \"y\"", 2),
-        ("a = \"unterminated", 1),
-        ("a = \"x\" y", 1),
-        ("a = \"ne\\ver\"", 1),
-        ("a = [\"x\" \"y\"]", 1),
-        ("a = [\"x\"", 1),
-        ("a = [x]", 1),
-        ("a = [\"x\"] y", 1),
-    ] {
-        let error = parse(text)
-            .err()
-            .unwrap_or_else(|| panic!("{text:?} was accepted"));
-        assert!(
-            error.starts_with(&format!("line {line}:")),
-            "{text:?}: {error}"
-        );
-    }
-}
-
-#[test]
-fn wrong_types_and_leftover_keys_are_errors_with_the_line() {
-    let table = || parse("\ntext = \"t\"\nitems = [\"a\"]\nnumber = 5\nneg = -1\n").unwrap();
-    assert!(
-        table()
-            .take_list("text")
-            .unwrap_err()
-            .starts_with("line 2:")
-    );
-    assert!(
-        table()
-            .take_text("items")
-            .unwrap_err()
-            .starts_with("line 3:")
-    );
-    assert!(
-        table()
-            .take_text("number")
-            .unwrap_err()
-            .starts_with("line 4:")
-    );
-    assert!(
-        table()
-            .take_seconds("text")
-            .unwrap_err()
-            .starts_with("line 2:")
-    );
-    assert!(
-        table()
-            .take_seconds("neg")
-            .unwrap_err()
-            .contains("negative")
-    );
-
-    let mut left = table();
-    left.take_text("text").unwrap();
-    let error = left.finish().unwrap_err();
-    assert!(
-        error.starts_with("line 3:") && error.contains("items"),
-        "{error}"
-    );
-}
-
-#[test]
-fn unsigned_numbers_are_read_and_checked() {
-    let mut table = parse("size = 4194304\nzero = 0\nneg = -1\ntext = \"5\"\n").unwrap();
-    assert_eq!(table.take_unsigned("size").unwrap(), Some(4_194_304));
-    assert_eq!(table.take_unsigned("zero").unwrap(), Some(0));
-    assert_eq!(table.take_unsigned("absent").unwrap(), None);
-    assert!(table.take_unsigned("neg").unwrap_err().contains("negative"));
-    assert!(
-        table
-            .take_unsigned("text")
-            .unwrap_err()
-            .starts_with("line 4:")
-    );
-}
-
-#[test]
-fn booleans_are_true_or_false_and_nothing_else() {
-    let mut table = parse("on = true\noff = false\n").unwrap();
-    assert_eq!(table.take_bool("on").unwrap(), Some(true));
-    assert_eq!(table.take_bool("off").unwrap(), Some(false));
-    assert_eq!(table.take_bool("absent").unwrap(), None);
-    table.finish().unwrap();
-    for text in ["x = 1", "x = \"true\""] {
-        let mut table = parse(text).unwrap();
-        let error = table.take_bool("x").unwrap_err();
-        assert!(
-            error.contains("line 1") && error.contains("true or false"),
-            "{text}: {error}"
-        );
-    }
-}
-
-#[test]
-fn keys_that_no_program_asks_for_are_errors_with_the_line() {
-    for text in [
-        "\nA = \"x\"",
-        "\na-b = \"x\"",
-        "\n[section]",
-        "\na.b = 1",
-        "\na = 1.5",
-    ] {
-        let error = parse(text).and_then(Table::finish).unwrap_err();
-        assert!(error.starts_with("line 2:"), "{text:?}: {error}");
-    }
-}
-
-#[test]
-fn a_list_must_hold_strings() {
-    let error = parse("\na = [[\"x\"]]")
-        .unwrap()
-        .take_list("a")
-        .unwrap_err();
-    assert!(error.starts_with("line 2:"), "{error}");
+fn keys_that_the_file_leaves_out_get_their_defaults() {
+    let sample = parse::<Sample>("# only a comment\ncount = 7 # and another\n").unwrap();
+    assert_eq!((sample.name.as_str(), sample.count), ("x", 7));
 }

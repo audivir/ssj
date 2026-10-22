@@ -14,7 +14,7 @@ fn defaults_apply_without_a_file_or_with_an_empty_one() {
     );
     let defaults = Config::default();
     assert_eq!(defaults.auto_install, AutoInstall::Ask);
-    assert_eq!(defaults.escape, Some(b'~'));
+    assert_eq!(defaults.escape_char, Some(b'~'));
     assert_eq!(defaults.ssh_command, ["ssh"]);
     // the variables come from the SendEnv of ssh; the file only adds.
     assert!(defaults.send_env.patterns().is_empty());
@@ -30,7 +30,7 @@ fn every_key_is_read() {
     )
     .unwrap();
     assert_eq!(config.auto_install, AutoInstall::Never);
-    assert_eq!(config.escape, Some(b'#'));
+    assert_eq!(config.escape_char, Some(b'#'));
     assert_eq!(
         config.ssh_command,
         ["ssh", "-J", "jump", "-o", "ForwardAgent=no"]
@@ -38,7 +38,9 @@ fn every_key_is_read() {
     assert!(config.send_env.matches("EDITOR") && config.send_env.matches("MY_VAR"));
     assert!(!config.send_env.matches("LANG"), "nothing else is in it");
     assert_eq!(
-        Config::from_text("escape_char = \"none\"").unwrap().escape,
+        Config::from_text("escape_char = \"none\"")
+            .unwrap()
+            .escape_char,
         None
     );
     assert!(
@@ -53,15 +55,15 @@ fn every_key_is_read() {
 #[test]
 fn mistakes_are_errors_that_name_the_problem() {
     for (text, expected) in [
-        ("auto_instal = \"never\"", "line 1: unknown key"),
-        ("\n\nauto_install = never", "line 3:"),
         (
-            "auto_install = true",
-            "line 1: auto_install must be a string",
+            "auto_instal = \"never\"",
+            "line 1: unknown field `auto_instal`",
         ),
+        ("\n\nauto_install = never", "line 3:"),
+        ("auto_install = true", "line 1: auto_install: wanted string"),
         (
             "auto_install = \"sometimes\"",
-            "auto_install must be \"ask\"",
+            "auto_install: unknown variant `sometimes`",
         ),
         (
             "auto_install = \"never\"\nauto_install = \"always\"",
@@ -76,12 +78,12 @@ fn mistakes_are_errors_that_name_the_problem() {
             "escape_char = \"\\t\"",
             "escape_char: expected one printable",
         ),
-        ("ssh_command = \"   \"", "ssh_command is empty"),
+        ("ssh_command = \"   \"", "ssh_command: is empty"),
         (
             "ssh_command = [\"ssh\"]",
-            "line 1: ssh_command must be a string",
+            "line 1: ssh_command: invalid type",
         ),
-        ("send_env = \"TERM\"", "line 1: send_env must be a list"),
+        ("send_env = \"TERM\"", "line 1: send_env: invalid type"),
         ("send_env = [\"A-B\"]", "send_env: InvalidCharacter"),
         ("[section]", "line 1:"),
     ] {
@@ -157,6 +159,6 @@ fn the_detach_key_is_a_control_key_or_none() {
         "", "]", "ctrl-", "ctrl-ab", "ctrl-1", "ctrl-i", "ctrl-m", "ctrl-j", "x",
     ] {
         let error = Config::from_text(&format!("detach_key = \"{bad}\"")).unwrap_err();
-        assert!(error.starts_with("detach_key: "), "{bad}: {error}");
+        assert!(error.contains("detach_key: "), "{bad}: {error}");
     }
 }

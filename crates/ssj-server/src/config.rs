@@ -1,19 +1,5 @@
 //! The config file `server.toml`.
 //!
-//! ```toml
-//! port_range = "60000:61000"          # UDP ports the server may use, "0" for any
-//! detached_timeout = "none"           # seconds without a client, or "none"
-//! max_detached = "none"               # upper limit even after a deliberate detach
-//! replay_capacity = 4194304           # bytes of output kept for an absent client
-//! away_after = 10                     # seconds a silent client may block the output (wait only)
-//! slow_client = "drop"                # "drop" (default): the job never waits for the link
-//! live_backlog = 1048576              # bytes that may wait for a connected client (drop only)
-//! congestion = "auto"                 # "auto" (default), "bbr", or "cubic"
-//! compress = "off"                    # "off" (default), or "auto": when the link is the limit
-//! shell = "/bin/zsh"                  # default: $SHELL
-//! accept_env = ["TERM", "LANG", "LC_*"]
-//! ```
-//!
 //! Flags on the command line override the file, except `accept_env`, which only the file sets:
 //! the command line is built by the client, and the client must not choose its own filter.
 
@@ -21,6 +7,9 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ssj_config::parsed;
+use ssj_config::serde::Deserializer;
+use ssj_config::serde::de::{Error, Unexpected, Visitor};
 use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
@@ -30,74 +19,101 @@ use crate::cli::{
 };
 use crate::session::SlowClient;
 
-/// Container for the settings of the server config file.
-#[derive(Clone, Debug, Default)]
+/// Seconds, with `None` for no limit.
+type Timeout = Option<Duration>;
+
+/// Settings of ssj-server, read when a session starts. Flags of the client override them.
+#[derive(Clone, Debug, confique::Config)]
+#[config(layer_attr(serde(deny_unknown_fields)))]
 pub struct Config {
-    pub port_range: Option<RangeInclusive<u16>>,
-    pub detached_timeout: Option<Option<Duration>>,
-    pub max_detached: Option<Option<Duration>>,
-    pub replay_capacity: Option<usize>,
-    pub away_after: Option<Duration>,
-    pub slow_client: Option<SlowClient>,
-    pub live_backlog: Option<usize>,
-    pub compress: Option<bool>,
-    pub congestion: Option<Congestion>,
+    /// UDP ports the server may use, "0" for any.
+    #[config(default = "60000:61000", deserialize_with = port_range)]
+    pub port_range: RangeInclusive<u16>,
+    /// Seconds without a client, or "none".
+    #[config(default = "none", deserialize_with = timeout)]
+    pub detached_timeout: Timeout,
+    /// Limit in seconds even after a deliberate detach, or "none".
+    #[config(default = "none", deserialize_with = timeout)]
+    pub max_detached: Timeout,
+    /// Bytes of output kept for a client that is away.
+    #[config(default = 4194304, deserialize_with = replay_capacity)]
+    pub replay_capacity: usize,
+    /// Seconds a silent client may block the output (wait).
+    #[config(default = 10, deserialize_with = away_after)]
+    pub away_after: Duration,
+    /// "drop": the job never waits for the link. "wait": like ssh.
+    #[config(default = "drop", deserialize_with = slow_client)]
+    pub slow_client: SlowClient,
+    /// Bytes that may wait for a connected client (drop).
+    #[config(default = 1048576, deserialize_with = live_backlog)]
+    pub live_backlog: usize,
+    /// "off" or "auto": compress output when the link is the limit.
+    #[config(default = "off", deserialize_with = compress)]
+    pub compress: bool,
+    /// "auto", "bbr", or "cubic".
+    #[config(default = "auto", deserialize_with = congestion)]
+    pub congestion: Congestion,
+    /// Absolute path of the shell, such as "/bin/zsh". Default: $SHELL.
+    #[config(deserialize_with = shell)]
     pub shell: Option<PathBuf>,
-    pub accept_env: Option<EnvFilter>,
+    /// Variables of the client that the shell gets, as patterns.
+    #[config(default = ["TERM", "LANG", "LC_*"], deserialize_with = accept_env)]
+    pub accept_env: EnvFilter,
+}
+
+parsed!(port_range, String => RangeInclusive<u16>, |s| parse_port_range(&s));
+parsed!(replay_capacity, usize => usize, check_replay_capacity);
+parsed!(away_after, u64 => Duration, |n| parse_away_after(&n.to_string()));
+parsed!(slow_client, String => SlowClient, |s| parse_slow_client(&s));
+parsed!(live_backlog, usize => usize, check_live_backlog);
+parsed!(compress, String => bool, |s| parse_compress(&s));
+parsed!(congestion, String => Congestion, |s| Congestion::parse(&s));
+parsed!(shell, String => PathBuf, |s| {
+    if s.starts_with('/') { Ok(PathBuf::from(s)) } else { Err("must be an absolute path".to_owned()) }
+});
+parsed!(accept_env, Vec<String> => EnvFilter, |p| EnvFilter::new(p).map_err(|e| format!("{e:?}")));
+
+/// Reads a number of seconds, where `0` and `"none"` mean no limit.
+fn timeout<'de, D: Deserializer<'de>>(d: D) -> Result<Timeout, D::Error> {
+    struct Seconds;
+    impl Visitor<'_> for Seconds {
+        type Value = Timeout;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a number of seconds or \"none\"")
+        }
+
+        fn visit_i64<E: Error>(self, secs: i64) -> Result<Timeout, E> {
+            let secs = u64::try_from(secs)
+                .map_err(|_| E::invalid_value(Unexpected::Signed(secs), &self))?;
+            Ok((secs > 0).then(|| Duration::from_secs(secs)))
+        }
+
+        fn visit_u64<E: Error>(self, secs: u64) -> Result<Timeout, E> {
+            Ok((secs > 0).then(|| Duration::from_secs(secs)))
+        }
+
+        fn visit_str<E: Error>(self, word: &str) -> Result<Timeout, E> {
+            if word == "none" {
+                Ok(None)
+            } else {
+                Err(E::invalid_value(Unexpected::Str(word), &self))
+            }
+        }
+    }
+    d.deserialize_any(Seconds)
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::from_text("").expect("the defaults are valid")
+    }
 }
 
 impl Config {
+    /// Parses the text of a config file and rejects unknown keys and bad values.
     pub fn from_text(text: &str) -> Result<Self, String> {
-        let mut table = ssj_config::parse(text)?;
-        let mut config = Self::default();
-        if let Some(range) = table.take_text("port_range")? {
-            config.port_range =
-                Some(parse_port_range(&range).map_err(|e| format!("port_range: {e}"))?);
-        }
-        config.detached_timeout = table
-            .take_seconds("detached_timeout")?
-            .map(|s| s.filter(|s| *s > 0).map(Duration::from_secs));
-        config.max_detached = table
-            .take_seconds("max_detached")?
-            .map(|s| s.filter(|s| *s > 0).map(Duration::from_secs));
-        if let Some(size) = table.take_unsigned("replay_capacity")? {
-            let size =
-                usize::try_from(size).map_err(|_| "replay_capacity is too large".to_owned())?;
-            config.replay_capacity =
-                Some(check_replay_capacity(size).map_err(|e| format!("replay_capacity: {e}"))?);
-        }
-        if let Some(secs) = table.take_unsigned("away_after")? {
-            config.away_after =
-                Some(parse_away_after(&secs.to_string()).map_err(|e| format!("away_after: {e}"))?);
-        }
-        if let Some(text) = table.take_text("slow_client")? {
-            config.slow_client =
-                Some(parse_slow_client(&text).map_err(|e| format!("slow_client: {e}"))?);
-        }
-        if let Some(text) = table.take_text("compress")? {
-            config.compress = Some(parse_compress(&text).map_err(|e| format!("compress: {e}"))?);
-        }
-        if let Some(text) = table.take_text("congestion")? {
-            config.congestion =
-                Some(Congestion::parse(&text).map_err(|e| format!("congestion: {e}"))?);
-        }
-        if let Some(size) = table.take_unsigned("live_backlog")? {
-            let size = usize::try_from(size).map_err(|_| "live_backlog is too large".to_owned())?;
-            config.live_backlog =
-                Some(check_live_backlog(size).map_err(|e| format!("live_backlog: {e}"))?);
-        }
-        if let Some(shell) = table.take_text("shell")? {
-            if !shell.starts_with('/') {
-                return Err("shell must be an absolute path".to_owned());
-            }
-            config.shell = Some(PathBuf::from(shell));
-        }
-        if let Some(patterns) = table.take_list("accept_env")? {
-            config.accept_env =
-                Some(EnvFilter::new(patterns).map_err(|e| format!("accept_env: {e:?}"))?);
-        }
-        table.finish()?;
-        Ok(config)
+        ssj_config::parse(text)
     }
 
     /// Reads `$XDG_CONFIG_HOME/ssj/server.toml` if it exists.
@@ -110,63 +126,44 @@ impl Config {
         }
     }
 
-    /// The filter for the variables of the client.
-    pub fn accept_env(&self) -> EnvFilter {
-        self.accept_env
-            .clone()
-            .unwrap_or_else(EnvFilter::default_patterns)
+    /// The text a new file starts with.
+    pub fn template() -> String {
+        ssj_config::template::<Self>()
     }
 }
 
 impl Args {
     /// Fills in what the command line left open from the config file.
     pub fn apply_config(&mut self, config: &Config) {
-        if !self.explicit.port_range
-            && let Some(range) = &config.port_range
-        {
-            self.port_range = range.clone();
+        let explicit = self.explicit;
+        if !explicit.port_range {
+            self.port_range = config.port_range.clone();
         }
-        if !self.explicit.detached_timeout
-            && let Some(timeout) = config.detached_timeout
-        {
-            self.detached_timeout = timeout;
+        if !explicit.detached_timeout {
+            self.detached_timeout = config.detached_timeout;
         }
-        if !self.explicit.max_detached
-            && let Some(limit) = config.max_detached
-        {
-            self.max_detached = limit;
+        if !explicit.max_detached {
+            self.max_detached = config.max_detached;
         }
-        if !self.explicit.replay_capacity
-            && let Some(size) = config.replay_capacity
-        {
-            self.replay_capacity = size;
+        if !explicit.replay_capacity {
+            self.replay_capacity = config.replay_capacity;
         }
-        if !self.explicit.away_after
-            && let Some(away) = config.away_after
-        {
-            self.away_after = away;
+        if !explicit.away_after {
+            self.away_after = config.away_after;
         }
-        if !self.explicit.slow_client
-            && let Some(policy) = config.slow_client
-        {
-            self.slow_client = policy;
+        if !explicit.slow_client {
+            self.slow_client = config.slow_client;
         }
-        if !self.explicit.compress
-            && let Some(on) = config.compress
-        {
-            self.compress = on;
+        if !explicit.compress {
+            self.compress = config.compress;
         }
-        if !self.explicit.congestion
-            && let Some(choice) = config.congestion
-        {
-            self.congestion = choice;
+        if !explicit.congestion {
+            self.congestion = config.congestion;
         }
-        if !self.explicit.live_backlog
-            && let Some(size) = config.live_backlog
-        {
-            self.live_backlog = size;
+        if !explicit.live_backlog {
+            self.live_backlog = config.live_backlog;
         }
-        if !self.explicit.shell && self.shell.is_none() {
+        if !explicit.shell && self.shell.is_none() {
             self.shell = config.shell.clone();
         }
     }
