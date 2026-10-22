@@ -7,6 +7,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+clap = { workspace = true, features = ["derive", "error-context", "help", "std", "usage"] }
 confique.workspace = true
 pty-process = { workspace = true, features = ["async"] }
 quinn.workspace = true

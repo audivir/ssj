@@ -1,10 +1,11 @@
-//! Command line of `ssj-server`.
+//! Command line of `ssj-server`. The client builds it, so the help is for people who debug.
 
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use clap::Parser;
 use ssj_net::Congestion;
 use ssj_proto::{SessionId, SessionName, is_selector};
 
@@ -56,21 +57,6 @@ pub struct Args {
     /// With `reuse` and several sessions without a client, list them and exit with
     /// [`ssj_proto::bootstrap::CHOICE_EXIT_CODE`] instead of starting another.
     pub choose: bool,
-    pub port_range: RangeInclusive<u16>,
-    /// `None` waits forever.
-    pub detached_timeout: Option<Duration>,
-    /// Upper limit for a session after a deliberate detach. `None` means no limit.
-    pub max_detached: Option<Duration>,
-    /// Bytes of output kept for a client that is away, before the oldest are forgotten.
-    pub replay_capacity: usize,
-    /// Time a connected client may leave a full output buffer alone before it counts as away.
-    pub away_after: Duration,
-    pub slow_client: SlowClient,
-    pub live_backlog: usize,
-    /// Compress output when the link is the limit. Off by default.
-    pub compress: bool,
-    pub congestion: Congestion,
-    pub shell: Option<PathBuf>,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
     /// Whether the UDP (QUIC) and the TCP transport are offered.
@@ -81,117 +67,166 @@ pub struct Args {
     /// The id of the session, chosen by the bootstrap process so that it shows in the arguments of
     /// the daemon (`ps`) and in the log of the client.
     pub session_id: Option<SessionId>,
-    /// Which settings the command line gave, since the config file only fills in the others.
-    pub explicit: Explicit,
+    /// The settings that the command line gives. The config file fills in the others.
+    pub settings: Settings,
 }
 
-/// Marks the options that the command line set, so that the config file does not replace them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Explicit {
-    pub port_range: bool,
-    pub detached_timeout: bool,
-    pub max_detached: bool,
-    pub replay_capacity: bool,
-    pub away_after: bool,
-    pub slow_client: bool,
-    pub live_backlog: bool,
-    pub compress: bool,
-    pub congestion: bool,
-    pub shell: bool,
+/// Container for the settings that `server.toml` has as well, see [`crate::config::Config`] for
+/// their meaning. `None` leaves the setting to the file.
+#[derive(clap::Args, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Settings {
+    /// UDP ports the server may use, or 0 for any
+    #[arg(long, value_name = "LOW:HIGH", value_parser = parse_port_range)]
+    pub port_range: Option<RangeInclusive<u16>>,
+    /// Seconds without a client, or none
+    #[arg(long, value_name = "SECONDS", value_parser = parse_timeout)]
+    pub detached_timeout: Option<Timeout>,
+    /// Limit in seconds even after a deliberate detach, or none
+    #[arg(long, value_name = "SECONDS", value_parser = parse_timeout)]
+    pub max_detached: Option<Timeout>,
+    /// Bytes of output kept for a client that is away
+    #[arg(long, value_name = "BYTES", value_parser = parse_replay_capacity)]
+    pub replay_capacity: Option<usize>,
+    /// Seconds a silent client may block the output
+    #[arg(long, value_name = "SECONDS", value_parser = parse_away_after)]
+    pub away_after: Option<Duration>,
+    /// What happens to output that a slow client has not taken: drop or wait
+    #[arg(long, value_name = "WAY", value_parser = parse_slow_client)]
+    pub slow_client: Option<SlowClient>,
+    /// Bytes that may wait for a connected client
+    #[arg(long, value_name = "BYTES", value_parser = parse_live_backlog)]
+    pub live_backlog: Option<usize>,
+    /// Compress output when the link is the limit: off or auto
+    #[arg(long, value_name = "WHEN", value_parser = parse_compress)]
+    pub compress: Option<bool>,
+    /// How fast to send: auto, bbr, or cubic
+    #[arg(long, value_name = "WAY", value_parser = Congestion::parse)]
+    pub congestion: Option<Congestion>,
+    /// Absolute path of the shell
+    #[arg(long, value_name = "PATH")]
+    pub shell: Option<PathBuf>,
 }
 
-impl Default for Args {
-    fn default() -> Self {
-        Self {
-            mode: Mode::Serve,
-            name: None,
-            reuse: false,
-            choose: false,
-            port_range: 60000..=61000,
-            detached_timeout: None,
-            max_detached: None,
-            replay_capacity: 4 << 20,
-            away_after: Duration::from_secs(10),
-            slow_client: SlowClient::default(),
-            live_backlog: DEFAULT_LIVE_BACKLOG,
-            compress: false,
-            congestion: Congestion::default(),
-            shell: None,
-            shell_args: Vec::new(),
-            udp: true,
-            tcp: true,
-            daemon_child: false,
-            session_id: None,
-            explicit: Explicit::default(),
-        }
+/// Seconds, with `None` for no limit.
+pub type Timeout = Option<Duration>;
+
+/// The options as `clap` reads them, before the mode is found.
+#[derive(Parser)]
+#[command(
+    name = "ssj-server",
+    about = "The server of ssj, which the client starts through ssh",
+    disable_version_flag = true,
+    args_override_self = true
+)]
+struct Options {
+    /// Ask a running session to accept a new client; the pin comes on stdin
+    #[arg(long, value_name = "ID", num_args = 0..=1, value_parser = selector, group = "mode")]
+    attach: Option<Option<String>>,
+    /// End these sessions, or the only one
+    #[arg(long, value_name = "ID", num_args = 0.., value_parser = selector, group = "mode")]
+    kill: Option<Vec<String>>,
+    /// Make the clients of these sessions leave, or of the only one
+    #[arg(long, value_name = "ID", num_args = 0.., value_parser = selector, group = "mode")]
+    detach: Option<Vec<String>>,
+    /// Carry the stream of a client over stdin and stdout
+    #[arg(long, value_name = "ID", num_args = 0..=1, value_parser = selector, group = "mode")]
+    stdio: Option<Option<String>>,
+    /// Print the running sessions
+    #[arg(long, group = "mode")]
+    list: bool,
+    /// Print the version and the protocol
+    #[arg(long, group = "mode")]
+    version: bool,
+    /// Read a server.toml from stdin and print OK or the first error
+    #[arg(long, group = "mode")]
+    check_config: bool,
+    /// Print the server.toml that a new user starts with
+    #[arg(long, group = "mode")]
+    config_template: bool,
+    /// Join the session of this name, or start it with the name
+    #[arg(long, value_parser = parse_name)]
+    name: Option<SessionName>,
+    /// Join the only session without a client
+    #[arg(long)]
+    reuse: bool,
+    /// With --reuse and several sessions without a client, list them
+    #[arg(long)]
+    choose: bool,
+    /// Offer no UDP port
+    #[arg(long)]
+    no_udp: bool,
+    /// Offer no TCP port
+    #[arg(long)]
+    no_tcp: bool,
+    /// Argument of the shell (repeatable)
+    #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
+    shell_arg: Vec<OsString>,
+    #[arg(long, hide = true)]
+    daemon_child: bool,
+    #[arg(long, hide = true, value_parser = parse_session_id)]
+    session_id: Option<SessionId>,
+    #[command(flatten)]
+    settings: Settings,
+}
+
+fn selector(text: &str) -> Result<String, String> {
+    if is_selector(text) {
+        Ok(text.to_owned())
+    } else {
+        Err("not a valid session id or name".to_owned())
     }
 }
 
-impl Args {
-    /// Arguments for the child process, so that it behaves like the bootstrap process.
-    pub fn to_child_args(&self) -> Vec<OsString> {
-        let mut out: Vec<OsString> = vec![
-            "--daemon-child".into(),
-            "--port-range".into(),
-            if self.port_range == (0..=0) {
-                "0".to_owned()
-            } else {
-                format!("{}:{}", self.port_range.start(), self.port_range.end())
-            }
-            .into(),
-            "--detached-timeout".into(),
-            self.detached_timeout
-                .map_or("none".to_owned(), |t| t.as_secs().to_string())
-                .into(),
-        ];
-        out.extend([
-            "--replay-capacity".into(),
-            self.replay_capacity.to_string().into(),
-        ]);
-        out.extend([
-            "--away-after".into(),
-            self.away_after.as_secs().to_string().into(),
-        ]);
-        out.extend([
-            "--slow-client".into(),
-            match self.slow_client {
-                SlowClient::Drop => "drop",
-                SlowClient::Wait => "wait",
-            }
-            .into(),
-            "--live-backlog".into(),
-            self.live_backlog.to_string().into(),
-            "--compress".into(),
-            if self.compress { "auto" } else { "off" }.into(),
-            "--congestion".into(),
-            self.congestion.as_str().into(),
-        ]);
-        out.extend([
-            "--max-detached".into(),
-            self.max_detached
-                .map_or("none".to_owned(), |t| t.as_secs().to_string())
-                .into(),
-        ]);
-        if let Some(shell) = &self.shell {
-            out.extend(["--shell".into(), shell.clone().into()]);
+fn parse_name(text: &str) -> Result<SessionName, &'static str> {
+    SessionName::parse(text).ok_or("1 to 32 characters of letters, digits, '.', '_', '-'")
+}
+
+fn parse_session_id(text: &str) -> Result<SessionId, &'static str> {
+    SessionId::parse(text).ok_or("not a session id")
+}
+
+/// Parses the arguments, without the name of the program. Help goes to the output and ends the
+/// program.
+pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
+    let words = std::iter::once(OsString::from("ssj-server")).chain(args);
+    let options = match Options::try_parse_from(words) {
+        Ok(options) => options,
+        Err(error) if error.use_stderr() => {
+            return Err(error.render().to_string().trim_end().to_owned());
         }
-        for arg in &self.shell_args {
-            out.extend(["--shell-arg".into(), arg.clone()]);
-        }
-        if let Some(name) = &self.name {
-            out.extend(["--name".into(), name.as_str().into()]);
-        }
-        if let Some(id) = &self.session_id {
-            out.extend(["--session-id".into(), id.as_str().into()]);
-        }
-        if !self.udp {
-            out.push("--no-udp".into());
-        }
-        if !self.tcp {
-            out.push("--no-tcp".into());
-        }
-        out
-    }
+        Err(error) => error.exit(),
+    };
+    let mode = if let Some(id) = options.attach {
+        Mode::Attach(id)
+    } else if let Some(ids) = options.kill {
+        Mode::Kill(ids)
+    } else if let Some(ids) = options.detach {
+        Mode::Detach(ids)
+    } else if let Some(id) = options.stdio {
+        Mode::Stdio(id)
+    } else if options.list {
+        Mode::List
+    } else if options.version {
+        Mode::Version
+    } else if options.check_config {
+        Mode::CheckConfig
+    } else if options.config_template {
+        Mode::ConfigTemplate
+    } else {
+        Mode::Serve
+    };
+    Ok(Args {
+        mode,
+        name: options.name,
+        reuse: options.reuse,
+        choose: options.choose,
+        shell_args: options.shell_arg,
+        udp: !options.no_udp,
+        tcp: !options.no_tcp,
+        daemon_child: options.daemon_child,
+        session_id: options.session_id,
+        settings: options.settings,
+    })
 }
 
 /// `LOW:HIGH`, or `0` for any port the kernel picks.
@@ -231,8 +266,7 @@ pub fn check_replay_capacity(size: usize) -> Result<usize, String> {
     }
 }
 
-/// Default of `live_backlog`: what may wait for a connected client before output is skipped.
-pub const DEFAULT_LIVE_BACKLOG: usize = 1 << 20;
+/// Bounds of `live_backlog`: what may wait for a connected client before output is skipped.
 const MIN_LIVE_BACKLOG: usize = 16 * 1024;
 const MAX_LIVE_BACKLOG: usize = 64 << 20;
 
@@ -250,6 +284,14 @@ pub fn parse_compress(text: &str) -> Result<bool, String> {
         "off" => Ok(false),
         _ => Err("expected auto or off".to_owned()),
     }
+}
+
+/// A number of bytes within the bounds of `live_backlog`.
+fn parse_live_backlog(text: &str) -> Result<usize, String> {
+    let size: usize = text
+        .parse()
+        .map_err(|_| "expected a number of bytes".to_owned())?;
+    check_live_backlog(size)
 }
 
 pub fn check_live_backlog(size: usize) -> Result<usize, String> {
@@ -278,140 +320,4 @@ pub fn parse_timeout(text: &str) -> Result<Option<Duration>, String> {
             .map(|s| Some(Duration::from_secs(s)))
             .map_err(|_| "expected seconds or none".to_owned()),
     }
-}
-
-pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
-    let mut out = Args::default();
-    let mut args = args.into_iter().peekable();
-    // an optional session id follows `--attach` and `--kill`.
-    let session_id = |args: &mut std::iter::Peekable<_>| -> Result<Option<String>, String> {
-        let next: Option<&OsString> = args.peek();
-        match next.map(|a| a.to_string_lossy().into_owned()) {
-            Some(text) if !text.starts_with('-') => {
-                if !is_selector(&text) {
-                    return Err("not a valid session id or name".to_owned());
-                }
-                args.next();
-                Ok(Some(text))
-            }
-            _ => Ok(None),
-        }
-    };
-    while let Some(arg) = args.next() {
-        let text = arg.to_string_lossy().into_owned();
-        match text.as_str() {
-            "--attach" => {
-                out.mode =
-                    Mode::Attach(session_id(&mut args).map_err(|e| format!("--attach: {e}"))?)
-            }
-            "--kill" => {
-                let mut ids = Vec::new();
-                while let Some(id) = session_id(&mut args).map_err(|e| format!("--kill: {e}"))? {
-                    ids.push(id);
-                }
-                out.mode = Mode::Kill(ids)
-            }
-            "--detach" => {
-                let mut ids = Vec::new();
-                while let Some(id) = session_id(&mut args).map_err(|e| format!("--detach: {e}"))? {
-                    ids.push(id);
-                }
-                out.mode = Mode::Detach(ids)
-            }
-            "--stdio" => {
-                out.mode = Mode::Stdio(session_id(&mut args).map_err(|e| format!("--stdio: {e}"))?)
-            }
-            "--name" => {
-                let value = args.next().ok_or("--name needs a value")?;
-                out.name = Some(
-                    SessionName::parse(&value.to_string_lossy())
-                        .ok_or("--name: 1 to 32 characters of letters, digits, '.', '_', '-'")?,
-                );
-            }
-            "--reuse" => out.reuse = true,
-            "--choose" => out.choose = true,
-            "--no-udp" => out.udp = false,
-            "--no-tcp" => out.tcp = false,
-            "--list" => out.mode = Mode::List,
-            "--version" => out.mode = Mode::Version,
-            "--check-config" => out.mode = Mode::CheckConfig,
-            "--config-template" => out.mode = Mode::ConfigTemplate,
-            "--port-range" => {
-                let value = args.next().ok_or("--port-range needs a value")?;
-                out.port_range = parse_port_range(&value.to_string_lossy())
-                    .map_err(|e| format!("--port-range: {e}"))?;
-                out.explicit.port_range = true;
-            }
-            "--detached-timeout" => {
-                let value = args.next().ok_or("--detached-timeout needs a value")?;
-                out.detached_timeout = parse_timeout(&value.to_string_lossy())
-                    .map_err(|e| format!("--detached-timeout: {e}"))?;
-                out.explicit.detached_timeout = true;
-            }
-            "--replay-capacity" => {
-                let value = args.next().ok_or("--replay-capacity needs a value")?;
-                out.replay_capacity = parse_replay_capacity(&value.to_string_lossy())
-                    .map_err(|e| format!("--replay-capacity: {e}"))?;
-                out.explicit.replay_capacity = true;
-            }
-            "--away-after" => {
-                let value = args.next().ok_or("--away-after needs a value")?;
-                out.away_after = parse_away_after(&value.to_string_lossy())
-                    .map_err(|e| format!("--away-after: {e}"))?;
-                out.explicit.away_after = true;
-            }
-            "--slow-client" => {
-                let value = args.next().ok_or("--slow-client needs a value")?;
-                out.slow_client = parse_slow_client(&value.to_string_lossy())
-                    .map_err(|e| format!("--slow-client: {e}"))?;
-                out.explicit.slow_client = true;
-            }
-            "--compress" => {
-                let value = args.next().ok_or("--compress needs a value")?;
-                out.compress = parse_compress(&value.to_string_lossy())
-                    .map_err(|e| format!("--compress: {e}"))?;
-                out.explicit.compress = true;
-            }
-            "--congestion" => {
-                let value = args.next().ok_or("--congestion needs a value")?;
-                out.congestion = Congestion::parse(&value.to_string_lossy())
-                    .map_err(|e| format!("--congestion: {e}"))?;
-                out.explicit.congestion = true;
-            }
-            "--live-backlog" => {
-                let value = args.next().ok_or("--live-backlog needs a value")?;
-                out.live_backlog = value
-                    .to_string_lossy()
-                    .parse()
-                    .map_err(|_| "--live-backlog: expected a number of bytes".to_owned())
-                    .and_then(|n| {
-                        check_live_backlog(n).map_err(|e| format!("--live-backlog: {e}"))
-                    })?;
-                out.explicit.live_backlog = true;
-            }
-            "--max-detached" => {
-                let value = args.next().ok_or("--max-detached needs a value")?;
-                out.max_detached = parse_timeout(&value.to_string_lossy())
-                    .map_err(|e| format!("--max-detached: {e}"))?;
-                out.explicit.max_detached = true;
-            }
-            "--shell" => {
-                out.shell = Some(PathBuf::from(args.next().ok_or("--shell needs a value")?));
-                out.explicit.shell = true;
-            }
-            "--shell-arg" => out
-                .shell_args
-                .push(args.next().ok_or("--shell-arg needs a value")?),
-            "--daemon-child" => out.daemon_child = true,
-            "--session-id" => {
-                let value = args.next().ok_or("--session-id needs a value")?;
-                out.session_id = Some(
-                    SessionId::parse(&value.to_string_lossy())
-                        .ok_or("--session-id: not a session id")?,
-                );
-            }
-            other => return Err(format!("unknown argument {other:?}")),
-        }
-    }
-    Ok(out)
 }

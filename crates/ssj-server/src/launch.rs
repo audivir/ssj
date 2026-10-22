@@ -11,11 +11,11 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use ssj_proto::SessionId;
 use ssj_proto::bootstrap::{
     MAX_START_LINE, Prestart, format_connect, format_pin, parse_connect, parse_pin, parse_start,
 };
 use ssj_proto::control::{Reply, SessionState, format_reply};
-use ssj_proto::{EnvFilter, SessionId};
 use tokio::net::UnixListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, mpsc as tokio_mpsc};
@@ -177,13 +177,10 @@ fn existing_session(args: &Args) -> Result<Existing, String> {
 /// The process started by `ssh`.
 pub fn run_parent(args: &Args) -> ExitCode {
     daemon::close_inherited_descriptors();
-    // the daemon gets the resolved values on its command line, so both agree.
-    let mut args = args.clone();
-    match Config::load() {
-        Ok(config) => args.apply_config(&config),
-        Err(message) => return fail(&message, 2),
+    // the daemon reads the file again; a broken one is reported here, where the client sees it.
+    if let Err(message) = Config::load() {
+        return fail(&message, 2);
     }
-    let args = &args;
     if daemon::is_root() {
         eprintln!("ssj-server: warning: running as root, the session shell will be a root shell");
     }
@@ -210,13 +207,15 @@ pub fn run_parent(args: &Args) -> ExitCode {
         Ok(exe) => exe,
         Err(err) => return fail(&format!("cannot find the own executable: {err}"), 1),
     };
-    // the daemon shows the id in `ps`, and the client prints it in its log.
-    let mut for_child = args.clone();
-    for_child.session_id = daemon::random_session_id()
-        .ok()
-        .and_then(|id| SessionId::parse(&id));
+    // the daemon gets the same arguments, and an id that it shows in `ps` and that the client
+    // prints in its log.
+    let mut child_args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    child_args.push("--daemon-child".into());
+    if let Ok(id) = daemon::random_session_id() {
+        child_args.extend(["--session-id".into(), id.into()]);
+    }
     let child = Command::new(exe)
-        .args(for_child.to_child_args())
+        .args(child_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -286,14 +285,13 @@ fn base_env() -> Vec<(OsString, OsString)> {
 }
 
 /// The daemon: runs the session until it ends.
-pub fn run_child(mut args: Args) -> ExitCode {
+pub fn run_child(args: Args) -> ExitCode {
     daemon::close_inherited_descriptors();
     let config = match Config::load() {
-        Ok(config) => config,
+        Ok(config) => config.with(&args.settings),
         Err(message) => return fail(&message, 2),
     };
-    args.apply_config(&config);
-    ssj_net::set_congestion(args.congestion);
+    ssj_net::set_congestion(config.congestion);
     daemon::detach_from_session();
     if let Err(err) = daemon::disable_core_dumps() {
         eprintln!("ssj-server: cannot disable core dumps: {err}");
@@ -309,10 +307,10 @@ pub fn run_child(mut args: Args) -> ExitCode {
         Ok(runtime) => runtime,
         Err(err) => return fail(&format!("cannot start the runtime: {err}"), 1),
     };
-    runtime.block_on(run_session(args, config.accept_env, input))
+    runtime.block_on(run_session(args, config, input))
 }
 
-async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -> ExitCode {
+async fn run_session(args: Args, settings: Config, input: BootstrapInput) -> ExitCode {
     let pin = input.pin;
     let id = args.session_id.clone().or_else(|| {
         daemon::random_session_id()
@@ -323,10 +321,15 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
         return fail("cannot create a session id", 1);
     };
     let (conns, conns_rx) = tokio_mpsc::channel(4);
-    let mut frontend = Frontend::new(id.clone(), args.port_range.clone(), conns, HELLO_TIMEOUT)
-        .with_transports(args.udp, args.tcp)
-        // QUIC takes no more unacknowledged output than may wait for a connected client.
-        .with_send_window(args.live_backlog as u64);
+    let mut frontend = Frontend::new(
+        id.clone(),
+        settings.port_range.clone(),
+        conns,
+        HELLO_TIMEOUT,
+    )
+    .with_transports(args.udp, args.tcp)
+    // QUIC takes no more unacknowledged output than may wait for a connected client.
+    .with_send_window(settings.live_backlog as u64);
     let connect = match frontend.open(pin).await {
         Ok(connect) => connect,
         Err(err) => return fail(&err.to_string(), 1),
@@ -347,7 +350,7 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
         eprintln!("ssj-server: cannot release stdio: {err}");
     }
 
-    let shell = args
+    let shell = settings
         .shell
         .clone()
         .or_else(|| std::env::var_os("SHELL").map(Into::into))
@@ -365,18 +368,18 @@ async fn run_session(args: Args, accept_env: EnvFilter, input: BootstrapInput) -
             env: base_env(),
             cwd: None,
         },
-        accept_env,
-        replay_capacity: args.replay_capacity,
-        away_after: args.away_after,
-        slow_client: args.slow_client,
-        live_backlog: args.live_backlog,
+        accept_env: settings.accept_env.clone(),
+        replay_capacity: settings.replay_capacity,
+        away_after: settings.away_after,
+        slow_client: settings.slow_client,
+        live_backlog: settings.live_backlog,
         // the directory exists: the control socket was made in it.
         agent_socket: control_dir().ok().map(|dir| agent_path(&dir, id.as_str())),
-        compress: args.compress,
+        compress: settings.compress,
         prestart: input.start,
         first_client_timeout: FIRST_CLIENT_TIMEOUT,
-        detached_timeout: args.detached_timeout,
-        max_detached: args.max_detached,
+        detached_timeout: settings.detached_timeout,
+        max_detached: settings.max_detached,
         hello_timeout: HELLO_TIMEOUT,
         lost_after: LOST_AFTER,
         exit_grace: EXIT_GRACE,

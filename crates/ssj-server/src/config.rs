@@ -1,7 +1,8 @@
 //! The config file `server.toml`.
 //!
-//! Flags on the command line override the file, except `accept_env`, which only the file sets:
-//! the command line is built by the client, and the client must not choose its own filter.
+//! Flags on the command line override the file ([`Config::with`]), except `accept_env`, which only
+//! the file sets: the command line is built by the client, and the client must not choose its own
+//! filter.
 
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
@@ -14,13 +15,10 @@ use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
 use crate::cli::{
-    Args, check_live_backlog, check_replay_capacity, parse_away_after, parse_compress,
+    Settings, Timeout, check_live_backlog, check_replay_capacity, parse_away_after, parse_compress,
     parse_port_range, parse_slow_client,
 };
 use crate::session::SlowClient;
-
-/// Seconds, with `None` for no limit.
-type Timeout = Option<Duration>;
 
 /// Settings of ssj-server, read when a session starts. Flags of the client override them.
 #[derive(Clone, Debug, confique::Config)]
@@ -130,41 +128,20 @@ impl Config {
     pub fn template() -> String {
         ssj_config::template::<Self>()
     }
-}
 
-impl Args {
-    /// Fills in what the command line left open from the config file.
-    pub fn apply_config(&mut self, config: &Config) {
-        let explicit = self.explicit;
-        if !explicit.port_range {
-            self.port_range = config.port_range.clone();
-        }
-        if !explicit.detached_timeout {
-            self.detached_timeout = config.detached_timeout;
-        }
-        if !explicit.max_detached {
-            self.max_detached = config.max_detached;
-        }
-        if !explicit.replay_capacity {
-            self.replay_capacity = config.replay_capacity;
-        }
-        if !explicit.away_after {
-            self.away_after = config.away_after;
-        }
-        if !explicit.slow_client {
-            self.slow_client = config.slow_client;
-        }
-        if !explicit.compress {
-            self.compress = config.compress;
-        }
-        if !explicit.congestion {
-            self.congestion = config.congestion;
-        }
-        if !explicit.live_backlog {
-            self.live_backlog = config.live_backlog;
-        }
-        if !explicit.shell && self.shell.is_none() {
-            self.shell = config.shell.clone();
-        }
+    /// Returns the settings with those of the command line in place of the ones of the file.
+    pub fn with(mut self, flags: &Settings) -> Self {
+        let flags = flags.clone();
+        self.port_range = flags.port_range.unwrap_or(self.port_range);
+        self.detached_timeout = flags.detached_timeout.unwrap_or(self.detached_timeout);
+        self.max_detached = flags.max_detached.unwrap_or(self.max_detached);
+        self.replay_capacity = flags.replay_capacity.unwrap_or(self.replay_capacity);
+        self.away_after = flags.away_after.unwrap_or(self.away_after);
+        self.slow_client = flags.slow_client.unwrap_or(self.slow_client);
+        self.live_backlog = flags.live_backlog.unwrap_or(self.live_backlog);
+        self.compress = flags.compress.unwrap_or(self.compress);
+        self.congestion = flags.congestion.unwrap_or(self.congestion);
+        self.shell = flags.shell.or(self.shell);
+        self
     }
 }

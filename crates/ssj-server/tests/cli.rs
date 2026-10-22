@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::time::Duration;
 
-use ssj_server::cli::{Args, parse, parse_port_range, parse_timeout};
+use ssj_server::cli::{Args, Settings, parse, parse_port_range, parse_timeout};
 
 fn args(list: &[&str]) -> Result<Args, String> {
     parse(list.iter().map(OsString::from))
@@ -42,78 +42,52 @@ fn timeouts_are_seconds_or_none() {
 }
 
 #[test]
-fn defaults_are_conservative_and_unknown_arguments_fail() {
-    let defaults = args(&[]).unwrap();
-    assert_eq!(defaults.port_range, 60000..=61000);
-    assert_eq!(defaults.detached_timeout, None);
-
+fn without_flags_the_file_decides_and_unknown_arguments_fail() {
+    assert_eq!(args(&[]).unwrap().settings, Settings::default());
     assert!(args(&["--bogus"]).is_err());
     assert!(args(&["--port-range"]).is_err());
+    assert_eq!(
+        args(&["--port-range", "0"]).unwrap().settings.port_range,
+        Some(0..=0)
+    );
 }
 
+// the daemon gets the arguments of the bootstrap process, and after them its own.
 #[test]
-fn child_arguments_keep_any_port() {
-    let original = args(&["--port-range", "0"]).unwrap();
-    assert_eq!(parse(original.to_child_args()).unwrap().port_range, 0..=0);
-}
-
-#[test]
-fn the_session_id_travels_to_the_daemon_and_is_checked() {
+fn the_daemon_takes_the_arguments_of_the_bootstrap_and_its_session_id() {
     let id = "abcdef0123456789";
-    let original = args(&["--session-id", id]).unwrap();
-    assert_eq!(original.session_id.as_ref().map(|i| i.as_str()), Some(id));
-    let child = parse(original.to_child_args()).unwrap();
-    assert_eq!(child.session_id, original.session_id);
+    let words = [
+        "--port-range",
+        "50000:50010",
+        "--detached-timeout",
+        "none",
+        "--shell-arg",
+        "-l",
+        "--session-id",
+        "zzzzzzzzzzzzzzzz",
+    ];
+    let original = args(&words).unwrap();
+    let child = args(&[&words[..], &["--daemon-child", "--session-id", id]].concat()).unwrap();
+    assert!(child.daemon_child);
+    assert_eq!(child.session_id.as_ref().map(|i| i.as_str()), Some(id));
+    assert_eq!(
+        Args {
+            daemon_child: false,
+            session_id: original.session_id.clone(),
+            ..child
+        },
+        original
+    );
     assert!(args(&["--session-id", "no good"]).is_err());
     assert!(args(&["--session-id"]).is_err());
     assert!(args(&[]).unwrap().session_id.is_none());
 }
 
-// the daemon must behave exactly like the bootstrap process that started it.
 #[test]
-fn child_arguments_carry_every_setting() {
-    let original = args(&[
-        "--port-range",
-        "50000:50010",
-        "--detached-timeout",
-        "none",
-        "--away-after",
-        "7",
-        "--slow-client",
-        "wait",
-        "--live-backlog",
-        "200000",
-        "--compress",
-        "off",
-        "--congestion",
-        "cubic",
-        "--shell",
-        "/bin/zsh",
-        "--shell-arg",
-        "-l",
-        "--shell-arg",
-        "-i",
-    ])
-    .unwrap();
-    let child = parse(original.to_child_args()).unwrap();
-    assert!(child.daemon_child);
-    assert_eq!(
-        Args {
-            daemon_child: false,
-            explicit: original.explicit,
-            ..child
-        },
-        original
-    );
-}
-
-#[test]
-fn names_and_selectors_are_checked_and_carried_to_the_daemon() {
+fn names_and_selectors_are_checked() {
     let named = args(&["--name", "work", "--reuse"]).unwrap();
     assert_eq!(named.name.as_ref().map(|n| n.as_str()), Some("work"));
     assert!(named.reuse);
-    let child = parse(named.to_child_args()).unwrap();
-    assert_eq!(child.name, named.name);
 
     for bad in ["", "-x", ".x", "a b", "a/b", &"n".repeat(33)] {
         assert!(args(&["--name", bad]).is_err(), "{bad:?}");
@@ -145,15 +119,22 @@ fn names_and_selectors_are_checked_and_carried_to_the_daemon() {
 }
 
 #[test]
-fn the_job_does_not_wait_for_a_slow_client_unless_asked() {
+fn the_way_with_a_slow_client_and_its_backlog_are_checked() {
     use ssj_server::session::SlowClient;
 
-    let plain = args(&[]).unwrap();
-    assert_eq!(plain.slow_client, SlowClient::Drop);
-    assert_eq!(plain.live_backlog, 1 << 20);
     assert_eq!(
-        args(&["--slow-client", "wait"]).unwrap().slow_client,
-        SlowClient::Wait
+        args(&["--slow-client", "wait"])
+            .unwrap()
+            .settings
+            .slow_client,
+        Some(SlowClient::Wait)
+    );
+    assert_eq!(
+        args(&["--live-backlog", "200000"])
+            .unwrap()
+            .settings
+            .live_backlog,
+        Some(200_000)
     );
     for bad in [
         vec!["--slow-client", "block"],
@@ -167,30 +148,32 @@ fn the_job_does_not_wait_for_a_slow_client_unless_asked() {
 }
 
 #[test]
-fn congestion_control_is_adaptive_unless_a_way_is_asked_for() {
+fn congestion_control_takes_a_known_way() {
     use ssj_net::Congestion;
-    assert_eq!(args(&[]).unwrap().congestion, Congestion::Auto);
-    assert_eq!(
-        args(&["--congestion", "cubic"]).unwrap().congestion,
-        Congestion::Cubic
-    );
-    assert_eq!(
-        args(&["--congestion", "bbr"]).unwrap().congestion,
-        Congestion::Bbr
-    );
-    assert_eq!(
-        args(&["--congestion", "auto"]).unwrap().congestion,
-        Congestion::Auto
-    );
+    for (word, way) in [
+        ("cubic", Congestion::Cubic),
+        ("bbr", Congestion::Bbr),
+        ("auto", Congestion::Auto),
+    ] {
+        assert_eq!(
+            args(&["--congestion", word]).unwrap().settings.congestion,
+            Some(way)
+        );
+    }
     assert!(args(&["--congestion", "reno"]).is_err());
     assert!(args(&["--congestion"]).is_err());
 }
 
 #[test]
-fn compression_is_automatic_unless_turned_off() {
-    assert!(!args(&[]).unwrap().compress, "off unless asked for");
-    assert!(args(&["--compress", "auto"]).unwrap().compress);
-    assert!(!args(&["--compress", "off"]).unwrap().compress);
+fn compression_is_auto_or_off() {
+    assert_eq!(
+        args(&["--compress", "auto"]).unwrap().settings.compress,
+        Some(true)
+    );
+    assert_eq!(
+        args(&["--compress", "off"]).unwrap().settings.compress,
+        Some(false)
+    );
     assert!(args(&["--compress", "on"]).is_err());
     assert!(args(&["--compress"]).is_err());
 }
