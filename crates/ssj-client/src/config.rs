@@ -32,7 +32,7 @@ pub struct Config {
     /// "ask", "always", or "never": what to do when the host has no server.
     #[config(default = "ask")]
     pub auto_install: AutoInstall,
-    /// A key such as "ctrl-]" that detaches anywhere, or "none".
+    /// A key such as "ctrl-]" that detaches anywhere, or "none". The program does not receive it.
     #[config(default = "ctrl-\\", deserialize_with = detach_key)]
     pub detach_key: Key,
     /// Replaces ssh, such as "ssh -J jump".
@@ -41,7 +41,7 @@ pub struct Config {
     /// More variables to send, besides TERM and the SendEnv of ssh.
     #[config(default = [], deserialize_with = send_env)]
     pub send_env: EnvFilter,
-    /// "auto", "udp", "tcp", or "stdio".
+    /// "auto", "udp", "tcp", or "stdio": how to reach the server.
     #[config(default = "auto")]
     pub transport: Transport,
     /// `ssj host` joins the only session without a client.
@@ -50,12 +50,15 @@ pub struct Config {
     /// Let programs on the host use your ssh agent (-A).
     #[config(default = false)]
     pub forward_agent: bool,
-    /// "off" or "auto": show typed characters at once.
+    /// "off" or "auto": show typed characters at once, before the server echoes them.
     #[config(default = "off")]
     pub local_echo: LocalEcho,
     /// "off" or "auto": compress while the link is the limit. Not set: the server decides.
+    /// Compressing text of an attacker together with a secret can leak the secret.
     pub compress: Option<Compress>,
-    /// "auto", "bbr", or "cubic": how fast to send. Not set: the server decides.
+    /// "auto", "bbr", or "cubic": how fast to send. Not set: the server decides. Auto starts
+    /// with CUBIC, the fastest on a clean link, and moves to BBR when packets are lost without a
+    /// queue (Wi-Fi, mobile, long paths), where CUBIC crawls.
     pub congestion: Option<Congestion>,
 }
 

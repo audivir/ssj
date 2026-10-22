@@ -39,7 +39,9 @@ pub struct Config {
     /// Seconds a silent client may block the output (wait).
     #[config(default = 10, deserialize_with = away_after)]
     pub away_after: Duration,
-    /// "drop": the job never waits for the link. "wait": like ssh.
+    /// What happens to output that a connected client is too slow to take. "drop": the job never
+    /// waits for the link, and the oldest output is skipped with a notice. "wait": the job slows
+    /// down, as with ssh.
     #[config(default = "drop")]
     pub slow_client: SlowClient,
     /// Bytes that may wait for a connected client (drop).
@@ -54,7 +56,7 @@ pub struct Config {
     /// Absolute path of the shell, such as "/bin/zsh". Default: $SHELL.
     #[config(deserialize_with = shell)]
     pub shell: Option<PathBuf>,
-    /// Variables of the client that the shell gets, as patterns.
+    /// Variables of the client that the shell gets, as patterns. Only the file sets it.
     #[config(default = ["TERM", "LANG", "LC_*"], deserialize_with = accept_env)]
     pub accept_env: EnvFilter,
 }

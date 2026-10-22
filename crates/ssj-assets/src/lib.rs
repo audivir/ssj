@@ -5,6 +5,8 @@ use std::{fs, io, path::Path};
 
 use clap::CommandFactory;
 use clap_complete::Shell;
+use confique::Config as _;
+use confique::meta::{FieldKind, LeafKind, Meta};
 use ssj_client::options;
 
 /// What the options cannot show: the config files and the cache.
@@ -24,88 +26,47 @@ listed under COMMANDS. A host with the name of one of them is written \fBssj con
 \fBssj attach \-\- ls\fR.
 "#;
 
+/// The FILES section around the keys of the two config files, which come from their structs.
 const FILES: &str = r#".SH FILES
 All config files are flat \fIkey = value\fR lines of TOML, without tables. A typo in a key is an
 error with the line number, and a file that others can write is refused. Options on the command
-line override the file.
+line override the file. \fBssj edit\fR opens a file with every key as a comment.
 .TP
 \fI$XDG_CONFIG_HOME/ssj/client.toml\fR
 (default \fI~/.config/ssj/client.toml\fR) Settings of \fBssj\fR:
-.RS
-.TP
-\fBauto_install\fR = "ask" | "always" | "never"
-Whether to install the server when it is missing.
-.TP
-\fBdetach_key\fR = "ctrl-\\\\" | "ctrl-]" | "none"
-A key that detaches from the session wherever it is typed. The program does not receive the key.
-.TP
-\fBssh_command\fR = "ssh -J jump"
-The command that replaces \fBssh\fR.
-.TP
-\fBsend_env\fR = ["TERM", "LANG", "LC_*"]
-The variables sent to the server.
-.TP
-\fBtransport\fR = "auto" | "udp" | "tcp" | "stdio"
-How to reach the server.
-.TP
-\fBauto_attach\fR = true | false
-Join the only session without a client.
-.TP
-\fBforward_agent\fR = true | false
-Let programs on the host use the ssh agent of this machine (\fB\-A\fR). Off by default.
-.TP
-\fBcongestion\fR = "auto" | "bbr" | "cubic"
-How fast to send. Auto (default) starts with Cubic, which is fastest on a clean link, and moves to BBR when packets are lost without a queue (Wi-Fi, mobile, long paths), where Cubic crawls.
-.TP
-\fBcompress\fR = "off" | "auto"
-Compress input and output while the link is the limit. Off by default, since compressing text of an attacker with a secret can leak the secret.
-.TP
-\fBlocal_echo\fR = "off" | "auto"
-Show typed characters at once, before the server has echoed them.
-.RE
-.TP
+CLIENT_KEYS.TP
 \fI$XDG_CONFIG_HOME/ssj/server.toml\fR
 Settings of \fBssj-server\fR, read on the host:
-.RS
-.TP
-\fBport_range\fR = "60000:61000"
-The UDP ports the server may use, "0" for any.
-.TP
-\fBdetached_timeout\fR = seconds | "none"
-How long a session lives without a client.
-.TP
-\fBmax_detached\fR = seconds | "none"
-An upper limit that also applies after a deliberate detach.
-.TP
-\fBreplay_capacity\fR = bytes
-The output kept for a client that is away.
-.TP
-\fBcompress\fR = "off" | "auto"
-Compress output while the link is the limit (default off).
-.TP
-\fBcongestion\fR = "auto" | "bbr" | "cubic"
-How fast the server sends output (default auto).
-.TP
-\fBslow_client\fR = "drop" | "wait"
-What the server does with output that a connected client is too slow to take: "drop" (default) never lets the job wait for the link and skips the oldest output, with a notice; "wait" slows the job down, as ssh does.
-.TP
-\fBlive_backlog\fR = bytes
-With "drop": how much output may wait for a connected client (default 1 MiB).
-.TP
-\fBaway_after\fR = seconds
-With "wait": how long a silent client may block the output.
-.TP
-\fBshell\fR = "/bin/zsh"
-The shell to start (default: $SHELL).
-.TP
-\fBaccept_env\fR = ["TERM", "LANG", "LC_*"]
-The variables of the client that the shell gets. Only the file sets it.
-.RE
-.TP
+SERVER_KEYS.TP
 \fI$XDG_CACHE_HOME/ssj/sessions/\fR
 The session names last seen on each host, for tab completion. Written by \fBssj list\fR and
 refreshed in the background.
 "#;
+
+/// The keys of a config file for the man page: the doc comment and the default of each field.
+fn keys(meta: &Meta) -> String {
+    let mut out = String::from(".RS\n");
+    for field in meta.fields {
+        let default = match field.kind {
+            FieldKind::Leaf {
+                kind:
+                    LeafKind::Required {
+                        default: Some(value),
+                    },
+                ..
+            } => format!(
+                " (default {})",
+                serde_json::to_string(&value).expect("plain values")
+            ),
+            _ => String::new(),
+        };
+        let doc: Vec<&str> = field.doc.iter().map(|line| line.trim()).collect();
+        let doc = doc.join(" ").replace('\\', "\\\\");
+        out.push_str(&format!(".TP\n\\fB{}\\fR{default}\n{doc}\n", field.name));
+    }
+    out.push_str(".RE\n");
+    out
+}
 
 /// Writes `ssj.1`, `ssj.bash`, `_ssj`, and `ssj.fish` to `out`.
 pub fn write(out: &Path) -> io::Result<()> {
@@ -180,7 +141,10 @@ pub fn write(out: &Path) -> io::Result<()> {
         page_commands.push_str(&format!(".TP\n\\fBssj {word}\\fR\n{list}\n"));
     }
     page.extend_from_slice(page_commands.as_bytes());
-    page.extend_from_slice(FILES.as_bytes());
+    let files = FILES
+        .replace("CLIENT_KEYS", &keys(&ssj_client::config::Config::META))
+        .replace("SERVER_KEYS", &keys(&ssj_server::config::Config::META));
+    page.extend_from_slice(files.as_bytes());
     fs::write(out.join("ssj.1"), page)?;
 
     let tree = completion_tree(&command);

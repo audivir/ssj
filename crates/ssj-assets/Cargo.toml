@@ -11,7 +11,10 @@ publish = false
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
+confique.workspace = true
+serde_json.workspace = true
 ssj-client.workspace = true
+ssj-server.workspace = true
 
 [lints]
 workspace = true
