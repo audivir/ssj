@@ -113,7 +113,7 @@ mod tests {
     }
 
     fn args(url: Option<&str>) -> Args {
-        let mut args = crate::cli::parse(["host"].map(String::from)).unwrap();
+        let mut args = crate::cli::parse(["connect", "host"].map(String::from)).unwrap();
         args.download_url = url.map(str::to_owned);
         args
     }

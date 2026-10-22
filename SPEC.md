@@ -310,12 +310,12 @@ reports for the destination (the destination may be an alias from the `ssh` conf
 the host part of the destination. DNS is asked again during reconnects, see above. `ssh -G` also
 shows a jump host or proxy command, which makes `auto` leave out UDP.
 
-A session may have a name (`ssj --name work user@host`): 1 to 32 characters of letters, digits,
+A session may have a name (`ssj connect --name work user@host`): 1 to 32 characters of letters, digits,
 `.`, `_`, `-`, not starting with `.` or `-`. The server keeps it and `ssj list` shows it. Names are
 unique per user and host. The command joins the session of that name if it runs and starts one
 otherwise; the client always begins with an attach, and a session without a shell answers
 `NotStarted`, on which the client sends a start. `ssj attach`, `ssj kill`, and `ssj detach` take an id or a name.
-`auto_attach = true` in `client.toml` (or `--auto-attach`) makes a plain `ssj user@host` join the
+`auto_attach = true` in `client.toml` (or `--auto-attach`) makes a plain `ssj connect user@host` join the
 only session that has no client connected, and start a new one when there is none or more than one
 (a session with a client is never taken away). On a terminal, several sessions without a client are not a reason to start another: the client shows a menu (see "Choosing a session"). The names and the state travel in the line `SSJ SESSION <id> <state> <age> <protocol> <name|->` of the control socket, which is not part of the
 protocol between client and server.
@@ -360,8 +360,7 @@ redraw.
   server lists the two sessions and exits with the code of a choice, and a client at a terminal
   shows the menu, for `kill`, `detach`, and `attach`.
 
-- `ssj <command> --help` shows the help of the command (`list`, `attach`, `kill`, `detach`,
-  `install`, `edit`), since a command word alone would be read as the host of the command to run.
+- `ssj <command> --help` shows the help of the command.
 
 - The completion offers further ids for `kill` and `detach`, and `detach` offers only sessions
   that had a client at the last refresh of the cache (`ssj --complete HOST --connected`). The
@@ -384,27 +383,26 @@ redraw.
   `serde::Deserialize`, so one definition serves the command line, the config files, and the
   completions: the three shells offer the values after a space and after `=` (Zsh with the doc
   comment of each value), and clap and serde reject anything else with the list.
-- One table in `options.rs` (`COMMANDS`) holds each command word with a line about it, the text
-  of its help, and the options it reads. `commands()` turns it into a `clap` command with a
-  subcommand for each word (its options, a destination, and the ids of sessions), from which
-  `ssj-assets` (`completion_tree`) writes the completions. `command()` adds what the parser needs:
-  the destination and the command for the host when no command word comes first, options that are
-  global so that they may stand before the word too, and the options that a command does not read
-  as hidden ones, so that the error can name `client.toml`. The parser and the help of each
-  command (`ssj kill --help`) are those of `clap`. An option that stands both before and after the command word counts once, with the
-  value after it (`ssj -v list host -v` is `-v`). `clap_complete` writes from the tree the options of each command, their
-  values (the fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and
-  files for `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first
+- Every line of `ssj` starts with a command (`connect`, `list`, `attach`, `kill`, `detach`,
+  `install`, `edit`), so a host may have any name. The commands are a `clap` derive in
+  `options.rs` (`Cli`, `CommandLine`): each takes the groups of options that it reads (`Ssh`,
+  `Server`, `Upload`, `Session`, `Connection`), and `clap` refuses any other option, and any
+  option before the command word. The parser, the help of each command (`ssj kill --help`), the
+  man page, and the completions come from that one definition. `ssj-assets` copies the tree
+  without the hidden options (`completion_tree`), since the generators list those too, and
+  `clap_complete` writes from it the options of each command, their values (the fixed ones of
+  `--transport`, `--local-echo`, `--congestion`, and `--compress`, and files for `--log-file`,
+  `--server-path`, and `--server-binary`), and the commands for the first
   word. What `clap` cannot know is added by `ssj-assets` to each file:
   the hosts of `~/.ssh/config` for the destination and for `--udp-host` (`_ssh_hosts` in Zsh,
   `_known_hosts_real` of bash-completion in Bash when it is loaded, `__fish_print_hostnames` in
   Fish), the sessions of the host for `attach` (one), `kill`, and `detach` (any number), and the
   sessions for `--name`.
-- The shells complete the same: the commands and the hosts for the first word, the hosts for the
-  word after a command, the sessions after the host of a command that takes them, the options of a
-  command after its host, and the values of options. After the destination of `connect` and after
-  any other destination, the words belong to the command that runs on the host: files, since its
-  layout (`~/.local/share/...`) is mostly the one of this machine, and no options (`ssj host ls -l`), and so after `ssj attach --`. Zsh does it in the case that `ssj-assets` extends and with a rest
+- The shells complete the same: the commands for the first word, the hosts for the word after a
+  command, the sessions after the host of a command that takes them, the options of a command,
+  and the values of options. After the destination of `connect` the words belong to the command
+  that runs on the host: files, since its layout (`~/.local/share/...`) is mostly the one of this
+  machine, and no options (`ssj connect host ls -l`). Zsh does it with a rest
   that completes nothing (so that its `_arguments` does not offer the options before a dash), Bash
   through the default completion that follows an empty answer, Fish by its default for words that
   no rule takes.
@@ -413,7 +411,7 @@ redraw.
   completes nothing, and no sessions are offered while the value of an option is being typed.
 - The Zsh function ends with the status of the completion (`return ret`). A function that ends with 1
   is run again for each further matcher of the `matcher-list` style, as oh-my-zsh sets it, and the
-  words of all runs are shown: `ssj -` listed every option three times, and hosts with a dash,
+  words of all runs are shown: `ssj connect -` listed every option three times, and hosts with a dash,
   which the later matchers take for the typed `-`. The Zsh tests use that style and a host
   `box-c`, and require that each option is shown exactly once.
 - One table in `completions.rs` (`positions`) says for every position what it offers and what it
@@ -754,7 +752,7 @@ Location and name:
 Two ways to get it there:
 
 1. Explicit: `ssj install user@host` uploads the matching binary.
-1. On first use: when `ssj user@host` finds no server file for its protocol, the wrapper of the
+1. On first use: when `ssj connect user@host` finds no server file for its protocol, the wrapper of the
    remote command reports `SSJ MISSING` with exit code 66, which the client tells apart from every
    other failure. What happens next follows the policy `auto_install`:
    - `ask` (default): on a terminal, the client asks `Install it now? [Y/n]`: Enter or `y`
@@ -1100,7 +1098,7 @@ Rules (nobody listens, and `wait` mode):
   slower than the writer. This is a property of that system and happens without `ssj` too, so the
   tests of exact byte streams turn the output processing of the terminal off (`stty -opost`).
 
-### Running a command (`ssj DESTINATION -- COMMAND...`)
+### Running a command (`ssj connect DESTINATION -- COMMAND...`)
 
 The session starts the command and not an interactive shell, and ends with its exit code.
 
@@ -1111,19 +1109,16 @@ The session starts the command and not an interactive shell, and ends with its e
 - The command has a terminal like every session (the output of `ssh -t host command`): the
   session survives a lost connection, the command can be joined again with `ssj attach`, and the
   exit status is that of the shell.
-- Where the command starts, as with `ssh`: right after the destination, the first word that is
-  not an option (or the value of one). Everything after it, options included, belongs to the
-  command: `ssj host ls -l`, `ssj host make -j4`, and `ssj host --name x` runs `--name x` on the
-  host. A `--` directly after the destination is dropped, so `ssj host -- ls -l` works too.
-  Options of `ssj` stand before the destination.
-- The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) are the
-  exception: a command word as the first word is always the command, and its options may stand anywhere (`ssj list host --json`). A command takes only the options that
-  it reads (`COMMANDS` in `options.rs`): any other, such as `--send-env` before `list`, is
-  an error that points to `client.toml`. Before the command word the options are not known yet
-  to the completions, and the error comes when the line is parsed.
-- A host with the name of a command is written `ssj connect list`, the plain connection (`ssj connect HOST [COMMAND]...`, whose words after the destination are for the host, as without
-  `connect`). A command word alone, `ssj list`, is an error that names the missing destination;
-  `edit` alone is the editor, and `connect` alone is a usage error. A `--` before the destination ends the options, as with `ssh`: `ssj -- host`.
+- Where the command starts, as with `ssh`: the destination of `connect` is its first word that is
+  not an option (or the value of one), and every word after it, options included, belongs to the
+  command: `ssj connect host ls -l`, and `ssj connect host --name x` runs `--name x` on the host.
+  A `--` directly after the destination is dropped, so `ssj connect host -- ls -l` works too.
+  Options of `connect` stand before the destination.
+- The other commands take their options before or after the destination
+  (`ssj list host --json`), and only those that they read: any other, such as `--send-env` for
+  `list`, is an error of `clap`. A setting for every connection belongs in `client.toml`.
+- `ssj list` without a destination is an error that names it; `ssj edit` alone is the editor of
+  `client.toml`.
 - `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
   `attach`, since the shell of a session that runs already is not started again.
 

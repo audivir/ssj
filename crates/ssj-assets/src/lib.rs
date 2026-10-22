@@ -8,20 +8,18 @@ use confique::Config as _;
 use confique::meta::{FieldKind, LeafKind, Meta};
 use ssj_client::options;
 
-/// What the options cannot show: the config files and the cache.
+/// What the options cannot show: a command on the host.
 const COMMAND: &str = r#".SH RUNNING A COMMAND
-\fBssj\fR \fIDESTINATION\fR \fICOMMAND\fR... runs the command in the session instead of the shell,
-as \fBssh\fR does, and ends with its exit code. The login shell of the host runs it, so pipes,
-\fB&&\fR, and \fBcd\fR work. The session survives a lost connection like any other, and can be joined
-with \fBssj attach\fR.
+\fBssj connect\fR \fIDESTINATION\fR \fICOMMAND\fR... runs the command in the session instead of the
+shell, as \fBssh\fR does, and ends with its exit code. The login shell of the host runs it, so
+pipes, \fB&&\fR, and \fBcd\fR work. The session survives a lost connection like any other, and can
+be joined with \fBssj attach\fR.
 .PP
 As with \fBssh\fR, everything after the destination belongs to the command, options included:
-\fBssj host ls \-la\fR runs \fBls \-la\fR on the host. Options of \fBssj\fR go before the destination
-(\fBssj \-\-local\-echo auto host make \-j4\fR). A \fB\-\-\fR right after the destination is optional.
-.PP
-The commands of \fBssj\fR (\fBlist\fR, \fBattach\fR, \fBkill\fR, \fBdetach\fR, \fBinstall\fR, \fBedit\fR)
-keep their options after the destination: \fBssj list host \-\-json\fR, and take only the options
-listed under COMMANDS. A host with the name of one of them is written \fBssj connect list\fR.
+\fBssj connect host ls \-la\fR runs \fBls \-la\fR on the host. Options of \fBssj\fR go before the
+destination (\fBssj connect \-\-local\-echo auto host make \-j4\fR). A \fB\-\-\fR right after the
+destination is optional. The other commands take their options before or after the destination
+(\fBssj list host \-\-json\fR), and only those listed under COMMANDS.
 "#;
 
 /// The FILES section around the keys of the two config files, which come from their structs.
@@ -68,44 +66,28 @@ fn keys(meta: &Meta) -> String {
 
 /// Writes `ssj.1`, `ssj.bash`, `_ssj`, and `ssj.fish` to `out`.
 pub fn write(out: &Path) -> io::Result<()> {
-    // the generators list hidden options too, so they are left out here.
-    let build = |full: clap::Command| {
-        let visible: Vec<clap::Arg> = full
-            .get_arguments()
-            .filter(|arg| {
-                !arg.is_hide_set() && !matches!(arg.get_id().as_str(), "help" | "version")
-            })
-            .cloned()
-            .collect();
-        let mut command = clap::Command::new("ssj")
-            .version(env!("CARGO_PKG_VERSION"))
-            .args(visible);
-        if let Some(about) = full.get_about() {
-            command = command.about(about.clone());
-        }
-        if let Some(usage) = full.get_overridden_usage() {
-            command = command.override_usage(usage.clone());
-        }
-        if let Some(help) = full.get_after_help() {
-            command = command.after_help(help.clone());
-        }
-        command
-    };
-    // the completions offer the real flag names, the man page shows a pair on one line.
-    let command = build(options::commands());
+    let tree = completion_tree();
     let mut page = Vec::new();
-    // the commands get a section of their own below, with the options that each reads.
     let man = clap_mangen::Man::new(options::command());
     man.render_title(&mut page)?;
     man.render_name_section(&mut page)?;
     man.render_synopsis_section(&mut page)?;
     man.render_description_section(&mut page)?;
-    man.render_options_section(&mut page)?;
+    // the options of all commands in one list; COMMANDS says which command reads which
+    let all = clap::Command::new("ssj").args(every_option(&tree).into_iter().cloned());
+    clap_mangen::Man::new(all).render_options_section(&mut page)?;
     man.render_version_section(&mut page)?;
     page.extend_from_slice(COMMAND.as_bytes());
+    page.extend_from_slice(commands_section().as_bytes());
+    let files = FILES
+        .replace("CLIENT_KEYS", &keys(&ssj_client::config::Config::META))
+        .replace("SERVER_KEYS", &keys(&ssj_server::config::Config::META));
+    page.extend_from_slice(files.as_bytes());
+    fs::write(out.join("ssj.1"), page)?;
+
     // the options that take a value: the word after one of them is not a destination
-    let value_options = command
-        .get_arguments()
+    let value_options = every_option(&tree)
+        .into_iter()
         .filter(|arg| arg.get_action().takes_values())
         .flat_map(|arg| {
             let long = arg.get_long().map(|long| format!("--{long}"));
@@ -115,8 +97,8 @@ pub fn write(out: &Path) -> io::Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
     // the options with a free text: no fixed values, no file or host, and not the session name
-    let free_options: Vec<String> = command
-        .get_arguments()
+    let free_options: Vec<String> = every_option(&tree)
+        .into_iter()
         .filter(|arg| arg.get_action().takes_values())
         .filter(|arg| arg.get_possible_values().is_empty())
         .filter(|arg| {
@@ -129,34 +111,6 @@ pub fn write(out: &Path) -> io::Result<()> {
         .filter(|long| *long != "name")
         .map(str::to_owned)
         .collect();
-    // the commands with their options in the man page
-    let mut page_commands = String::from(
-        ".SH COMMANDS\nThe options that each command reads. They may stand before the command word or after the destination; any other option is an error.\n",
-    );
-    for found in options::COMMANDS
-        .iter()
-        .filter(|found| found.word != "connect")
-    {
-        let word = found.word;
-        let list = found
-            .options
-            .iter()
-            .map(|id| {
-                let long = long_of(&command, id);
-                format!("\\fB\\-\\-{}\\fR", long.replace('-', "\\-"))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        page_commands.push_str(&format!(".TP\n\\fBssj {word}\\fR\n{list}\n"));
-    }
-    page.extend_from_slice(page_commands.as_bytes());
-    let files = FILES
-        .replace("CLIENT_KEYS", &keys(&ssj_client::config::Config::META))
-        .replace("SERVER_KEYS", &keys(&ssj_server::config::Config::META));
-    page.extend_from_slice(files.as_bytes());
-    fs::write(out.join("ssj.1"), page)?;
-
-    let tree = completion_tree();
     for (shell, file) in [
         (Shell::Bash, "ssj.bash"),
         (Shell::Zsh, "_ssj"),
@@ -176,58 +130,115 @@ pub fn write(out: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// The long name of the option with this id.
-fn long_of(command: &clap::Command, id: &str) -> String {
-    command
-        .get_arguments()
-        .find(|arg| arg.get_id() == id)
-        .and_then(|arg| arg.get_long())
-        .map(str::to_owned)
-        .unwrap_or_else(|| panic!("COMMAND_OPTIONS names {id}, which is no option"))
+/// The options of all commands, each once.
+fn every_option(tree: &clap::Command) -> Vec<&clap::Arg> {
+    let mut all: Vec<&clap::Arg> = Vec::new();
+    for arg in tree
+        .get_subcommands()
+        .flat_map(clap::Command::get_arguments)
+    {
+        if !arg.is_positional() && all.iter().all(|has| has.get_id() != arg.get_id()) {
+            all.push(arg);
+        }
+    }
+    all
 }
 
-/// The tree of the commands with what only the generators need. What the hosts have and the
-/// sessions of a host stay with the functions that are added in the shells.
+/// The COMMANDS section of the man page: the usage of each command, what it does, and its
+/// options.
+fn commands_section() -> String {
+    let roff = |text: &str| text.replace('\\', "\\\\").replace('-', "\\-");
+    let mut command = options::command();
+    command.build();
+    let mut section = String::from(".SH COMMANDS\n");
+    for sub in command.get_subcommands() {
+        let usage = sub.clone().render_usage().to_string();
+        let usage = usage.trim_start_matches("Usage: ");
+        // the long text of `clap` starts with the line about the command
+        let about = sub.get_about().map(ToString::to_string).unwrap_or_default();
+        let long = sub
+            .get_long_about()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let detail = long.strip_prefix(&about).unwrap_or_default().trim();
+        let options = sub
+            .get_arguments()
+            .filter(|arg| !arg.is_positional() && !arg.is_hide_set())
+            .filter_map(|arg| arg.get_long())
+            .filter(|long| *long != "help")
+            .map(|long| format!("\\fB\\-\\-{}\\fR", roff(long)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        section.push_str(&format!(
+            ".TP\n\\fB{}\\fR\n{}. {}\n.br\nOptions: {options}\n",
+            roff(usage),
+            roff(&about),
+            roff(detail).replace('\n', " ")
+        ));
+    }
+    section
+}
+
+/// The tree of the commands with what only the generators need: the generators list hidden
+/// options too, so only the visible ones are copied. What the hosts have and the sessions of a
+/// host stay with the functions that are added in the shells.
 fn completion_tree() -> clap::Command {
-    let mut tree = options::commands();
-    for found in options::COMMANDS {
-        tree = tree.mut_subcommand(found.word, |mut sub| {
-            sub = sub
-                .disable_help_flag(true)
-                .disable_version_flag(true)
-                // the functions added to the zsh file look for the arguments without a text.
-                .mut_arg("destination", |arg| arg.help(None::<&str>));
-            if matches!(found.word, "attach" | "kill" | "detach") {
-                sub = sub.mut_arg("id", |arg| arg.help(None::<&str>));
+    let full = options::command();
+    let mut tree = clap::Command::new("ssj")
+        .version(env!("CARGO_PKG_VERSION"))
+        .disable_help_subcommand(true);
+    for sub in full.get_subcommands() {
+        let mut copy = clap::Command::new(sub.get_name().to_owned())
+            .disable_help_flag(true)
+            .disable_version_flag(true);
+        if let Some(about) = sub.get_about() {
+            copy = copy.about(about.clone());
+        }
+        for arg in sub.get_arguments().filter(|arg| !arg.is_hide_set()) {
+            // the functions added to the zsh file look for the arguments without a text.
+            let arg = if arg.is_positional() {
+                arg.clone().help(None::<&str>)
+            } else {
+                arg.clone()
+            };
+            copy = copy.arg(arg);
+        }
+        match sub.get_name() {
+            // the destination, and the words after it for the command on the host.
+            "connect" => {
+                copy = copy
+                    .mut_arg("line", |arg| {
+                        arg.num_args(1)
+                            .action(clap::ArgAction::Set)
+                            .trailing_var_arg(false)
+                            .value_names(["DESTINATION"])
+                    })
+                    .arg(
+                        clap::Arg::new("remote")
+                            .value_name("COMMAND")
+                            .num_args(0..)
+                            .trailing_var_arg(true)
+                            .value_hint(clap::ValueHint::AnyPath),
+                    );
             }
+            "kill" | "detach" => {}
             // nothing is left to say after them, which `_arguments` of zsh would answer with the
             // options even before a dash is typed: a rest that completes nothing keeps them back
-            // the words after the destination of `connect` are for the command on the host.
-            if found.word == "connect" {
-                let remote = clap::Arg::new("remote")
-                    .index(2)
-                    .value_name("COMMAND")
-                    .num_args(0..)
-                    .trailing_var_arg(true)
-                    .value_hint(clap::ValueHint::AnyPath);
-                sub = sub.arg(remote);
-            } else if !matches!(found.word, "kill" | "detach") {
-                let index = sub.get_positionals().count() + 1;
-                let rest = clap::Arg::new("rest").index(index).value_name("NOTHING");
-                sub = sub.arg(rest.num_args(0..));
+            _ => {
+                let rest = clap::Arg::new("rest").value_name("NOTHING").num_args(0..);
+                copy = copy.arg(rest);
             }
-            sub
-        });
+        }
+        tree = tree.subcommand(copy);
     }
     tree
 }
 
-/// The words of the commands, `connect` among them if `connect` is set.
-fn words(connect: bool) -> Vec<&'static str> {
-    options::COMMANDS
-        .iter()
-        .map(|found| found.word)
-        .filter(|word| connect || *word != "connect")
+/// The words of the commands.
+fn words() -> Vec<String> {
+    options::command()
+        .get_subcommands()
+        .map(|sub| sub.get_name().to_owned())
         .collect()
 }
 
@@ -249,8 +260,7 @@ _ssj_session_ids() {
 }
 "#;
 
-/// The zsh file: the functions of `clap` with the hosts of the ssh config, the sessions, and the
-/// files for the words after a destination that is no command.
+/// The zsh file: the functions of `clap` with the hosts of the ssh config and the sessions.
 fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
     let mut text = text
         .replace(":_hosts'", ":_ssj_hosts'")
@@ -262,15 +272,7 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
         .replace(
             "--name=[Join the session of this name, or start it]:NAME:_default",
             "--name=[Join the session of this name, or start it]:NAME:_ssj_sessions",
-        )
-        // the first word is a command or a host
-        .replace(
-            "_describe -t commands 'ssj commands' commands \"$@\"",
-            "_describe -t commands 'ssj commands' commands \"$@\"; _ssj_hosts",
         );
-    // any other first word is the destination, and the rest belongs to the command for the host,
-    // dashes included (`ssj host ls -l`): files, since the layout of the host is mostly the same
-    // (`~/.local/share/...`)
     let end = "        esac\n    ;;\nesac";
     assert!(text.contains(end), "the end of the case of the commands");
     text = text.replacen(
@@ -278,7 +280,7 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
         // the status is that of the completion: with several matchers (the `matcher-list` of
         // oh-my-zsh has three) a function that ends with 1 is run again for the next matcher,
         // and the lists of all of them are shown
-        "            (*)\n[[ -n $line[1] ]] && _files && ret=0\n;;\n        esac\n    ;;\nesac\n    return ret",
+        "        esac\n    ;;\nesac\n    return ret",
         1,
     );
     // `#compdef` must stay the first line, or the completion is not found.
@@ -308,7 +310,6 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
 /// finds the words that are no options, and offers the hosts and the sessions to them, and leaves
 /// the options and their values to `clap`.
 fn bash(text: &str, value_options: &str, free_options: &[String]) -> String {
-    let commands = words(true).join(" ");
     let free = free_options
         .iter()
         .map(|long| format!("--{long}"))
@@ -317,7 +318,7 @@ fn bash(text: &str, value_options: &str, free_options: &[String]) -> String {
     let wrapper = BASH_WRAPPER
         .replace("__FREE_OPTIONS__", &free)
         .replace("__VALUE_OPTIONS__", value_options)
-        .replace("__COMMANDS__", &commands);
+        .replace("__COMMANDS__", &words().join(" "));
     format!("{text}{wrapper}")
 }
 
@@ -349,79 +350,62 @@ _ssj_sessions() {
         fi
     done
     COMPREPLY=()
-    # the options and their values, for the start and for the words after a command word, are
-    # for `clap`; the words after any other destination are for the command on the host
-    local first=${pos[0]-} is_command=
-    case " __COMMANDS__ " in *" $first "*) [[ -z $first ]] || is_command=1 ;; esac
-    # after the destination of `connect` the words are for the host as well
-    [[ $first == connect && ${#pos[@]} -gt 1 ]] && is_command=
-    if [[ -z $first || -n $is_command ]]; then
-        if [[ $value_options == *" $previous "* ]]; then
-            # a free text has nothing to offer, and no files
-            if [[ " __FREE_OPTIONS__ " == *" $previous "* ]]; then
-                compopt +o default +o bashdefault 2>/dev/null
-                COMPREPLY=()
-                return
-            fi
-            # an option that the command does not read has no values: ask `clap` for its options
-            if [[ -n $first ]]; then
-                local saved=${COMP_WORDS[COMP_CWORD]}
-                COMP_WORDS[COMP_CWORD]=-
-                _ssj "$1" - ""
-                COMP_WORDS[COMP_CWORD]=$saved
-                local known=" ${COMPREPLY[*]} "
-                COMPREPLY=()
-                [[ $known == *" $previous "* ]] || return
-            fi
-            if [[ $previous == --name ]]; then
-                COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
-            elif [[ $previous == --udp-host ]] && declare -F _known_hosts_real >/dev/null; then
-                _known_hosts_real -- "$current"
-            else
-                _ssj "$1" "$current" "$previous"
-            fi
+    local first=${pos[0]-}
+    # after the destination of `connect` the words are for the command on the host: files
+    [[ $first == connect && ${#pos[@]} -gt 1 ]] && return
+    if [[ $value_options == *" $previous "* ]]; then
+        # a free text has nothing to offer, and no files
+        if [[ " __FREE_OPTIONS__ " == *" $previous "* ]]; then
+            compopt +o default +o bashdefault 2>/dev/null
             return
         fi
-        if [[ $current == -* ]]; then
-            _ssj "$1" "$current" "$previous"
-            return
-        fi
-    elif [[ $current == -* ]]; then
-        return
-    fi
-    local hosts=
-    if [[ -z $first ]]; then
-        COMPREPLY=($(compgen -W "__COMMANDS__" -- "$current"))
-        hosts=1
-    elif [[ -n $is_command ]]; then
-        if [[ ${#pos[@]} -eq 1 ]]; then
-            hosts=1
+        # an option that the command does not read has no values: ask `clap` for its options
+        local saved=${COMP_WORDS[COMP_CWORD]}
+        COMP_WORDS[COMP_CWORD]=-
+        _ssj "$1" - ""
+        COMP_WORDS[COMP_CWORD]=$saved
+        local known=" ${COMPREPLY[*]} "
+        COMPREPLY=()
+        [[ $known == *" $previous "* ]] || return
+        if [[ $previous == --name ]]; then
+            COMPREPLY=($(compgen -W "$(ssj --complete 2>/dev/null)" -- "$current"))
+        elif [[ $previous == --udp-host ]] && declare -F _known_hosts_real >/dev/null; then
+            _known_hosts_real -- "$current"
         else
-            # `kill` and `detach` take any number of sessions, `attach` one
-            local only=
-            case $first in
-                attach) [[ ${#pos[@]} -eq 2 ]] || only=none ;;
-                kill) ;;
-                # `detach` only acts on a session that has a client
-                detach) only=--connected ;;
-                *) only=none ;;
-            esac
-            if [[ $only != none ]]; then
-                COMPREPLY=($(compgen -W "$(ssj --complete "${pos[1]}" $only 2>/dev/null)" -- "$current"))
-            fi
-            # no file names where nothing is to be said
-            [[ ${#COMPREPLY[@]} -gt 0 ]] || compopt +o default 2>/dev/null
+            _ssj "$1" "$current" "$previous"
         fi
-    else
-        # any other first word is the destination, and the rest is files
         return
     fi
-    # the aliases of the ssh config are known to `_known_hosts_real` of bash-completion, as for ssh
-    if [[ -n $hosts ]] && declare -F _known_hosts_real >/dev/null; then
-        local others=("${COMPREPLY[@]}")
-        _known_hosts_real -- "$current"
-        COMPREPLY=("${others[@]}" "${COMPREPLY[@]}")
+    # the commands first, as in zsh and fish, where `clap` would put its options in front
+    if [[ -z $first && $current != -* ]]; then
+        COMPREPLY=($(compgen -W "__COMMANDS__" -- "$current"))
+        return
     fi
+    # the options of a command
+    if [[ -z $first || $current == -* ]]; then
+        _ssj "$1" "$current" "$previous"
+        return
+    fi
+    if [[ ${#pos[@]} -eq 1 ]]; then
+        # the aliases of the ssh config are known to `_known_hosts_real` of bash-completion, as
+        # for ssh
+        declare -F _known_hosts_real >/dev/null && _known_hosts_real -- "$current"
+        return
+    fi
+    # `kill` and `detach` take any number of sessions, `attach` one
+    local only=
+    case $first in
+        attach) [[ ${#pos[@]} -eq 2 ]] || only=none ;;
+        kill) ;;
+        # `detach` only acts on a session that has a client
+        detach) only=--connected ;;
+        *) only=none ;;
+    esac
+    if [[ $only != none ]]; then
+        COMPREPLY=($(compgen -W "$(ssj --complete "${pos[1]}" $only 2>/dev/null)" -- "$current"))
+    fi
+    # no file names where nothing is to be said
+    [[ ${#COMPREPLY[@]} -gt 0 ]] || compopt +o default 2>/dev/null
 }
 complete -F _ssj_sessions -o bashdefault -o default ssj
 "#;
@@ -429,27 +413,10 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
 /// The fish file: the rules of `clap`, which find the command word with `argparse`, and the rules
 /// for the hosts and the sessions. The options of `connect` stand before its destination only.
 fn fish(text: &str, value_options: &str, free_options: &[String]) -> String {
-    let commands = words(true).join(" ");
     let text = text.replace(
         "__fish_ssj_using_subcommand connect\"",
         "__fish_ssj_using_subcommand connect; and test (count (__ssj_words)) -le 1\"",
     );
-    // `argparse` of `clap` fails while the value of an option is missing, so before the command
-    // word the rules count the words themselves: those of the options also while a value is
-    // typed, the others (the commands) not
-    let text = text
-        .lines()
-        .map(
-            |line| match line.strip_prefix("complete -c ssj -n \"__fish_ssj_needs_command\"") {
-                Some(rest) if rest.contains(" -l ") || rest.contains(" -s ") => {
-                    format!("complete -c ssj -n \"__ssj_no_command\"{rest}")
-                }
-                Some(rest) => format!("complete -c ssj -n \"__ssj_at_start\"{rest}"),
-                None => line.to_owned(),
-            },
-        )
-        .collect::<Vec<_>>()
-        .join("\n");
     // the options with a free text complete nothing, files included
     let text = text
         .lines()
@@ -464,13 +431,9 @@ fn fish(text: &str, value_options: &str, free_options: &[String]) -> String {
             }
         })
         .collect::<String>();
-    // the commands that keep their options after the destination, with the words after it
-    // for the parser, not for the host
-    let option_commands = words(false).join(" ");
     let rules = FISH_RULES
-        .replace("__OPTION_COMMANDS__", &option_commands)
         .replace("__VALUE_OPTIONS__", value_options)
-        .replace("__COMMANDS__", &commands);
+        .replace("__COMMANDS__", &words().join(" "));
     format!("{text}{rules}")
 }
 
@@ -486,29 +449,14 @@ function __ssj_words
             set skip 0
             continue
         end
-        if test "$word" = --
-            printf '%s
-' $word
-            continue
-        end
         switch $word
             case __VALUE_OPTIONS__
                 set skip 1
             case '-*'
             case '*'
-                printf '%s
-' $word
+                printf '%s\n' $word
         end
     end
-end
-function __ssj_no_command
-    test (count (__ssj_words)) -eq 0
-end
-# no command yet, and no value of an option is being typed
-function __ssj_at_start
-    __ssj_no_command; or return 1
-    set -l tokens (commandline -opc)
-    not contains -- $tokens[-1] __VALUE_OPTIONS__
 end
 # the word before the one being typed is an option that takes a value
 function __ssj_value_pending
@@ -527,16 +475,18 @@ function __ssj_foreign_value
     set -l offered (complete -C (string join ' ' -- $tokens[1..-2] $tokens[-1]) | string replace -r '\t.*' '')
     not contains -- $tokens[-1] $offered
 end
-# in a command of ssj no file is wanted, but for the values of options and after `--`
+# no file is wanted but for the values of options and for the command on the host after the
+# destination of `connect`
 function __ssj_no_files
     set -l words (__ssj_words)
-    test (count $words) -ge 1; and contains -- $words[1] __OPTION_COMMANDS__; and test "$words[2]" != --; or return 1
+    test (count $words) -ge 1; or return 1
+    test $words[1] = connect; and test (count $words) -ge 2; and return 1
     not __ssj_value_pending; or __ssj_foreign_value
 end
 function __ssj_wants_sessions
     set -l words (__ssj_words)
     not __ssj_value_pending; or return 1
-    test (count $words) -ge 2; and test $words[2] != --; or return 1
+    test (count $words) -ge 2; or return 1
     switch $words[1]
         case attach
             test (count $words) -eq 2
@@ -556,7 +506,6 @@ function __ssj_sessions_of_host
 end
 complete -c ssj -n '__ssj_no_files' -f
 complete -c ssj -n '__ssj_wants_sessions' -f -a '(__ssj_sessions_of_host)'
-complete -c ssj -n '__ssj_at_start' -f -a '(__fish_print_hostnames)'
 complete -c ssj -n '__ssj_wants_host' -f -a '(__fish_print_hostnames)'
-complete -c ssj -n '__ssj_no_command' -l name -x -a '(ssj --complete 2>/dev/null)'
+complete -c ssj -n '__fish_ssj_using_subcommand connect; and test (count (__ssj_words)) -le 1' -l name -x -a '(ssj --complete 2>/dev/null)'
 "#;

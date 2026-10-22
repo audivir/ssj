@@ -91,7 +91,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     .unwrap();
 
     // nothing on the command line: the file decides.
-    let mut plain = args(&["host"]);
+    let mut plain = args(&["connect", "host"]);
     plain.apply_config(&config);
     assert_eq!(plain.ssh_command, ["my-ssh"]);
     assert_eq!(plain.detach_key, Some(0x01));
@@ -100,6 +100,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
 
     // each flag beats its key, and leaves the other keys alone.
     let mut flags = args(&[
+        "connect",
         "--ssh-command",
         "other-ssh",
         "--detach-key",
@@ -117,7 +118,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     assert_eq!(flags.send_env_add, ["X"]);
     assert_eq!(flags.auto_install, Some(AutoInstall::Never));
 
-    let mut one = args(&["--detach-key", "ctrl-b", "host"]);
+    let mut one = args(&["connect", "--detach-key", "ctrl-b", "host"]);
     one.apply_config(&config);
     assert_eq!(
         (one.detach_key, one.ssh_command),

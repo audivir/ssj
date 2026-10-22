@@ -77,18 +77,17 @@ fn no_config() -> &'static Path {
     })
 }
 
-/// The options that the command of `words` reads, among those that the helpers give every line:
-/// a command refuses the options of the connection, so each line gets only its own.
+/// The options that the command of `words`, the first word, reads, among those that the helpers
+/// give every line: a command refuses the options of the connection, so each line gets only its
+/// own.
 fn reads(words: &[&str], option: &str) -> bool {
-    let id = option.trim_start_matches("--").replace('-', "_");
-    let commands = ssj_client::options::COMMANDS;
-    match commands
-        .iter()
-        .find(|found| found.word != "connect" && words.contains(&found.word))
-    {
-        Some(found) => found.options.contains(&id.as_str()),
-        None => true,
-    }
+    let command = ssj_client::options::command();
+    let long = option.trim_start_matches("--");
+    command.find_subcommand(words[0]).is_some_and(|found| {
+        found
+            .get_arguments()
+            .any(|arg| arg.get_long() == Some(long))
+    })
 }
 
 /// The options of the helpers that the command of `words` reads.
@@ -186,7 +185,7 @@ fn run_client_to(
 ) -> Output {
     let port = free_port();
     let mut command = Command::new(env!("CARGO_BIN_EXE_ssj"));
-    command.env("XDG_CONFIG_HOME", no_config());
+    command.env("XDG_CONFIG_HOME", no_config()).arg("connect");
     command
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
@@ -257,11 +256,12 @@ fn shell_command_runs_through_bootstrap_quic_and_pty_and_its_exit_code_is_return
     assert_eq!(output.status.code(), Some(3), "stderr: {stderr:?}");
 }
 
-/// Runs `ssj user@localhost <words>` with a shell of /bin/sh on the host.
+/// Runs `ssj connect user@localhost <words>` with a shell of /bin/sh on the host.
 fn run_with_command(ssh: &Path, words: &[&str]) -> Output {
     let port = free_port();
     let child = Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_CONFIG_HOME", no_config())
+        .arg("connect")
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--port-range", &format!("{port}:{port}")])
@@ -365,6 +365,7 @@ fn terminal_session(extra: &[&str]) -> (String, Option<i32>) {
     pty.resize(pty_process::Size::new(31, 97)).unwrap();
     let mut child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_CONFIG_HOME", no_config())
+        .arg("connect")
         .args(extra)
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
@@ -513,10 +514,12 @@ const LEAK_GUARD: [&str; 8] = [
 ];
 
 fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
+    let (word, rest) = words.split_first().expect("a command word");
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_CONFIG_HOME", no_config())
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", runtime)
+        .arg(word)
         .args(given(
             words,
             &[
@@ -529,7 +532,7 @@ fn ssj(runtime: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
             ],
         ))
         .args(given(words, &LEAK_GUARD))
-        .args(words)
+        .args(rest)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -560,15 +563,25 @@ fn ssj_typing(runtime: &Path, ssh: &Path, words: &[&str], steps: &[(&str, &str)]
     use std::io::Read;
     use std::sync::{Arc, Mutex};
 
+    let (word, rest) = words.split_first().expect("a command word");
     let mut child = Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_CONFIG_HOME", no_config())
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", runtime)
-        .args(["--ssh-command", ssh.to_str().unwrap()])
-        .args(["--server-path", server_binary().to_str().unwrap()])
-        .args(["--udp-host", "127.0.0.1"])
-        .args(LEAK_GUARD)
-        .args(words)
+        .arg(word)
+        .args(given(
+            words,
+            &[
+                "--ssh-command",
+                ssh.to_str().unwrap(),
+                "--server-path",
+                server_binary().to_str().unwrap(),
+                "--udp-host",
+                "127.0.0.1",
+            ],
+        ))
+        .args(given(words, &LEAK_GUARD))
+        .args(rest)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -780,7 +793,7 @@ fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
     let first = ssj_typing(
         &runtime,
         &ssh,
-        &["user@localhost", "--", &script],
+        &["connect", "user@localhost", "--", &script],
         &[("one\n", "got:one:1")],
     );
     let detached = helper.join().unwrap();
@@ -821,7 +834,7 @@ fn the_detach_key_leaves_in_the_middle_of_a_line() {
     let output = ssj_typing(
         &runtime,
         &ssh,
-        &["--detach-key", "ctrl-]", "user@localhost"],
+        &["connect", "--detach-key", "ctrl-]", "user@localhost"],
         // typed in the middle of a line.
         &[("half a line\x1d", "")],
     );
@@ -845,7 +858,7 @@ fn kill_ends_several_sessions_in_one_call() {
         let output = ssj_typing(
             &runtime,
             &ssh,
-            &["--detach-key", "ctrl-]", "user@localhost"],
+            &["connect", "--detach-key", "ctrl-]", "user@localhost"],
             &[("x\x1d", "")],
         );
         assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
@@ -934,11 +947,13 @@ impl Host {
 
     /// Like [`Host::ssj`] with another build of the client.
     fn ssj_with(&self, exe: &Path, ssh: &Path, words: &[&str], input: &str) -> Output {
+        let (word, rest) = words.split_first().expect("a command word");
         let mut child = Command::new(exe)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_RUNTIME_DIR", &self.runtime)
             .env("XDG_CACHE_HOME", &self.runtime)
+            .arg(word)
             .args(given(
                 words,
                 &[
@@ -949,7 +964,7 @@ impl Host {
                 ],
             ))
             .args(given(words, &LEAK_GUARD))
-            .args(words)
+            .args(rest)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -975,7 +990,8 @@ impl Host {
     /// The words that start a short session without naming the server file.
     fn session_words(&self, extra: &[&str]) -> Vec<String> {
         let port = free_port();
-        let mut words: Vec<String> = extra.iter().map(|w| (*w).to_owned()).collect();
+        let mut words = vec!["connect".to_owned()];
+        words.extend(extra.iter().map(|w| (*w).to_owned()));
         for arg in [
             "--port-range",
             &format!("{port}:{port}"),
@@ -1353,6 +1369,7 @@ fn on_terminal(host: &Host, ssh: &Path, words: &[String]) -> OnTerminal {
         .env("XDG_CONFIG_HOME", &host.config)
         .env("XDG_RUNTIME_DIR", &host.runtime)
         .env("XDG_CACHE_HOME", &host.runtime)
+        .arg(&words[0])
         .args(given(
             &words.iter().map(String::as_str).collect::<Vec<_>>(),
             &[
@@ -1362,7 +1379,7 @@ fn on_terminal(host: &Host, ssh: &Path, words: &[String]) -> OnTerminal {
                 "127.0.0.1",
             ],
         ))
-        .args(words)
+        .args(&words[1..])
         .spawn(pts)
         .unwrap();
     let fd: std::os::fd::OwnedFd = pty.into();
@@ -1732,7 +1749,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         "--server-arg",
         "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done",
     ];
-    let mut words = vec!["--name", "work"];
+    let mut words = vec!["connect", "--name", "work"];
     words.extend(shell);
     words.push("user@localhost");
 
@@ -1763,7 +1780,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
     let second = ssj_typing(
         &runtime,
         &ssh,
-        &["--name", "work", "user@localhost"],
+        &["connect", "--name", "work", "user@localhost"],
         &[("two\n", "got:two:2"), ("\x1c", "")],
     );
     assert!(
@@ -1815,7 +1832,7 @@ fn auto_attach_joins_the_only_session_without_a_client() {
         "--server-arg",
         "stty -echo; n=0; while read l; do n=$((n+1)); echo \"got:$l:$n\"; done",
     ];
-    let mut words = vec!["--auto-attach"];
+    let mut words = vec!["connect", "--auto-attach"];
     words.extend(shell);
     words.push("user@localhost");
     let first = ssj_typing(
@@ -1833,7 +1850,7 @@ fn auto_attach_joins_the_only_session_without_a_client() {
     let second = ssj_typing(
         &runtime,
         &ssh,
-        &["--auto-attach", "user@localhost"],
+        &["connect", "--auto-attach", "user@localhost"],
         &[("two\n", "got:two:2"), ("\x1c", "")],
     );
     assert!(
@@ -1857,6 +1874,7 @@ fn typed_on_a_terminal(local_echo: &str) -> String {
     pty.resize(pty_process::Size::new(24, 80)).unwrap();
     let mut child = pty_process::blocking::Command::new(env!("CARGO_BIN_EXE_ssj"))
         .env("XDG_CONFIG_HOME", no_config())
+        .arg("connect")
         .args(["--ssh-command", ssh.to_str().unwrap()])
         .args(["--server-path", server_binary().to_str().unwrap()])
         .args(["--udp-host", "127.0.0.1", "--local-echo", local_echo])
@@ -1947,12 +1965,14 @@ fn editor_script(body: &str) -> PathBuf {
 /// Runs `ssj edit ...` with the editor and with `config` as the config directory.
 fn ssj_edit(config: &Path, editor: &Path, words: &[&str], input: &str) -> Output {
     let ssh = fake_ssh(FAKE_SSH);
+    let (word, rest) = words.split_first().expect("a command word");
     let mut command = Command::new(env!("CARGO_BIN_EXE_ssj"));
     command
         .env("XDG_CONFIG_HOME", config)
         .env("XDG_CACHE_HOME", config)
         .env("EDITOR", editor)
         .env_remove("VISUAL")
+        .arg(word)
         .args(given(
             words,
             &[
@@ -1962,7 +1982,7 @@ fn ssj_edit(config: &Path, editor: &Path, words: &[&str], input: &str) -> Output
                 server_binary().to_str().unwrap(),
             ],
         ))
-        .args(words);
+        .args(rest);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2232,7 +2252,7 @@ fn detached_session(host: &Host, ssh: &Path) {
     let output = ssj_typing(
         &host.runtime,
         ssh,
-        &["--detach-key", "ctrl-]", "user@localhost"],
+        &["connect", "--detach-key", "ctrl-]", "user@localhost"],
         &[("x\x1d", "")],
     );
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
@@ -2261,10 +2281,11 @@ fn wait_for_sessions(host: &Host, ssh: &Path, wanted: usize) {
 
 fn kill_words(host: &Host, extra: &[&str]) -> Vec<String> {
     let mut words = vec![
+        extra[0].to_owned(),
         "--server-path".to_owned(),
         server_binary().to_str().unwrap().to_owned(),
     ];
-    words.extend(extra.iter().map(|w| (*w).to_owned()));
+    words.extend(extra[1..].iter().map(|w| (*w).to_owned()));
     let _ = host;
     words
 }
@@ -2331,8 +2352,10 @@ fn kill_without_an_id_and_without_a_terminal_needs_f() {
 }
 
 #[test]
-fn a_command_word_with_help_shows_its_own_help_and_not_a_host() {
-    for word in ["list", "attach", "kill", "detach", "install", "edit"] {
+fn a_command_word_with_help_shows_its_own_help() {
+    for word in [
+        "connect", "list", "attach", "kill", "detach", "install", "edit",
+    ] {
         for flag in ["--help", "-h"] {
             let output = Command::new(env!("CARGO_BIN_EXE_ssj"))
                 .args([word, flag])
@@ -2340,7 +2363,7 @@ fn a_command_word_with_help_shows_its_own_help_and_not_a_host() {
                 .unwrap();
             let shown = text(&output.stdout);
             assert_eq!(output.status.code(), Some(0), "{word} {flag}");
-            assert!(shown.starts_with(&format!("Usage: ssj {word}")), "{shown}");
+            assert!(shown.contains(&format!("Usage: ssj {word}")), "{shown}");
         }
     }
     assert!(

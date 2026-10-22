@@ -654,7 +654,7 @@ fn complete(host: Option<&str>, connected: bool) -> u8 {
         };
         // the list writes the cache; the process is not waited for.
         let _ = std::process::Command::new(&exe)
-            .args(["--batch", "list", &target])
+            .args(["list", "--batch", &target])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

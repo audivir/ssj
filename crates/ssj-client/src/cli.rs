@@ -3,12 +3,11 @@
 use std::path::PathBuf;
 
 use clap::FromArgMatches;
-use clap::parser::ValueSource;
 use ssj_net::Compress;
 use ssj_proto::{EnvFilter, PROTOCOL, SessionName};
 
 use crate::config::AutoInstall;
-use crate::options::{COMMANDS, Options};
+use crate::options::{Cli, CommandLine, Connection, Server, Session, Ssh, Upload};
 
 /// Where the server file is, as seen on the remote host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,7 +138,7 @@ pub struct Explicit {
 }
 
 impl Args {
-    /// Empty arguments for commands that need no destination.
+    /// The arguments before the command line fills them in.
     fn blank() -> Self {
         Self {
             command: Command::Connect,
@@ -250,191 +249,210 @@ pub fn parse_detach_key(text: &str) -> Result<Option<u8>, String> {
 
 /// Parses the arguments of the command line.
 ///
-/// As with `ssh`, everything after the destination belongs to the command that runs in the
-/// session, options included (`ssj host ls -l`). The exception are the commands of `ssj`
-/// (`ssj list host --json`), which keep their options after the destination.
+/// As with `ssh`, everything after the destination of `connect` belongs to the command that runs
+/// in the session, options included (`ssj connect host ls -l`).
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let command = crate::options::command();
     let words = std::iter::once("ssj".to_owned()).chain(args);
-    let matches = match command.clone().try_get_matches_from(words) {
-        Ok(matches) => matches,
+    let cli = match crate::options::command()
+        .try_get_matches_from(words)
+        .and_then(|matches| Cli::from_arg_matches(&matches))
+    {
+        Ok(cli) => cli,
         Err(error) if error.use_stderr() => {
             return Err(error.render().to_string().trim_end().to_owned());
         }
         // help and version go to the output and end the program.
         Err(error) => error.exit(),
     };
-    let (word, matches) = match matches.subcommand() {
-        Some((word, sub)) => (Some(word), sub),
-        None => (None, &matches),
+    let mut args = Args::blank();
+    let Some(line) = cli.command else {
+        args.command = Command::Complete {
+            host: cli.complete.filter(|host| !host.is_empty()),
+            connected: cli.connected,
+        };
+        return Ok(args);
     };
-    if let Some(word) = word.filter(|word| is_command_word(word)) {
-        foreign_option(&command, matches, word)?;
-    }
-    let options = Options::from_arg_matches(matches).map_err(|e| e.to_string())?;
-    let mut words = strings(matches, "destination").into_iter();
-    let destination = words.next();
-    let mut remote: Vec<String> = words.collect();
-    // a `--` right after the destination is dropped: `ssj host -- ls -l`
-    if remote.first().is_some_and(|word| word == "--") {
-        remote.remove(0);
-    }
-    let ids = match word {
-        Some("attach" | "kill" | "detach") => strings(matches, "id"),
-        _ => Vec::new(),
-    };
-    from_options(options, word, destination, ids, &remote)
-}
-
-/// The values of a positional argument.
-fn strings(matches: &clap::ArgMatches, id: &str) -> Vec<String> {
-    matches
-        .get_many::<String>(id)
-        .map_or_else(Vec::new, |values| values.cloned().collect())
-}
-
-/// The error for an option that the command does not read, as `--send-env` before `list`: the
-/// settings of the connection belong in `client.toml`.
-fn foreign_option(
-    command: &clap::Command,
-    matches: &clap::ArgMatches,
-    word: &str,
-) -> Result<(), String> {
-    let allowed = COMMANDS
-        .iter()
-        .find(|found| found.word == word)
-        .map_or(&[][..], |found| found.options);
-    for arg in command.get_arguments() {
-        let id = arg.get_id().as_str();
-        // the positional words, the options that ssj gives itself, and the ones for help
-        if (arg.get_long().is_none() && arg.get_short().is_none())
-            || matches!(id, "complete" | "connected" | "batch" | "help" | "version")
-        {
-            continue;
+    let destination = match line {
+        CommandLine::Connect {
+            ssh,
+            server,
+            upload,
+            session,
+            connection,
+            line,
+        } => {
+            let (destination, mut remote) = line.split_first().expect("a required destination");
+            // a `--` right after the destination is dropped: `ssj connect host -- ls -l`
+            if remote.first().is_some_and(|word| word == "--") {
+                remote = &remote[1..];
+            }
+            if !remote.is_empty() {
+                let command = remote.join(" ");
+                if command.trim().is_empty() {
+                    return Err("the command is empty".to_owned());
+                }
+                if connection.name.is_some() || connection.auto_attach {
+                    return Err(
+                        "a command cannot be combined with --name or --auto-attach, since \
+                                a session that runs already would not run it"
+                            .to_owned(),
+                    );
+                }
+                args.remote_command = Some(command);
+            }
+            ssh.apply(&mut args);
+            server.apply(&mut args);
+            upload.apply(&mut args);
+            session.apply(&mut args);
+            connection.apply(&mut args)?;
+            Some(destination.clone())
         }
-        if matches.value_source(id) == Some(ValueSource::CommandLine) && !allowed.contains(&id) {
-            return Err(format!(
-                "--{} is not an option of `ssj {word}` (a setting for every connection belongs in \
-                 client.toml, which `ssj edit` opens)",
-                id.replace('_', "-")
-            ));
+        CommandLine::List {
+            ssh,
+            server,
+            json,
+            batch,
+            host,
+        } => {
+            ssh.apply(&mut args);
+            server.apply(&mut args);
+            (args.command, args.json, args.batch) = (Command::List, json, batch);
+            Some(host.destination)
         }
-    }
-    Ok(())
-}
-
-/// Words that are commands of `ssj` when a destination follows them.
-fn is_command_word(word: &str) -> bool {
-    word != "connect" && COMMANDS.iter().any(|found| found.word == word)
-}
-
-fn from_options(
-    options: Options,
-    word: Option<&str>,
-    destination: Option<String>,
-    mut ids: Vec<String>,
-    remote: &[String],
-) -> Result<Args, String> {
-    if let Some(host) = &options.complete {
-        return Ok(Args {
-            command: Command::Complete {
-                host: (!host.is_empty()).then(|| host.clone()),
-                connected: options.connected,
-            },
-            ..Args::blank()
-        });
-    }
-    // a command for the session is everything after the destination, as with `ssh`.
-    let remote_command = (!remote.is_empty()).then(|| remote.join(" "));
-    if let Some(command) = &remote_command {
-        if command.trim().is_empty() {
-            return Err("the command is empty".to_owned());
+        CommandLine::Attach {
+            ssh,
+            server,
+            upload,
+            session,
+            host,
+            id,
+        } => {
+            ssh.apply(&mut args);
+            server.apply(&mut args);
+            upload.apply(&mut args);
+            session.apply(&mut args);
+            args.command = Command::Attach(id);
+            Some(host.destination)
         }
-        if options.name.is_some() || options.auto_attach {
-            return Err(
-                "a command cannot be combined with --name or --auto-attach, since a session that runs already would not run it"
-                    .to_owned(),
-            );
+        CommandLine::Kill {
+            ssh,
+            server,
+            force,
+            host,
+            ids,
+        } => {
+            ssh.apply(&mut args);
+            server.apply(&mut args);
+            (args.command, args.force) = (Command::Kill(ids), force);
+            Some(host.destination)
         }
-    }
-    let mut server_args = options.server_arg.clone();
-    if let Some(range) = &options.port_range {
-        server_args.extend(["--port-range".to_owned(), range.clone()]);
-    }
-    if let Some(timeout) = &options.detached_timeout {
-        server_args.extend(["--detached-timeout".to_owned(), timeout.clone()]);
-    }
-    let auto_install = match (options.install, options.no_install) {
-        (true, _) => Some(AutoInstall::Always),
-        (_, true) => Some(AutoInstall::Never),
-        _ => None,
-    };
-    let auto_attach =
-        (options.auto_attach || options.no_auto_attach).then_some(options.auto_attach);
-    let forward_agent =
-        (options.forward_agent || options.no_forward_agent).then_some(options.forward_agent);
-    let command = match word {
-        Some("list") => Command::List,
-        Some("install") => Command::Install,
-        Some("edit") => Command::Edit,
-        Some("attach") => Command::Attach(ids.pop()),
-        Some("kill") => Command::Kill(ids),
-        Some("detach") => Command::Detach(ids),
-        _ => Command::Connect,
+        CommandLine::Detach {
+            ssh,
+            server,
+            host,
+            ids,
+        } => {
+            ssh.apply(&mut args);
+            server.apply(&mut args);
+            args.command = Command::Detach(ids);
+            Some(host.destination)
+        }
+        CommandLine::Install { ssh, upload, host } => {
+            ssh.apply(&mut args);
+            upload.apply(&mut args);
+            args.command = Command::Install;
+            Some(host.destination)
+        }
+        CommandLine::Edit {
+            ssh,
+            server,
+            destination,
+        } => {
+            ssh.apply(&mut args);
+            server.apply(&mut args);
+            args.command = Command::Edit;
+            destination
+        }
     };
     // `ssj edit` alone is the editor for the local file.
-    let (target, ssh_port) = match destination {
-        Some(destination) => {
-            let parsed = ssj_proto::destination::parse(&destination)
-                .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
-            (parsed.target(), parsed.port)
+    if let Some(destination) = destination {
+        let parsed = ssj_proto::destination::parse(&destination)
+            .map_err(|e| format!("invalid destination {destination:?}: {e}"))?;
+        (args.destination, args.ssh_port) = (parsed.target(), parsed.port);
+    }
+    Ok(args)
+}
+
+impl Ssh {
+    fn apply(self, args: &mut Args) {
+        args.verbose = self.verbose.min(3);
+        args.log_file = self.log_file;
+        if let Some(command) = self.ssh_command {
+            (args.ssh_command, args.explicit.ssh_command) = (command, true);
         }
-        None if command == Command::Edit => (String::new(), None),
-        None => return Err("missing destination (user@host)".to_owned()),
-    };
-    // only checked here: the patterns are added to the others when the session starts.
-    EnvFilter::new(options.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?;
-    Ok(Args {
-        command,
-        destination: target,
-        ssh_port,
-        name: options.name,
-        explicit: Explicit {
-            ssh_command: options.ssh_command.is_some(),
-            detach_key: options.detach_key.is_some(),
-            transport: options.transport.is_some(),
-            auto_attach: auto_attach.is_some(),
-            forward_agent: forward_agent.is_some(),
-            local_echo: options.local_echo.is_some(),
-        },
-        ssh_command: options
-            .ssh_command
-            .unwrap_or_else(|| vec!["ssh".to_owned()]),
-        server_path: options
-            .server_path
-            .map_or(ServerPath::Default, ServerPath::Custom),
-        server_args,
-        remote_command,
-        udp_host: options.udp_host,
-        send_env: EnvFilter::none(),
-        send_env_add: options.send_env.clone(),
-        auto_install,
-        download_url: options.download_url,
-        server_binary: options.server_binary,
-        detach_key: options.detach_key.unwrap_or(Some(DEFAULT_DETACH_KEY)),
-        transport: options.transport.unwrap_or_default(),
-        auto_attach: auto_attach.unwrap_or(false),
-        forward_agent: forward_agent.unwrap_or(false),
-        local_echo: options.local_echo.unwrap_or_default(),
-        compress: options.compress,
-        congestion: options.congestion,
-        json: options.json,
-        verbose: options.verbose.min(3),
-        quiet: options.quiet,
-        force: options.force,
-        log_file: options.log_file,
-        batch: options.batch,
-    })
+    }
+}
+
+impl Server {
+    fn apply(self, args: &mut Args) {
+        if let Some(path) = self.server_path {
+            args.server_path = ServerPath::Custom(path);
+        }
+        args.server_args.extend(self.server_arg);
+    }
+}
+
+impl Upload {
+    fn apply(self, args: &mut Args) {
+        args.download_url = self.download_url;
+        args.server_binary = self.server_binary;
+    }
+}
+
+impl Session {
+    fn apply(self, args: &mut Args) {
+        args.quiet = self.quiet;
+        if let Some(transport) = self.transport {
+            (args.transport, args.explicit.transport) = (transport, true);
+        }
+        if let Some(echo) = self.local_echo {
+            (args.local_echo, args.explicit.local_echo) = (echo, true);
+        }
+        args.congestion = self.congestion;
+        args.compress = self.compress;
+        if let Some(range) = self.port_range {
+            args.server_args.extend(["--port-range".to_owned(), range]);
+        }
+        args.auto_install = match (self.install, self.no_install) {
+            (true, _) => Some(AutoInstall::Always),
+            (_, true) => Some(AutoInstall::Never),
+            _ => None,
+        };
+        args.udp_host = self.udp_host;
+        if let Some(key) = self.detach_key {
+            (args.detach_key, args.explicit.detach_key) = (key, true);
+        }
+    }
+}
+
+impl Connection {
+    fn apply(self, args: &mut Args) -> Result<(), String> {
+        args.name = self.name;
+        if self.auto_attach || self.no_auto_attach {
+            (args.auto_attach, args.explicit.auto_attach) = (self.auto_attach, true);
+        }
+        if self.forward_agent || self.no_forward_agent {
+            (args.forward_agent, args.explicit.forward_agent) = (self.forward_agent, true);
+        }
+        if let Some(timeout) = self.detached_timeout {
+            args.server_args
+                .extend(["--detached-timeout".to_owned(), timeout]);
+        }
+        // only checked here: the patterns are added to the others when the session starts.
+        EnvFilter::new(self.send_env.clone()).map_err(|e| format!("--send-env: {e:?}"))?;
+        args.send_env_add = self.send_env;
+        Ok(())
+    }
 }
 
 /// Name of the server file for this protocol version.

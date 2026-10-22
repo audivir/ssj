@@ -72,6 +72,7 @@ def main() -> None:
     args = parser.parse_args(namespace=Args())
     argv = [
         str(Path(args.ssj).resolve()),
+        "connect",
         "--server-path",
         str(Path(args.server).resolve()),
         args.host,

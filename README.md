@@ -104,7 +104,7 @@ Safety of the transfer:
 
 ### Installing on first use
 
-When the server is missing, `ssj user@host` offers to install it, as set by `auto_install` in
+When the server is missing, `ssj connect user@host` offers to install it, as set by `auto_install` in
 `$XDG_CONFIG_HOME/ssj/client.toml`:
 
 | `auto_install` | Behavior |
@@ -122,20 +122,21 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 
 | Command | What it does |
 | ---------------------------------------- | ---------------------------------------------------------------- |
-| `ssj user@host` | Starts a session. |
-| `ssj connect user@host` | The same, for a host that is named like a command (`ssj connect list`). |
-| `ssj --name work user@host` | Joins the session `work`, or starts it. |
+| `ssj connect user@host` | Starts a session. |
+| `ssj connect --name work user@host` | Joins the session `work`, or starts it. |
 | `ssj attach user@host [ID]` | Joins a running session, for example after a restart. `ID` is an id or a name. |
 | `ssj list user@host` | Lists sessions with state, age, and name, under a header on a terminal. `--json` prints JSON. |
 | `ssj kill [-f] user@host [ID...]` | Ends one or more sessions. `ID` is an id or a name. Without an `ID` the only session is ended after a question (`-f` skips it), and several sessions get a menu. |
 | `ssj detach user@host [ID...]` | Makes the clients leave; the sessions keep running. |
-| `ssj user@host -- make -j8` | Runs a command in a session that survives jumps (see below). |
-| `ssj user@host uptime` | The same, when the command has no options of its own. |
+| `ssj connect user@host -- make -j8` | Runs a command in a session that survives jumps (see below). |
+| `ssj connect user@host uptime` | The same, when the command has no options of its own. |
 | `ssj install user@host` | Puts the server file on the host (downloads it, or uploads `--server-binary`). |
 | `ssj edit` | Edits `client.toml` in `$EDITOR`. |
 | `ssj edit user@host` | Edits `server.toml` on the host in `$EDITOR`. |
 
 ### Options
+
+The options of a command follow its word: `ssj connect -A user@host`, `ssj list user@host --json`.
 
 | Option | What it does |
 | ---------------------------------------- | ---------------------------------------------------------------- |
@@ -152,7 +153,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 | `-v`, `-vv`, `-vvv`, `--log-file FILE` | Debug output. |
 | `-q`, `--quiet` | No lines about connecting, disconnecting, and detaching. |
 
-Run `ssj --help` or `man ssj` for the full list.
+Run `ssj connect --help` (or the help of another command) or `man ssj` for the full list.
 
 ## Sessions
 
@@ -200,7 +201,7 @@ or failing.
 
 - `ssj attach`, `ssj kill`, and `ssj detach` show the sessions of the host (youngest first) as a
   menu.
-- `ssj --auto-attach` shows those without a client, with a last line that starts a new one.
+- `ssj connect --auto-attach` shows those without a client, with a last line that starts a new one.
 - Keys: arrow keys or `j` and `k`, Enter to choose, `q` or Esc to cancel. Ctrl-C ends `ssj`.
 - Without a terminal nothing is asked: `--auto-attach` starts a session as before, and the other
   commands name the sessions in their error.
@@ -228,26 +229,25 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 
 ### Running a command
 
-`ssj user@host COMMAND...` runs the command in the session instead of the shell, as
+`ssj connect user@host COMMAND...` runs the command in the session instead of the shell, as
 `ssh user@host COMMAND` does, and ends with its exit code.
 
 - The login shell of the host runs it (`$SHELL -l -c 'COMMAND'`), so pipes, `&&`, and `cd` work.
 - A long `make` or a `tail -f` survives a network change or a closed laptop like any other
   session. You can join it from another terminal (it has a name in `ssj list`).
 - As with `ssh`, everything after the host belongs to the command, options included:
-  `ssj host ls -l`, `ssj host make -j4`. Options of `ssj` go before the host
-  (`ssj --local-echo auto host make -j4`). A `--` after the host is optional.
-- The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) keep their options
-  after the host: `ssj list host --json`. A command takes only the options that it reads (`ssj kill --help`, and the man page lists them); another option is an error, so that a setting for
-  every connection, such as `--send-env`, is not given to `list` by a wrapper but set in
-  `client.toml` (`ssj edit`).
+  `ssj connect host ls -l`, `ssj connect host make -j4`. Options of `ssj` go before the host
+  (`ssj connect --local-echo auto host make -j4`). A `--` after the host is optional.
+- The other commands (`list`, `attach`, `kill`, `detach`, `install`, `edit`) take their options
+  before or after the host: `ssj list host --json`. A command takes only the options that it
+  reads (`ssj kill --help`, and the man page lists them); a setting for every connection, such as
+  `--send-env`, belongs in `client.toml` (`ssj edit`).
 - The command has a terminal, as with `ssh -t`: its output has carriage returns, and a program
   can ask for the terminal size. Standard input goes to it as typed.
 - `--name` and `--auto-attach` are refused with a command, since a session that runs already
   would not run it.
-- A host named like one of the commands (`attach`, `list`, `kill`, `install`, `edit`) is written
-  `ssj connect list` (with a command: `ssj connect list uptime`). A command word needs a
-  destination: `ssj list` alone is an error.
+- Every line starts with a command, so a host may have any name: `ssj connect list` connects to
+  the host `list`.
 
 ## Connection
 
@@ -323,7 +323,7 @@ A job keeps running while no client is connected.
 
 ### Agent forwarding
 
-`ssj -A host` (or `forward_agent = true` in `client.toml`) lets programs on the host, such as
+`ssj connect -A host` (or `forward_agent = true` in `client.toml`) lets programs on the host, such as
 `git` or a second `ssh`, use the ssh agent of your machine.
 
 - The host never gets the keys, but anybody who can use the `SSH_AUTH_SOCK` of the shell there can
@@ -365,7 +365,7 @@ output (zstd) while the link is the limit.
 
 ### Debug output
 
-`ssj -v host` tells the steps, as `ssh -v` does, each with the time since the start.
+`ssj connect -v host` tells the steps, as `ssh -v` does, each with the time since the start.
 
 | Level | What it shows |
 | ------ | ------------------------------------------------------------------------------ |
@@ -397,7 +397,7 @@ detach_key = "ctrl-\\"                # a key such as "ctrl-]" that detaches any
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = []                         # more variables to send, besides TERM and the SendEnv of ssh
 transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
-auto_attach = false                   # `ssj host` joins the only session without a client
+auto_attach = false                   # `ssj connect host` joins the only session without a client
 local_echo = "off"                    # "off" or "auto": show typed characters at once
 compress = "off"                      # "off" or "auto": compress while the link is the limit
 congestion = "auto"                   # "auto", "bbr", or "cubic": how fast to send

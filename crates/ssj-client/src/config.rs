@@ -44,7 +44,7 @@ pub struct Config {
     /// "auto", "udp", "tcp", or "stdio": how to reach the server.
     #[config(default = "auto")]
     pub transport: Transport,
-    /// `ssj host` joins the only session without a client.
+    /// `ssj connect host` joins the only session without a client.
     #[config(default = false)]
     pub auto_attach: bool,
     /// Let programs on the host use your ssh agent (-A).

@@ -86,7 +86,9 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     let file = generated("ssj.bash");
     let case = |words: &str, cword: usize| {
         let code = format!(
-            "source '{}'\nCOMP_WORDS=({words}); COMP_CWORD={cword}; _ssj_sessions; echo \"${{COMPREPLY[*]}}\"",
+            "source '{}'\nCOMP_WORDS=({words}); COMP_CWORD={cword}; \
+             _ssj_sessions ssj \"${{COMP_WORDS[COMP_CWORD]}}\" \"${{COMP_WORDS[COMP_CWORD-1]}}\"; \
+             echo \"${{COMPREPLY[*]}}\"",
             file.display()
         );
         run("bash", &["-c", &code], &fake_ssj()).trim().to_owned()
@@ -103,9 +105,9 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     // another host has none.
     assert_eq!(case("ssj attach other@host ''", 3), "");
     // --name offers the names of all hosts.
-    assert_eq!(case("ssj --name ''", 2), "work build other");
+    assert_eq!(case("ssj connect --name ''", 3), "work build other");
 
-    // hosts: the first word, and the word after a command, when bash-completion is loaded.
+    // hosts: the word after a command, when bash-completion is loaded.
     let hosts = |words: &str, cword: usize| {
         let code = format!(
             "source '{}'\n_known_hosts_real() {{ COMPREPLY=(boxa boxb); }}\n\
@@ -116,22 +118,21 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
         );
         run("bash", &["-c", &code], &fake_ssj()).trim().to_owned()
     };
-    assert!(
-        hosts("ssj ''", 1).ends_with("boxa boxb"),
-        "{}",
-        hosts("ssj ''", 1)
-    );
     assert_eq!(hosts("ssj attach ''", 2), "boxa boxb");
     assert_eq!(hosts("ssj list ''", 2), "boxa boxb");
     // not for the session, nor for a second word after a host, nor for an option.
     assert_eq!(hosts("ssj attach me@box ''", 3), "work build");
-    assert!(!hosts("ssj --na", 1).contains("boxa"));
-    // the same as in zsh: the commands, the options of a command after its host, nothing of ssj
-    // after any other host, and the values of options are not destinations.
-    assert!(hosts("ssj ''", 1).starts_with("list attach kill detach install edit "));
+    // the same as in zsh: the commands first, the options of a command after its host, and the
+    // values of options are not destinations.
+    let first = hosts("ssj ''", 1);
+    assert!(
+        first.starts_with("connect list attach kill detach install edit")
+            && !first.contains("boxa"),
+        "{first}"
+    );
     assert!(hosts("ssj install me@box --ser", 3).contains("--server-binary"));
     assert!(hosts("ssj kill me@box --fo", 3).contains("--force"));
-    assert_eq!(hosts("ssj me@box ls --ser", 3), "");
+    assert_eq!(hosts("ssj connect me@box ls --ser", 4), "");
     // only the options that the command reads
     let edit = hosts("ssj edit me@box -", 3);
     assert!(
@@ -139,24 +140,23 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
         "{edit}"
     );
     assert!(!hosts("ssj kill me@box -", 3).contains("--json"));
-    // `connect` is the plain connection: the hosts, the options of the connection before the
-    // host, and files for the command on the host after it.
+    // `connect`: the hosts, the options of the connection before the host, and files for the
+    // command on the host after it.
     assert_eq!(hosts("ssj connect ''", 2), "boxa boxb");
     assert_eq!(hosts("ssj connect --transport tcp ''", 4), "boxa boxb");
     assert!(hosts("ssj connect --tr", 2).contains("--transport"));
     assert_eq!(hosts("ssj connect me@box ''", 3), "");
     // the values of options: the fixed ones, files, and the hosts of the ssh config
-    assert_eq!(hosts("ssj --transport ''", 2), "auto udp tcp stdio");
+    assert_eq!(hosts("ssj connect --transport ''", 3), "auto udp tcp stdio");
     assert_eq!(hosts("ssj attach me@box --compress ''", 4), "off auto");
-    assert_eq!(hosts("ssj --udp-host ''", 2), "boxa boxb");
+    assert_eq!(hosts("ssj connect --udp-host ''", 3), "boxa boxb");
     assert_eq!(hosts("ssj attach me@box --udp-host ''", 4), "boxa boxb");
     // an option that the command does not read has no values
     assert_eq!(hosts("ssj install me@box --udp-host ''", 4), "");
     assert_eq!(hosts("ssj connect me@box -l", 3), "");
     assert!(hosts("ssj list me@box -", 3).contains("--json"));
-    assert_eq!(hosts("ssj me@box ''", 2), "");
-    assert_eq!(hosts("ssj --name x attach ''", 4), "boxa boxb");
-    assert_eq!(hosts("ssj --transport udp list ''", 4), "boxa boxb");
+    assert_eq!(hosts("ssj attach --transport udp ''", 4), "boxa boxb");
+    assert_eq!(hosts("ssj list -v ''", 3), "boxa boxb");
 }
 
 /// Completes each line in a zsh that runs the completion system in a pseudo terminal, as a
@@ -276,14 +276,14 @@ fn fish_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(case("ssj attach me@box work "), "");
     assert_eq!(case("ssj detach me@box "), "work");
     assert_eq!(case("ssj detach me@box work "), "work");
-    // options in front do not count as words.
-    assert_eq!(case("ssj -v attach me@box "), "build work");
+    // options do not count as words.
+    assert_eq!(case("ssj attach -v me@box "), "build work");
     // no sessions after the other commands, or for another host, or before the host.
     assert_eq!(case("ssj list me@box "), "");
     assert_eq!(case("ssj attach other@host "), "");
     assert_eq!(case("ssj attach "), "");
     // --name offers the names of all hosts.
-    assert_eq!(case("ssj --name "), "build other work");
+    assert_eq!(case("ssj connect --name "), "build other work");
 }
 
 #[test]
@@ -308,15 +308,14 @@ fn fish_offers_the_commands_and_the_hosts() {
         names.sort();
         names.join(" ")
     };
-    assert_eq!(case("ssj "), "attach boxa boxb list");
+    assert_eq!(case("ssj "), "attach list");
     assert_eq!(case("ssj attach "), "boxa boxb");
-    assert_eq!(case("ssj -v list "), "boxa boxb");
+    assert_eq!(case("ssj list -v "), "boxa boxb");
     // after the host the sessions follow, not the hosts.
     assert_eq!(case("ssj attach me@box "), "");
     // the values of options are not destinations.
-    assert_eq!(case("ssj --name x attach "), "boxa boxb");
-    assert_eq!(case("ssj --transport udp "), "attach boxa boxb list");
-    // the dashes after another destination are for the command on the host.
+    assert_eq!(case("ssj attach --transport udp "), "boxa boxb");
+    assert_eq!(case("ssj connect --name x "), "boxa boxb");
     let options = |line: &str| {
         let code = format!("source '{}'; complete -C '{line}'", file.display());
         run("fish", &["-c", &code], &fake_ssj())
@@ -330,13 +329,13 @@ fn fish_offers_the_commands_and_the_hosts() {
     assert_eq!(case("ssj connect --transport tcp "), "boxa boxb");
     assert!(options("ssj connect --ser"));
     // the values of options
-    assert_eq!(case("ssj --udp-host "), "boxa boxb");
+    assert_eq!(case("ssj connect --udp-host "), "boxa boxb");
     assert_eq!(case("ssj attach me@box --udp-host "), "boxa boxb");
     // the values of an option that the command does not read are not completed
     assert_eq!(case("ssj install me@box --udp-host "), "");
+    // the dashes after the destination of `connect` are for the command on the host.
     assert!(!options("ssj connect me@box --ser"));
-    assert!(options("ssj --ser"));
-    assert!(!options("ssj me@box ls --ser"));
+    assert!(!options("ssj connect me@box ls --ser"));
 }
 
 /// Options with a fixed set of values, and the values.
@@ -372,25 +371,25 @@ fn bash_completes_the_values_of_options_with_a_fixed_set() {
     for (option, values) in FIXED {
         // after a space
         assert_eq!(
-            case(&format!("ssj {option} ''"), 2),
+            case(&format!("ssj connect {option} ''"), 3),
             values,
             "{option} <TAB>"
         );
         let first = &values[..1];
         let wanted: Vec<&str> = values.split(' ').filter(|v| v.starts_with(first)).collect();
         assert_eq!(
-            case(&format!("ssj {option} {first}"), 2),
+            case(&format!("ssj connect {option} {first}"), 3),
             wanted.join(" "),
             "{option} {first}<TAB>"
         );
         // after the `=`, with nothing typed and with the start of a value
         assert_eq!(
-            case(&format!("ssj {option} ="), 2),
+            case(&format!("ssj connect {option} ="), 3),
             values,
             "{option}=<TAB>"
         );
         assert_eq!(
-            case(&format!("ssj {option} = {first}"), 3),
+            case(&format!("ssj connect {option} = {first}"), 4),
             wanted.join(" "),
             "{option}={first}<TAB>"
         );
@@ -415,8 +414,16 @@ fn fish_completes_the_values_of_options_with_a_fixed_set() {
         values.join(" ")
     };
     for (option, values) in FIXED {
-        assert_eq!(case(&format!("ssj {option} ")), values, "{option} <TAB>");
-        assert_eq!(case(&format!("ssj {option}=")), values, "{option}=<TAB>");
+        assert_eq!(
+            case(&format!("ssj connect {option} ")),
+            values,
+            "{option} <TAB>"
+        );
+        assert_eq!(
+            case(&format!("ssj connect {option}=")),
+            values,
+            "{option}=<TAB>"
+        );
     }
 }
 
@@ -448,14 +455,14 @@ fn zsh_lists_the_values_of_options_with_a_fixed_set() {
     }
 }
 
-/// Every long option of `ssj`.
-const ALL_OPTIONS: &str = "verbose quiet force log-file name auto-attach no-auto-attach \
-    forward-agent no-forward-agent transport local-echo congestion compress ssh-command \
-    server-path server-arg port-range detached-timeout install no-install download-url \
-    server-binary udp-host detach-key send-env json";
+/// The long options of `ssj connect`.
+const CONNECT: &str = "verbose quiet log-file name auto-attach no-auto-attach forward-agent \
+    no-forward-agent transport local-echo congestion compress ssh-command server-path server-arg \
+    port-range detached-timeout install no-install download-url server-binary udp-host detach-key \
+    send-env";
 
-/// The options that each command reads, written out again from the code of the commands and not
-/// from the table that the generator reads.
+/// The options that each command reads, written out again and not taken from the definition that
+/// the generator reads.
 const READS: [(&str, &str); 6] = [
     (
         "list",
@@ -532,37 +539,30 @@ fn positions() -> Vec<Position> {
     let hosts = || words("boxa boxb box-c");
     let files = || words("FILES");
     let none = || Vec::new();
-    let commands = "list attach kill detach install edit connect";
+    let commands = "connect list attach kill detach install edit";
 
-    // the start: a command or a host, the options only after a dash
-    add("ssj ", [words(commands), hosts()].concat());
-    add("ssj -", dashed(ALL_OPTIONS));
-    // the values of options at the start
-    add("ssj --name ", words("work build other"));
-    add("ssj --transport ", words("auto udp tcp stdio"));
-    add("ssj --local-echo ", words("off auto"));
-    add("ssj --congestion ", words("auto bbr cubic"));
-    add("ssj --compress ", words("off auto"));
-    add("ssj --udp-host ", hosts());
-    add("ssj --log-file ", files());
-    add("ssj --server-path ", files());
-    add("ssj --server-binary ", files());
-    // the options before the command word are skipped, and so are their values
-    add("ssj -v attach me@box ", words("work build"));
-    add("ssj --transport tcp list ", hosts());
-    // the plain connection: the host, the options before it, files for the command on the host
+    // the start: a command
+    add("ssj ", words(commands));
+    // the options of a command are skipped, and so are their values
+    add("ssj attach -v me@box ", words("work build"));
+    add("ssj list --server-path x ", hosts());
+    // the connection: the host, the options before it, files for the command on the host
     add("ssj connect ", hosts());
-    add("ssj connect -", dashed(ALL_OPTIONS));
+    add("ssj connect -", dashed(CONNECT));
+    add("ssj connect --name ", words("work build other"));
     add("ssj connect --transport ", words("auto udp tcp stdio"));
+    add("ssj connect --local-echo ", words("off auto"));
+    add("ssj connect --congestion ", words("auto bbr cubic"));
+    add("ssj connect --compress ", words("off auto"));
+    add("ssj connect --udp-host ", hosts());
+    add("ssj connect --log-file ", files());
+    add("ssj connect --server-path ", files());
+    add("ssj connect --server-binary ", files());
     add("ssj connect --transport tcp ", hosts());
     add("ssj connect me@box ", files());
     add("ssj connect me@box ls ", files());
     add("ssj connect me@box -", none());
-    // any other first word is the host, and the rest is the command on it, dashes included
-    add("ssj me@box ", files());
-    add("ssj me@box ls ", files());
-    add("ssj me@box ls -", none());
-    add("ssj me@box -", none());
+    add("ssj connect me@box ls -", none());
     // each command: the host, the ids, its options and their values
     for (command, reads) in READS {
         add(&format!("ssj {command} "), hosts());

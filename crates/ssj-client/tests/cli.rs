@@ -10,6 +10,7 @@ fn args(list: &[&str]) -> Result<Args, String> {
 #[test]
 fn destination_and_options_are_parsed() {
     let parsed = args(&[
+        "connect",
         "--port-range",
         "50000:50010",
         "--ssh-command",
@@ -22,18 +23,18 @@ fn destination_and_options_are_parsed() {
     assert_eq!(parsed.ssh_command, ["ssh", "-J", "jump"]);
     assert_eq!(parsed.server_args, ["--port-range", "50000:50010"]);
     assert_eq!(parsed.server_path, ServerPath::Default);
-    assert_eq!(args(&["host"]).unwrap().host(), "host");
+    assert_eq!(args(&["connect", "host"]).unwrap().host(), "host");
 }
 
 #[test]
 fn bad_command_lines_are_refused() {
     for bad in [
         vec![],
-        vec!["--bogus", "host"],
-        vec!["--ssh-command"],
-        vec!["--ssh-command", "  ", "host"],
-        vec!["host with space"],
-        vec!["--send-env", "A-B", "host"],
+        vec!["connect", "--bogus", "host"],
+        vec!["connect", "--ssh-command"],
+        vec!["connect", "--ssh-command", "  ", "host"],
+        vec!["connect", "host with space"],
+        vec!["connect", "--send-env", "A-B", "host"],
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
@@ -42,7 +43,7 @@ fn bad_command_lines_are_refused() {
 // the destination is passed after `--`, but an option-like word must not get that far at all.
 #[test]
 fn destination_that_looks_like_an_option_is_refused() {
-    assert!(args(&["-oProxyCommand=touch /tmp/x"]).is_err());
+    assert!(args(&["connect", "-oProxyCommand=touch /tmp/x"]).is_err());
 }
 
 // whatever the user types for the server path or its arguments must reach the server
@@ -72,6 +73,7 @@ fn remote_command_survives_the_remote_shell_unchanged() {
     assert!(!std::path::Path::new("/tmp/ssj-injected").exists());
 
     let parsed = args(&[
+        "connect",
         "--server-path",
         "/opt/it's/ssj-server",
         "--server-arg",
@@ -101,7 +103,13 @@ fn default_command_runs_the_installed_file_or_reports_it_missing() {
             .output()
             .unwrap()
     };
-    let mut parsed = args(&["--server-arg", "a b; touch /tmp/ssj-injected", "host"]).unwrap();
+    let mut parsed = args(&[
+        "connect",
+        "--server-arg",
+        "a b; touch /tmp/ssj-injected",
+        "host",
+    ])
+    .unwrap();
     assert_eq!(parsed.server_path, ServerPath::Default);
 
     // nothing installed: a marker and a code that the client can tell apart from other failures.
@@ -139,7 +147,7 @@ fn subcommands_need_a_destination_after_them() {
     use ssj_client::cli::Command;
     let id = "abcdef012345".to_owned();
     let cases: Vec<(Vec<&str>, Command, &str)> = vec![
-        (vec!["host"], Command::Connect, "host"),
+        (vec!["connect", "host"], Command::Connect, "host"),
         (vec!["list", "me@host"], Command::List, "me@host"),
         (vec!["attach", "host"], Command::Attach(None), "host"),
         (
@@ -175,13 +183,8 @@ fn subcommands_need_a_destination_after_them() {
             Command::Detach(vec!["work".to_owned(), "other".to_owned()]),
             "host",
         ),
-        // the options that the command reads may stand before it too
-        (vec!["-v", "list", "host", "--json"], Command::List, "host"),
-        (
-            vec!["--ssh-command", "ssh -J x", "list", "host"],
-            Command::List,
-            "host",
-        ),
+        // the options that the command reads may stand after the destination too
+        (vec!["list", "host", "-v", "--json"], Command::List, "host"),
     ];
     for (words, command, destination) in cases {
         let parsed = args(&words).unwrap_or_else(|e| panic!("{words:?}: {e}"));
@@ -189,6 +192,9 @@ fn subcommands_need_a_destination_after_them() {
         assert_eq!(parsed.destination, destination, "{words:?}");
     }
     for bad in [
+        // a host is no command, and options stand after the command word
+        vec!["host"],
+        vec!["-v", "list", "host"],
         vec!["list"],
         vec!["kill"],
         vec!["list", "a", "b"],
@@ -202,24 +208,19 @@ fn subcommands_need_a_destination_after_them() {
 
 #[test]
 fn a_command_refuses_the_options_of_the_connection() {
-    // the setting belongs in client.toml, not before a command that does not read it
-    let message = args(&["--send-env=LC_THEME", "list", "host"]).unwrap_err();
-    assert!(
-        message.contains("--send-env is not an option of `ssj list`")
-            && message.contains("client.toml"),
-        "{message}"
-    );
-    assert!(args(&["--detach-key", "none", "list", "host"]).is_err());
+    let message = args(&["list", "--send-env=LC_THEME", "host"]).unwrap_err();
+    assert!(message.contains("--send-env"), "{message}");
+    assert!(args(&["list", "--detach-key", "none", "host"]).is_err());
     assert!(args(&["kill", "host", "--json"]).is_err());
     assert!(args(&["list", "host", "--force"]).is_err());
-    // the connection reads them
-    assert!(args(&["--send-env=LC_THEME", "host"]).is_ok());
-    assert!(args(&["--detach-key", "none", "attach", "host"]).is_ok());
-    assert!(args(&["--force", "kill", "host"]).is_ok());
+    // the commands that read them
+    assert!(args(&["connect", "--send-env=LC_THEME", "host"]).is_ok());
+    assert!(args(&["attach", "--detach-key", "none", "host"]).is_ok());
+    assert!(args(&["kill", "--force", "host"]).is_ok());
 }
 
 #[test]
-fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
+fn connect_reaches_any_host_and_edit_alone_is_the_local_editor() {
     use ssj_client::cli::Command;
 
     let parsed = args(&["connect", "list"]).unwrap();
@@ -229,9 +230,6 @@ fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
     assert_eq!(parsed.command, Command::Connect);
     assert_eq!(parsed.destination, "host");
     assert_eq!(parsed.remote_command.as_deref(), Some("ls -l"));
-    // the options of the connection, before the destination
-    let parsed = args(&["connect", "--send-env=LC_THEME", "host"]).unwrap();
-    assert_eq!(parsed.command, Command::Connect);
     // `ssj edit` alone is the editor, and `ssj connect edit` is the host
     assert_eq!(args(&["edit"]).unwrap().command, Command::Edit);
     let parsed = args(&["connect", "edit"]).unwrap();
@@ -239,11 +237,7 @@ fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
     assert_eq!(parsed.destination, "edit");
     assert_eq!(args(&["edit", "edit"]).unwrap().destination, "edit");
     // a destination is needed
-    assert!(
-        args(&["connect"])
-            .unwrap_err()
-            .contains("missing destination")
-    );
+    assert!(args(&["connect"]).is_err());
 }
 
 #[test]
@@ -269,29 +263,35 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
     use ssj_client::cli::Transport;
     use ssj_client::config::Config;
 
-    assert_eq!(args(&["host"]).unwrap().transport, Transport::Auto);
+    assert_eq!(
+        args(&["connect", "host"]).unwrap().transport,
+        Transport::Auto
+    );
     for (word, transport) in [
         ("auto", Transport::Auto),
         ("udp", Transport::Udp),
         ("tcp", Transport::Tcp),
         ("stdio", Transport::Stdio),
     ] {
-        let parsed = args(&["--transport", word, "host"]).unwrap();
+        let parsed = args(&["connect", "--transport", word, "host"]).unwrap();
         assert_eq!(parsed.transport, transport);
         assert!(parsed.explicit.transport);
     }
     for bad in ["", "UDP", "quic", "ssh"] {
-        assert!(args(&["--transport", bad, "host"]).is_err(), "{bad:?}");
+        assert!(
+            args(&["connect", "--transport", bad, "host"]).is_err(),
+            "{bad:?}"
+        );
     }
-    assert!(args(&["--transport"]).is_err());
-    assert!(args(&["--transport", "x", "host"]).is_err());
+    assert!(args(&["connect", "--transport"]).is_err());
+    assert!(args(&["connect", "--transport", "x", "host"]).is_err());
 
     // the file fills in what the command line leaves open.
     let config = Config::from_text("transport = \"tcp\"\n").unwrap();
-    let mut open = args(&["host"]).unwrap();
+    let mut open = args(&["connect", "host"]).unwrap();
     open.apply_config(&config);
     assert_eq!(open.transport, Transport::Tcp);
-    let mut set = args(&["--transport", "udp", "host"]).unwrap();
+    let mut set = args(&["connect", "--transport", "udp", "host"]).unwrap();
     set.apply_config(&config);
     assert_eq!(set.transport, Transport::Udp);
     assert!(Config::from_text("transport = \"x\"\n").is_err());
@@ -306,7 +306,7 @@ fn the_destination_gives_the_argument_for_ssh_and_its_port() {
         ("[2001:db8::1]:2200", "2001:db8::1", Some(2200)),
         ("tim@2001:db8::1", "tim@2001:db8::1", None),
     ] {
-        let parsed = args(&[text]).unwrap();
+        let parsed = args(&["connect", text]).unwrap();
         assert_eq!(parsed.destination, target, "{text}");
         assert_eq!(parsed.ssh_port, port, "{text}");
         assert_eq!(
@@ -316,37 +316,40 @@ fn the_destination_gives_the_argument_for_ssh_and_its_port() {
         );
     }
     // the host part is what DNS gets.
-    assert_eq!(args(&["tim@host:2222"]).unwrap().host(), "host");
-    assert_eq!(args(&["[::1]:22"]).unwrap().host(), "::1");
+    assert_eq!(args(&["connect", "tim@host:2222"]).unwrap().host(), "host");
+    assert_eq!(args(&["connect", "[::1]:22"]).unwrap().host(), "::1");
     // an option or a command in place of a destination.
     for bad in ["-oProxyCommand=id", "host;id", "a b", "$(id)", "host:0", ""] {
-        assert!(args(&[bad]).is_err(), "{bad:?}");
+        assert!(args(&["connect", bad]).is_err(), "{bad:?}");
     }
     // an option is no destination even after the other arguments.
-    assert!(args(&["--", "-x"]).is_err());
+    assert!(args(&["connect", "--", "-x"]).is_err());
 }
 
 #[test]
 fn a_name_and_auto_attach_are_settings_with_flags_and_a_file_key() {
     use ssj_client::config::Config;
 
-    let plain = args(&["host"]).unwrap();
+    let plain = args(&["connect", "host"]).unwrap();
     assert!(plain.name.is_none() && !plain.auto_attach);
-    let named = args(&["--name", "work", "host"]).unwrap();
+    let named = args(&["connect", "--name", "work", "host"]).unwrap();
     assert_eq!(named.name.as_ref().map(|n| n.as_str()), Some("work"));
     for bad in ["", "-x", "a b", "a/b", &"n".repeat(33)] {
-        assert!(args(&["--name", bad, "host"]).is_err(), "{bad:?}");
+        assert!(
+            args(&["connect", "--name", bad, "host"]).is_err(),
+            "{bad:?}"
+        );
     }
-    assert!(args(&["--name"]).is_err());
+    assert!(args(&["connect", "--name"]).is_err());
 
     let config = Config::from_text("auto_attach = true\n").unwrap();
-    let mut open = args(&["host"]).unwrap();
+    let mut open = args(&["connect", "host"]).unwrap();
     open.apply_config(&config);
     assert!(open.auto_attach);
-    let mut off = args(&["--no-auto-attach", "host"]).unwrap();
+    let mut off = args(&["connect", "--no-auto-attach", "host"]).unwrap();
     off.apply_config(&config);
     assert!(!off.auto_attach);
-    let mut on = args(&["--auto-attach", "host"]).unwrap();
+    let mut on = args(&["connect", "--auto-attach", "host"]).unwrap();
     on.apply_config(&Config::default());
     assert!(on.auto_attach);
     assert!(Config::from_text("auto_attach = \"yes\"\n").is_err());
@@ -357,17 +360,19 @@ fn congestion_is_a_flag_and_a_file_key() {
     use ssj_client::config::Config;
     use ssj_net::Congestion;
 
-    assert_eq!(args(&["host"]).unwrap().congestion, None);
+    assert_eq!(args(&["connect", "host"]).unwrap().congestion, None);
     assert_eq!(
-        args(&["--congestion", "cubic", "host"]).unwrap().congestion,
+        args(&["connect", "--congestion", "cubic", "host"])
+            .unwrap()
+            .congestion,
         Some(Congestion::Cubic)
     );
-    assert!(args(&["--congestion", "reno", "host"]).is_err());
+    assert!(args(&["connect", "--congestion", "reno", "host"]).is_err());
     let config = Config::from_text("congestion = \"cubic\"\n").unwrap();
-    let mut from_file = args(&["host"]).unwrap();
+    let mut from_file = args(&["connect", "host"]).unwrap();
     from_file.apply_config(&config);
     assert_eq!(from_file.congestion, Some(Congestion::Cubic));
-    let mut flag_wins = args(&["--congestion", "bbr", "host"]).unwrap();
+    let mut flag_wins = args(&["connect", "--congestion", "bbr", "host"]).unwrap();
     flag_wins.apply_config(&config);
     assert_eq!(flag_wins.congestion, Some(Congestion::Bbr));
     assert!(Config::from_text("congestion = \"reno\"\n").is_err());
@@ -377,14 +382,18 @@ fn congestion_is_a_flag_and_a_file_key() {
 fn agent_forwarding_is_off_unless_the_flag_or_the_file_turns_it_on() {
     use ssj_client::config::Config;
 
-    assert!(!args(&["host"]).unwrap().forward_agent);
-    assert!(args(&["-A", "host"]).unwrap().forward_agent);
-    assert!(args(&["--forward-agent", "host"]).unwrap().forward_agent);
+    assert!(!args(&["connect", "host"]).unwrap().forward_agent);
+    assert!(args(&["connect", "-A", "host"]).unwrap().forward_agent);
+    assert!(
+        args(&["connect", "--forward-agent", "host"])
+            .unwrap()
+            .forward_agent
+    );
     let config = Config::from_text("forward_agent = true\n").unwrap();
-    let mut from_file = args(&["host"]).unwrap();
+    let mut from_file = args(&["connect", "host"]).unwrap();
     from_file.apply_config(&config);
     assert!(from_file.forward_agent);
-    let mut off = args(&["--no-forward-agent", "host"]).unwrap();
+    let mut off = args(&["connect", "--no-forward-agent", "host"]).unwrap();
     off.apply_config(&config);
     assert!(!off.forward_agent);
     assert!(Config::from_text("forward_agent = \"yes\"\n").is_err());
@@ -421,17 +430,17 @@ fn the_flags_of_the_listing_and_the_completion() {
             connected: true
         }
     );
-    assert!(args(&["--batch", "list", "host"]).unwrap().batch);
+    assert!(args(&["list", "--batch", "host"]).unwrap().batch);
     // an option given twice: the last one counts, and the lists collect.
     assert_eq!(
-        args(&["--udp-host", "a", "--udp-host", "b", "h"])
+        args(&["connect", "--udp-host", "a", "--udp-host", "b", "h"])
             .unwrap()
             .udp_host
             .as_deref(),
         Some("b")
     );
     assert_eq!(
-        args(&["--server-arg", "--x", "--server-arg", "y", "h"])
+        args(&["connect", "--server-arg", "--x", "--server-arg", "y", "h"])
             .unwrap()
             .server_args,
         ["--x", "y"]
@@ -443,19 +452,24 @@ fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
     use ssj_client::cli::LocalEcho;
     use ssj_client::config::Config;
 
-    assert_eq!(args(&["host"]).unwrap().local_echo, LocalEcho::Off);
     assert_eq!(
-        args(&["--local-echo", "auto", "host"]).unwrap().local_echo,
+        args(&["connect", "host"]).unwrap().local_echo,
+        LocalEcho::Off
+    );
+    assert_eq!(
+        args(&["connect", "--local-echo", "auto", "host"])
+            .unwrap()
+            .local_echo,
         LocalEcho::Auto
     );
-    assert!(args(&["--local-echo", "on", "host"]).is_err());
-    assert!(args(&["--local-echo", "", "host"]).is_err());
+    assert!(args(&["connect", "--local-echo", "on", "host"]).is_err());
+    assert!(args(&["connect", "--local-echo", "", "host"]).is_err());
 
     let config = Config::from_text("local_echo = \"auto\"\n").unwrap();
-    let mut open = args(&["host"]).unwrap();
+    let mut open = args(&["connect", "host"]).unwrap();
     open.apply_config(&config);
     assert_eq!(open.local_echo, LocalEcho::Auto);
-    let mut off = args(&["--local-echo", "off", "host"]).unwrap();
+    let mut off = args(&["connect", "--local-echo", "off", "host"]).unwrap();
     off.apply_config(&config);
     assert_eq!(off.local_echo, LocalEcho::Off);
     assert!(Config::from_text("local_echo = \"yes\"\n").is_err());
@@ -463,29 +477,39 @@ fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
 
 #[test]
 fn a_flag_and_its_counterpart_override_each_other() {
-    assert!(args(&["--auto-attach", "h"]).unwrap().auto_attach);
     assert!(
-        !args(&["--auto-attach", "--no-auto-attach", "h"])
+        args(&["connect", "--auto-attach", "h"])
             .unwrap()
             .auto_attach
     );
-    assert!(args(&["--install", "h"]).is_ok() && args(&["--no-install", "h"]).is_ok());
+    assert!(
+        !args(&["connect", "--auto-attach", "--no-auto-attach", "h"])
+            .unwrap()
+            .auto_attach
+    );
+    assert!(
+        args(&["connect", "--install", "h"]).is_ok()
+            && args(&["connect", "--no-install", "h"]).is_ok()
+    );
 }
 
 #[test]
 fn verbose_counts_up_to_three_and_the_log_file_is_a_path() {
-    assert_eq!(args(&["h"]).unwrap().verbose, 0);
-    assert_eq!(args(&["-v", "h"]).unwrap().verbose, 1);
-    assert_eq!(args(&["-vv", "h"]).unwrap().verbose, 2);
-    assert_eq!(args(&["-v", "-v", "-v", "h"]).unwrap().verbose, 3);
-    assert_eq!(args(&["-vvvvv", "h"]).unwrap().verbose, 3);
-    assert_eq!(args(&["--verbose", "h"]).unwrap().verbose, 1);
-    let with_file = args(&["--log-file", "/tmp/ssj.log", "h"]).unwrap();
+    assert_eq!(args(&["connect", "h"]).unwrap().verbose, 0);
+    assert_eq!(args(&["connect", "-v", "h"]).unwrap().verbose, 1);
+    assert_eq!(args(&["connect", "-vv", "h"]).unwrap().verbose, 2);
+    assert_eq!(
+        args(&["connect", "-v", "-v", "-v", "h"]).unwrap().verbose,
+        3
+    );
+    assert_eq!(args(&["connect", "-vvvvv", "h"]).unwrap().verbose, 3);
+    assert_eq!(args(&["connect", "--verbose", "h"]).unwrap().verbose, 1);
+    let with_file = args(&["connect", "--log-file", "/tmp/ssj.log", "h"]).unwrap();
     assert_eq!(
         with_file.log_file.as_deref(),
         Some(std::path::Path::new("/tmp/ssj.log"))
     );
-    assert!(args(&["--log-file"]).is_err());
+    assert!(args(&["connect", "--log-file"]).is_err());
 }
 
 #[test]
@@ -502,12 +526,6 @@ fn edit_alone_is_the_local_editor_and_with_a_host_the_remote_one() {
         (remote.destination.as_str(), remote.ssh_port),
         ("me@host", Some(2222))
     );
-    // a host called edit is reached with a user in front.
-    let host = args(&["me@edit"]).unwrap();
-    assert_eq!(
-        (host.command, host.destination.as_str()),
-        (Command::Connect, "me@edit")
-    );
     assert!(args(&["edit", "a", "b"]).is_err());
 }
 
@@ -515,35 +533,40 @@ fn edit_alone_is_the_local_editor_and_with_a_host_the_remote_one() {
 fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
     use ssj_client::cli::Command;
     let cases: Vec<(Vec<&str>, Command, &str, Option<&str>)> = vec![
-        (vec!["host"], Command::Connect, "host", None),
-        (vec!["host", "ls"], Command::Connect, "host", Some("ls")),
+        (vec!["connect", "host"], Command::Connect, "host", None),
         (
-            vec!["host", "echo", "hi", "there"],
+            vec!["connect", "host", "ls"],
+            Command::Connect,
+            "host",
+            Some("ls"),
+        ),
+        (
+            vec!["connect", "host", "echo", "hi", "there"],
             Command::Connect,
             "host",
             Some("echo hi there"),
         ),
         // as with `ssh`, everything after the destination is the command, options included.
         (
-            vec!["host", "ls", "-l"],
+            vec!["connect", "host", "ls", "-l"],
             Command::Connect,
             "host",
             Some("ls -l"),
         ),
         (
-            vec!["--local-echo", "auto", "host", "make", "-j4"],
+            vec!["connect", "--local-echo", "auto", "host", "make", "-j4"],
             Command::Connect,
             "host",
             Some("make -j4"),
         ),
         (
-            vec!["host", "--name", "x"],
+            vec!["connect", "host", "--name", "x"],
             Command::Connect,
             "host",
             Some("--name x"),
         ),
         (
-            vec!["a", "b", "--", "ls"],
+            vec!["connect", "a", "b", "--", "ls"],
             Command::Connect,
             "a",
             Some("b -- ls"),
@@ -552,39 +575,47 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
         (vec!["list", "host", "--json"], Command::List, "host", None),
         // the `--` is optional, and options of ssj stay in front.
         (
-            vec!["host", "--", "ls", "-l"],
+            vec!["connect", "host", "--", "ls", "-l"],
             Command::Connect,
             "host",
             Some("ls -l"),
         ),
         (
-            vec!["--local-echo", "auto", "host", "--", "make", "-j4"],
+            vec![
+                "connect",
+                "--local-echo",
+                "auto",
+                "host",
+                "--",
+                "make",
+                "-j4",
+            ],
             Command::Connect,
             "host",
             Some("make -j4"),
         ),
         (
-            vec!["me@host:2222", "--", "uptime"],
+            vec!["connect", "me@host:2222", "--", "uptime"],
             Command::Connect,
             "me@host",
             Some("uptime"),
         ),
         // a shell command in one word is passed as it is.
         (
-            vec!["host", "--", "cd /tmp && ls | wc -l"],
+            vec!["connect", "host", "--", "cd /tmp && ls | wc -l"],
             Command::Connect,
             "host",
             Some("cd /tmp && ls | wc -l"),
         ),
         // an option of ssj after the destination is for the host as well.
         (
-            vec!["host", "--install"],
+            vec!["connect", "host", "--install"],
             Command::Connect,
             "host",
             Some("--install"),
         ),
-        // a `--` before the destination ends the options, as with `ssh`.
-        (vec!["--", "ls"], Command::Connect, "ls", None),
+        // a `--` before the destination ends the options.
+        (vec!["connect", "--", "ls"], Command::Connect, "ls", None),
         // a command word is a command.
         (vec!["attach", "ls"], Command::Attach(None), "ls", None),
         (vec!["list", "ls"], Command::List, "ls", None),
@@ -599,11 +630,11 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
         // a command of ssj runs nothing on the host.
         vec!["list", "host", "--", "ls"],
         // an empty command
-        vec!["host", "--", ""],
-        vec!["host", "--", " "],
+        vec!["connect", "host", "--", ""],
+        vec!["connect", "host", "--", " "],
         // an existing session would not run it (the options come before the destination).
-        vec!["--name", "work", "host", "--", "ls"],
-        vec!["--auto-attach", "host", "ls"],
+        vec!["connect", "--name", "work", "host", "--", "ls"],
+        vec!["connect", "--auto-attach", "host", "ls"],
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
@@ -611,8 +642,16 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
 
 #[test]
 fn send_env_is_kept_for_the_session_to_add_to_the_patterns_of_ssh() {
-    let parsed = args(&["--send-env", "LC_THEME", "--send-env", "EDITOR", "host"]).unwrap();
+    let parsed = args(&[
+        "connect",
+        "--send-env",
+        "LC_THEME",
+        "--send-env",
+        "EDITOR",
+        "host",
+    ])
+    .unwrap();
     assert_eq!(parsed.send_env_add, ["LC_THEME", "EDITOR"]);
     assert!(parsed.send_env.patterns().is_empty());
-    assert!(args(&["--send-env", "A-B", "host"]).is_err());
+    assert!(args(&["connect", "--send-env", "A-B", "host"]).is_err());
 }
