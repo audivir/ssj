@@ -72,9 +72,7 @@ pub fn format_connect(connect: &Connect) -> String {
         port("udp", connect.udp),
         port("tcp", connect.tcp)
     );
-    for byte in connect.fingerprint {
-        line.push_str(&format!("{byte:02x}"));
-    }
+    line.push_str(&hex::encode(connect.fingerprint));
     if connect.new {
         line.push_str(" new");
     }
@@ -167,20 +165,18 @@ fn parse_port(text: &[u8]) -> Result<u16, BootstrapError> {
         .ok_or(BootstrapError::Malformed)
 }
 
-fn parse_fingerprint(text: &[u8]) -> Result<[u8; 32], BootstrapError> {
-    if text.len() != 64 {
+/// Decodes lowercase hex, the only form that the lines use, so that each value has one spelling.
+fn parse_hex(text: &[u8]) -> Result<Vec<u8>, BootstrapError> {
+    if text.iter().any(u8::is_ascii_uppercase) {
         return Err(BootstrapError::Malformed);
     }
-    let digit = |b: u8| match b {
-        b'0'..=b'9' => Ok(b - b'0'),
-        b'a'..=b'f' => Ok(b - b'a' + 10),
-        _ => Err(BootstrapError::Malformed),
-    };
-    let mut out = [0u8; 32];
-    for (byte, pair) in out.iter_mut().zip(text.chunks(2)) {
-        *byte = digit(pair[0])? << 4 | digit(pair[1])?;
-    }
-    Ok(out)
+    hex::decode(text).map_err(|_| BootstrapError::Malformed)
+}
+
+fn parse_fingerprint(text: &[u8]) -> Result<[u8; 32], BootstrapError> {
+    parse_hex(text)?
+        .try_into()
+        .map_err(|_| BootstrapError::Malformed)
 }
 
 /// Makes remote text safe to show on a terminal.
@@ -204,12 +200,7 @@ pub fn sanitize(text: &[u8], max_chars: usize) -> String {
 
 /// Formats the line with the certificate fingerprint of the client, including the newline.
 pub fn format_pin(fingerprint: &[u8; 32]) -> String {
-    let mut line = String::from(PIN_PREFIX);
-    for byte in fingerprint {
-        line.push_str(&format!("{byte:02x}"));
-    }
-    line.push('\n');
-    line
+    format!("{PIN_PREFIX}{}\n", hex::encode(fingerprint))
 }
 
 /// Parses one line `SSJ PIN <64 lowercase hex digits>` with an optional `\r` before the newline.
@@ -243,11 +234,7 @@ pub fn format_start(start: &Prestart) -> Option<String> {
     })
     .encode(&mut frame)
     .ok()?;
-    let mut line = String::from(START_PREFIX);
-    for byte in frame {
-        line.push_str(&format!("{byte:02x}"));
-    }
-    line.push('\n');
+    let line = format!("{START_PREFIX}{}\n", hex::encode(frame));
     debug_assert!(line.len() <= MAX_START_LINE);
     Some(line)
 }
@@ -260,18 +247,7 @@ pub fn parse_start(line: &[u8]) -> Result<Prestart, BootstrapError> {
     let hex = line
         .strip_prefix(START_PREFIX.as_bytes())
         .ok_or(BootstrapError::Malformed)?;
-    if hex.len() % 2 != 0 {
-        return Err(BootstrapError::Malformed);
-    }
-    let digit = |b: u8| match b {
-        b'0'..=b'9' => Ok(b - b'0'),
-        b'a'..=b'f' => Ok(b - b'a' + 10),
-        _ => Err(BootstrapError::Malformed),
-    };
-    let mut frame = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.chunks(2) {
-        frame.push(digit(pair[0])? << 4 | digit(pair[1])?);
-    }
+    let frame = parse_hex(hex)?;
     match decode_client(&frame) {
         Ok(Some((ClientFrame::Hello(Hello::Start { size, env, agent }), used)))
             if used == frame.len() =>

@@ -100,10 +100,7 @@ pub async fn detect_target(args: &Args) -> Result<Target, String> {
 
 /// Returns the SHA-256 digest of `bytes` as lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    hex::encode(Sha256::digest(bytes))
 }
 
 /// Runs on the host. The first line of stdin is the expected SHA-256, the rest is the file.
