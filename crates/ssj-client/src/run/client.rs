@@ -1,23 +1,22 @@
 //! The client of a running session: the loop that passes bytes, acknowledges, and reconnects.
 
 mod link;
+mod pump;
 
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use quinn::Endpoint;
-use ssj_proto::compress::{Compressor, inflate};
-use ssj_proto::{ClientFrame, ExitStatus, Hello, ReplayBuffer, ServerFrame, WindowSize};
+use ssj_proto::compress::Compressor;
+use ssj_proto::{ClientFrame, ExitStatus, Hello, ReplayBuffer, WindowSize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
-use super::wire::{FrameReader, Out, hello_name, server_frame_name, write_frames};
-use super::{Announce, FLUSH_TIMEOUT, Finished, INPUT_BUFFER, Io, Params, Reader, Tier};
-use crate::agent::Forward;
-use crate::debounce::Debounce;
+use super::wire::{FrameReader, Out, hello_name, write_frames};
+use super::{Announce, FLUSH_TIMEOUT, Finished, INPUT_BUFFER, Io, Params, Reader};
 use crate::echo::Echo;
 use crate::netwatch::Cause;
 use crate::status::dropped_notice;
@@ -32,14 +31,8 @@ const BACKOFF: [Duration; 5] = [
     Duration::from_secs(2),
     Duration::from_secs(3),
 ];
-/// How long after the last debug line on the terminal the screen is drawn again.
-const REDRAW_AFTER_LOG: Duration = Duration::from_millis(400);
-/// Time QUIC gets to open on a new network while the session runs over a stream transport.
-const UPGRADE_TIMEOUT: Duration = Duration::from_millis(1500);
 /// A new lookup of the server address happens before every attempt after this many failed ones.
 const RESOLVE_EVERY: usize = 3;
-/// A resize is sent when no newer one has come for this long.
-const RESIZE_QUIET: Duration = Duration::from_millis(50);
 const PING_EVERY: Duration = Duration::from_secs(1);
 /// Output that is acknowledged at once. Less waits for a frame that goes out anyway.
 const ACK_BYTES: u64 = 4096;
@@ -47,37 +40,8 @@ const ACK_BYTES: u64 = 4096;
 const COMPRESS_BACKLOG: u64 = 256 * 1024;
 /// Chunks shorter than this are not worth compressing.
 const COMPRESS_MIN_CHUNK: usize = 1024;
-/// Most output that is written to the terminal in one go.
-const OUTPUT_BATCH: usize = 256 * 1024;
 /// How long a status waits for a sequence of the remote side to end before it cancels it.
 const SEQUENCE_PATIENCE: Duration = Duration::from_secs(2);
-/// The client says that the server is silent after four round trips, but not sooner than this
-/// and not later than the maximum, so that a good link reports a stall quickly and a slow link
-/// does not report one all the time.
-const STALL_MIN: Duration = Duration::from_secs(2);
-const STALL_MAX: Duration = Duration::from_secs(10);
-/// A stream that has heard nothing for this long gets a spare: a second connection is opened
-/// beside it, and the session moves to whichever works. Giving the stream up only after
-/// [`super::STREAM_DEAD_AFTER`] would leave a flaky link (a train) without a session for that long, and
-/// the stream itself may be in the long backoff of TCP when the network is back.
-const SPARE_AFTER: Duration = Duration::from_secs(3);
-/// Time a spare gets to open. A connection that was started on a dead path has lost its first
-/// packets and retries them after 1 and 3 seconds, and then needs the login: it opens about 6
-/// seconds after it was started, so a shorter time would end the spares that are about to work.
-/// The fresh ones that come every second find a returning network sooner.
-const SPARE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Spares that open at the same time. A connection started on a dead path loses its first packets
-/// and may not open for seconds, so a new one starts every second while the stream lags, and the
-/// first to open wins (the same idea as asking two servers and taking the faster answer).
-const SPARES_AT_ONCE: usize = 6;
-/// Pause after a spare that failed outright, so that a broken login does not become a loop.
-const SPARE_PAUSE: Duration = Duration::from_secs(2);
-/// A change of network produces many notifications. One reaction follows when they stop.
-const CHANGE_QUIET: Duration = Duration::from_millis(300);
-/// Time the server gets to answer after the client moved to a new network path, before the client
-/// starts a new connection. A wake from sleep leaves less hope for the old path.
-const PROBE_AFTER_CHANGE: Duration = Duration::from_secs(1);
-const PROBE_AFTER_WAKE: Duration = Duration::from_secs(1);
 
 /// The next cause from the watch, or never if there is none.
 async fn next_cause(net: &mut Option<mpsc::UnboundedReceiver<Cause>>) -> Option<Cause> {
@@ -262,20 +226,7 @@ impl Client {
     async fn run(mut self) -> Result<Finished, String> {
         let mut attempts = 0usize;
         loop {
-            let hello = if self.started {
-                Hello::Resume {
-                    size: self.size,
-                    output_offset: self.output_offset,
-                }
-            } else if self.params.attach {
-                Hello::Attach { size: self.size }
-            } else {
-                Hello::Start {
-                    size: self.size,
-                    env: self.params.env.clone(),
-                    agent: self.params.agent.is_some(),
-                }
-            };
+            let hello = self.next_hello();
             if attempts > 0 && attempts.is_multiple_of(RESOLVE_EVERY) {
                 self.refresh_address().await;
             }
@@ -293,47 +244,8 @@ impl Client {
                     return Err(message);
                 }
                 Attempt::Linked(mut link) => {
-                    if !self.linked_once
-                        && let Some(Announce {
-                            destination,
-                            name,
-                            started,
-                        }) = &self.params.announce
-                    {
-                        // without the message of the day of a login, nothing else says when the
-                        // session begins. The terminal is raw by now, hence the carriage return.
-                        let what = if *started || matches!(hello, Hello::Start { .. }) {
-                            "started session"
-                        } else {
-                            "attached to session"
-                        };
-                        let id = self.params.connect.id.as_str();
-                        let session = name
-                            .as_ref()
-                            .map_or_else(|| id.to_owned(), |name| format!("{name} ({id})"));
-                        let line = format!(
-                            "[{what} {session} on {destination} over {}]\r\n",
-                            self.params.tiers[self.current].name()
-                        );
-                        let _ = self.io.output.write_all(line.as_bytes()).await;
-                        let _ = self.io.output.flush().await;
-                    }
                     attempts = 0;
-                    self.failures = 0;
-                    self.linked_once = true;
-                    self.started = true;
-                    vlog!(
-                        1,
-                        "session running over {}",
-                        self.params.tiers[self.current].name()
-                    );
-                    self.clear_status().await;
-                    let pumped = self.pump(&mut link).await;
-                    // what was shown ahead of the server goes, whatever happens next.
-                    let taken_back = self.echo.cancel();
-                    let _ = self.io.output.write_all(&taken_back).await;
-                    let _ = self.io.output.flush().await;
-                    match pumped? {
+                    match self.carry(&mut link, &hello).await? {
                         Pumped::Done(finished) => {
                             vlog!(1, "session ended: {finished:?}");
                             link.finish().await;
@@ -358,24 +270,98 @@ impl Client {
                 }
             }
             attempts += 1;
-            vlog!(
-                1,
-                "attempt {attempts} failed{}",
-                self.note
-                    .as_ref()
-                    .map_or_else(String::new, |note| format!(": {note}"))
-            );
-            let text = match self.note.take() {
-                Some(note) => format!("connection lost, reconnecting (attempt {attempts}, {note})"),
-                None => format!("connection lost, reconnecting (attempt {attempts})"),
-            };
-            self.show_status(&text).await;
+            self.report_failure(attempts).await;
             let pause = BACKOFF[attempts.saturating_sub(1).min(BACKOFF.len() - 1)];
             if let Some(finished) = self.wait_offline(pause).await? {
                 self.clear_status_at_end().await;
                 return Ok(finished);
             }
         }
+    }
+
+    /// The hello for the next connection: a resume once the session runs, else a join or a start.
+    fn next_hello(&self) -> Hello {
+        if self.started {
+            Hello::Resume {
+                size: self.size,
+                output_offset: self.output_offset,
+            }
+        } else if self.params.attach {
+            Hello::Attach { size: self.size }
+        } else {
+            Hello::Start {
+                size: self.size,
+                env: self.params.env.clone(),
+                agent: self.params.agent.is_some(),
+            }
+        }
+    }
+
+    /// Runs the session over a new link until the link ends.
+    async fn carry(&mut self, link: &mut Link, hello: &Hello) -> Result<Pumped, String> {
+        if !self.linked_once {
+            self.announce(hello).await;
+        }
+        self.failures = 0;
+        self.linked_once = true;
+        self.started = true;
+        vlog!(
+            1,
+            "session running over {}",
+            self.params.tiers[self.current].name()
+        );
+        self.clear_status().await;
+        let pumped = self.pump(link).await;
+        // what was shown ahead of the server goes, whatever happens next.
+        let taken_back = self.echo.cancel();
+        let _ = self.io.output.write_all(&taken_back).await;
+        let _ = self.io.output.flush().await;
+        pumped
+    }
+
+    /// Writes the line that says the session began, if one is wanted.
+    async fn announce(&mut self, hello: &Hello) {
+        let Some(Announce {
+            destination,
+            name,
+            started,
+        }) = &self.params.announce
+        else {
+            return;
+        };
+        // without the message of the day of a login, nothing else says when the session begins.
+        // The terminal is raw by now, hence the carriage return.
+        let what = if *started || matches!(hello, Hello::Start { .. }) {
+            "started session"
+        } else {
+            "attached to session"
+        };
+        let id = self.params.connect.id.as_str();
+        let session = name
+            .as_ref()
+            .map_or_else(|| id.to_owned(), |name| format!("{name} ({id})"));
+        let line = format!(
+            "[{what} {session} on {destination} over {}]\r\n",
+            self.params.tiers[self.current].name()
+        );
+        let _ = self.io.output.write_all(line.as_bytes()).await;
+        let _ = self.io.output.flush().await;
+    }
+
+    /// Says that an attempt failed, in the debug output and in the status.
+    async fn report_failure(&mut self, attempts: usize) {
+        vlog!(
+            1,
+            "attempt {attempts} failed{}",
+            self.note
+                .as_ref()
+                .map_or_else(String::new, |note| format!(": {note}"))
+        );
+        let text = match self.note.take() {
+            Some(note) => format!("connection lost, reconnecting (attempt {attempts}, {note})"),
+            None => format!("connection lost, reconnecting (attempt {attempts})"),
+        };
+        self.show_status(&text).await;
     }
 
     async fn show_status(&mut self, text: &str) {
@@ -552,330 +538,5 @@ impl Client {
             let _ = link.send(ClientFrame::Detach);
         }
         Ok(Some(Finished::Detached))
-    }
-
-    /// Passes bytes between the terminal and the server until the session ends or the link breaks.
-    async fn pump(&mut self, link: &mut Link) -> Result<Pumped, String> {
-        let mut ping = interval(PING_EVERY);
-        let mut stalled = false;
-        // a change of the network that is waiting for the notifications to stop.
-        let mut change: Option<(Cause, tokio::time::Instant)> = None;
-        // when the server has to have answered after the client moved to a new path.
-        let mut probe: Option<tokio::time::Instant> = None;
-        // when the probe went out, and how many notices the change brought, for the debug output.
-        let mut probed_at: Option<Instant> = None;
-        let mut notices = 0usize;
-        let mut resizes = Debounce::new(RESIZE_QUIET);
-        // QUIC tried again on a new network while the session runs over a stream.
-        let mut upgrade: Option<Upgrade> = None;
-        // a second connection over the same stream transport, opened while the stream is silent.
-        let mut spares: tokio::task::JoinSet<
-            Result<Result<Link, String>, tokio::time::error::Elapsed>,
-        > = tokio::task::JoinSet::new();
-        let mut spare_not_before = Instant::now();
-        // when to make the program draw again, after debug lines were written over the screen.
-        let mut redraw_at: Option<tokio::time::Instant> = None;
-        // the channels to the agent live as long as the link.
-        let mut agent = self
-            .params
-            .agent
-            .clone()
-            .map(|socket| Forward::new(socket, link.out.clone()));
-        loop {
-            let room = self.input.free().min(self.chunk.len());
-            let change_at = change.map(|(_, at)| at);
-            if crate::log::take_terminal_lines() {
-                redraw_at = Some(tokio::time::Instant::now() + REDRAW_AFTER_LOG);
-            }
-            let echo_due = self.echo.due();
-            tokio::select! {
-                read = self.io.input.read(&mut self.chunk[..room]), if self.stdin_open && room > 0 => {
-                    match read {
-                        Ok(n) if n > 0 => {
-                            let typed = self.chunk[..n].to_vec();
-                            if let Some(finished) = self.handle_typed(&typed, Some(&link.out)).await? {
-                                return Ok(Pumped::Done(finished));
-                            }
-                        }
-                        // end of input: the shell keeps running, like with `ssh`.
-                        _ => self.stdin_open = false,
-                    }
-                }
-                frame = link.reader.next() => {
-                    let Some(frame) = frame? else {
-                        vlog!(1, "the server closed the connection");
-                        return Ok(Pumped::Lost);
-                    };
-                    link.last_heard = Instant::now();
-                    if probe.take().is_some()
-                        && let Some(sent) = probed_at.take()
-                    {
-                        vlog!(1, "the server answered on the new network after {:?}: the connection stays", sent.elapsed());
-                    }
-                    if std::mem::take(&mut stalled) {
-                        self.clear_status().await;
-                    }
-                    vlog!(3, "<- {}", server_frame_name(&frame));
-                    // compressed output is the same as plain output once it is inflated.
-                    let frame = match frame {
-                        ServerFrame::Compressed(packed) => ServerFrame::Output(
-                            inflate(&packed)
-                                .map_err(|e| format!("the server sent bad compressed output: {e:?}"))?,
-                        ),
-                        other => other,
-                    };
-                    match frame {
-                        ServerFrame::Output(mut data) => {
-                            // frames that are here already go to the terminal in one write. A
-                            // terminal hands out its output in small pieces, and one write (a
-                            // trip through the blocking pool) for each would cap the throughput.
-                            while data.len() < OUTPUT_BATCH && link.reader.take_ready_output(&mut data) {}
-                            // the rest of a sequence that was cancelled on the terminal is dropped.
-                            let skipped = self.tracker.skip_prefix(&data);
-                            let shown = &data[skipped..];
-                            let (before, after) = self.echo.output(shown, Instant::now());
-                            let written = async {
-                                self.io.output.write_all(&before).await?;
-                                self.io.output.write_all(shown).await?;
-                                self.io.output.write_all(&after).await?;
-                                self.io.output.flush().await
-                            };
-                            if written.await.is_err() {
-                                return Err("cannot write to the terminal".to_owned());
-                            }
-                            self.tracker.feed(shown);
-                            // a status that was held back because of a sequence can go out now.
-                            self.sync_status(false).await;
-                            self.output_offset += data.len() as u64;
-                            if !link.reader.frame_ready() {
-                                self.ack_output(&link.out, false);
-                            }
-                        }
-                        ServerFrame::InputAck(offset) => {
-                            self.input
-                                .ack(offset)
-                                .map_err(|_| "the server acknowledged input that was never sent".to_owned())?;
-                            self.input_since = (self.input.end() > self.input.start()).then(Instant::now);
-                        }
-                        ServerFrame::Pong => link.ping_since = None,
-                        ServerFrame::AgentOpen(id) => match agent.as_mut() {
-                            Some(agent) => agent.open(id).await,
-                            // nothing was offered, so a server that opens a channel is wrong.
-                            None => link.send(ClientFrame::AgentClose(id)),
-                        },
-                        ServerFrame::Agent(id, data) => {
-                            if let Some(agent) = agent.as_mut() {
-                                agent.data(id, &data);
-                            }
-                        }
-                        ServerFrame::AgentClose(id) => {
-                            if let Some(agent) = agent.as_mut() {
-                                agent.close(id);
-                            }
-                        }
-                        ServerFrame::Gap(skipped) => {
-                            // the server skipped output that this client was too slow to take.
-                            // What was shown ahead of the server goes first, then the notice.
-                            vlog!(1, "the server skipped {skipped} bytes of output (slow link)");
-                            let taken_back = self.echo.cancel();
-                            let _ = self.io.output.write_all(&taken_back).await;
-                            self.output_offset = self
-                                .output_offset
-                                .checked_add(skipped)
-                                .ok_or("the server skipped more output than there can be")?;
-                            self.note_gap(skipped).await;
-                            self.ack_output(&link.out, true);
-                        }
-                        ServerFrame::Detached => {
-                            vlog!(1, "`ssj detach` was run for this session: leaving it");
-                            return Ok(Pumped::Done(Finished::Detached));
-                        }
-                        ServerFrame::Exit(status) => {
-                            link.send(ClientFrame::Close);
-                            return Ok(Pumped::Done(Finished::Exited(exit_code(status))));
-                        }
-                        ServerFrame::Error(code) => return Err(format!("the server ended the session: {code:?}")),
-                        ServerFrame::Welcome(_) => return Err("the server sent a second welcome".to_owned()),
-                        // turned into output above.
-                        ServerFrame::Compressed(_) => unreachable!("inflated above"),
-                    }
-                }
-                Some(()) = self.io.hangups.recv() => {
-                    if self.params.hangup_detaches {
-                        // the connection of an `ssh` session ended, which is a loss and not a wish.
-                        vlog!(1, "the terminal was closed inside an ssh session: leaving the session running");
-                        link.send(ClientFrame::Detach);
-                        return Ok(Pumped::Done(Finished::Detached));
-                    }
-                    vlog!(1, "the terminal was closed or ssj was told to end: ending the session");
-                    link.send(ClientFrame::Hangup);
-                    return Ok(Pumped::Done(Finished::HungUp));
-                }
-                Some(size) = self.io.resizes.recv() => {
-                    vlog!(2, "the terminal is now {}x{}", size.cols(), size.rows());
-                    self.size = size;
-                    self.echo.resize(size.cols());
-                    resizes.push(size, tokio::time::Instant::now());
-                }
-                _ = async { tokio::time::sleep_until(tokio::time::Instant::from_std(echo_due.expect("guarded"))).await }, if echo_due.is_some() => {
-                    // nobody echoed what was shown, as with a password prompt.
-                    let taken_back = self.echo.expire(Instant::now());
-                    let _ = self.io.output.write_all(&taken_back).await;
-                    let _ = self.io.output.flush().await;
-                }
-                _ = async { tokio::time::sleep_until(resizes.due().expect("guarded")).await }, if resizes.due().is_some() => {
-                    if let Some(size) = resizes.take(tokio::time::Instant::now()) {
-                        link.send(ClientFrame::Resize(size));
-                    }
-                }
-                cause = next_cause(&mut self.net) => match cause {
-                    Some(cause) => {
-                        notices += 1;
-                        vlog!(2, "network change notice {notices}: {cause:?}");
-                        let strongest = change.map_or(cause, |(old, _)| old.max(cause));
-                        change = Some((strongest, tokio::time::Instant::now() + CHANGE_QUIET));
-                    }
-                    None => self.net = None,
-                },
-                _ = async { tokio::time::sleep_until(change_at.expect("guarded")).await }, if change_at.is_some() => {
-                    let (cause, _) = change.take().expect("guarded");
-                    let transport = self.params.tiers[self.current].name();
-                    vlog!(
-                        1,
-                        "network change ({cause:?}, {notices} notices): {}",
-                        if link.quic.is_some() {
-                            "moving the UDP socket and probing the server".to_owned()
-                        } else {
-                            format!("the {transport} stream has no socket to move, probing the server")
-                        }
-                    );
-                    notices = 0;
-                    self.rebind();
-                    // a faster network may have appeared: QUIC is tried on it while the stream
-                    // works.
-                    if self.current != 0
-                        && upgrade.is_none()
-                        && matches!(self.params.tiers[0], Tier::Udp { .. })
-                    {
-                        vlog!(1, "trying QUIC on the new network");
-                        let attempt = self.prepare_link(0);
-                        upgrade = Some(Box::pin(timeout(UPGRADE_TIMEOUT, attempt)));
-                    }
-                    link.ping();
-                    probed_at = Some(Instant::now());
-                    let wait = if cause == Cause::Woke { PROBE_AFTER_WAKE } else { PROBE_AFTER_CHANGE };
-                    probe = Some(tokio::time::Instant::now() + wait);
-                }
-                _ = async { tokio::time::sleep_until(probe.expect("guarded")).await }, if probe.is_some() => {
-                    // the new path did not bring an answer, so the old connection is not worth
-                    // keeping.
-                    vlog!(1, "no answer after the network change: giving up the connection and reconnecting");
-                    return Ok(Pumped::Lost);
-                }
-                result = async { upgrade.as_mut().expect("guarded").await }, if upgrade.is_some() => {
-                    upgrade = None;
-                    match result {
-                        Ok(Ok(better)) => {
-                            vlog!(1, "QUIC works on the new network");
-                            return Ok(Pumped::Switch(better, 0));
-                        }
-                        Ok(Err(error)) => vlog!(1, "QUIC does not work on the new network: {error}"),
-                        Err(_) => vlog!(
-                            1,
-                            "QUIC has no answer on the new network: staying on {}",
-                            self.params.tiers[self.current].name()
-                        ),
-                    }
-                }
-                Some(joined) = spares.join_next(), if !spares.is_empty() => {
-                    match joined {
-                        Ok(Ok(Ok(better))) => {
-                            // the stream may have come back while the spare was opening, and then
-                            // it is the better one: nothing is in flight on it that a move
-                            // would have to repeat.
-                            if self.lag(link) < SPARE_AFTER / 2 {
-                                vlog!(1, "a spare connection is open, but the stream answers again: keeping the stream");
-                                spares.abort_all();
-                            } else {
-                                vlog!(1, "a spare connection is open: moving to it");
-                                return Ok(Pumped::Switch(better, self.current));
-                            }
-                        }
-                        Ok(Ok(Err(error))) => {
-                            vlog!(1, "a spare connection failed: {error}");
-                            spare_not_before = Instant::now() + SPARE_PAUSE;
-                        }
-                        Ok(Err(_)) => vlog!(1, "a spare connection did not open in time"),
-                        Err(_) => {}
-                    }
-                }
-                () = async { tokio::time::sleep_until(redraw_at.expect("guarded")).await }, if redraw_at.is_some() => {
-                    redraw_at = None;
-                    redraw(self.size, &link.out).await;
-                }
-                _ = ping.tick() => {
-                    // A frame that arrived a moment ago shows that the connection works, so a ping
-                    // is for the quiet times. It also takes the acknowledgement of the output with
-                    // it, so that none goes out alone.
-                    if link.last_heard.elapsed() >= PING_EVERY / 2 {
-                        self.ack_output(&link.out, true);
-                        link.ping();
-                    }
-                    self.unstick_status().await;
-                    let silent = link.last_heard.elapsed();
-                    // the server may be heard while it hears nothing: a ping or typed input
-                    // without an answer is as bad as silence.
-                    let lag = self.lag(link);
-                    let stall_after = link
-                        .quic
-                        .as_ref()
-                        .map_or(STALL_MIN, |conn| (conn.rtt() * 4).clamp(STALL_MIN, STALL_MAX));
-                    // QUIC finds a returning network by itself and survives long outages. A
-                    // stream has no way to notice that its path is gone, and the `ssh` behind it
-                    // would hang, so a long silence ends it and a new one is made.
-                    // not while a spare is opening, which would lose its progress, but not for ever:
-                    // a transport that never opens has to give way to the next one.
-                    let patience = if !spares.is_empty() {
-                        self.params.stream_dead_after * 3
-                    } else {
-                        self.params.stream_dead_after
-                    };
-                    if link.quic.is_none() && lag > patience {
-                        vlog!(1, "no answer for {lag:?} on a stream: giving it up");
-                        return Ok(Pumped::Lost);
-                    }
-                    if link.quic.is_none() {
-                        if lag > SPARE_AFTER
-                            && spares.len() < SPARES_AT_ONCE
-                            && upgrade.is_none()
-                            && Instant::now() >= spare_not_before
-                        {
-                            vlog!(
-                                1,
-                                "no answer for {lag:?} on a stream: opening a spare connection ({} open)",
-                                spares.len()
-                            );
-                            let attempt = self.prepare_link(self.current);
-                            spares.spawn(timeout(SPARE_TIMEOUT, attempt));
-                        } else if lag < SPARE_AFTER / 2 && !spares.is_empty() {
-                            vlog!(1, "the stream answers again: dropping the spare connections");
-                            spares.abort_all();
-                            while spares.try_join_next().is_some() {}
-                        }
-                    }
-                    if silent > stall_after {
-                        stalled = true;
-                        // the number changes in steps of five seconds, so the title does not
-                        // flicker.
-                        let text = if silent < Duration::from_secs(10) {
-                            "no response from the server".to_owned()
-                        } else {
-                            format!("no response from the server for {}s", silent.as_secs() / 5 * 5)
-                        };
-                        self.show_status(&text).await;
-                    }
-                }
-            }
-        }
     }
 }

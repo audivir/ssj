@@ -8,7 +8,7 @@ use ssj_net::{SERVER_NAME, client_tls, quic_client};
 use ssj_proto::bootstrap::sanitize;
 use ssj_proto::frame::MAX_DATA_LEN;
 use ssj_proto::resume::check_welcome;
-use ssj_proto::{ClientFrame, ErrorCode, Hello, ReplayBuffer, ServerFrame};
+use ssj_proto::{ClientFrame, ErrorCode, Hello, ReplayBuffer, ServerFrame, Welcome};
 use tokio::io::AsyncWriteExt;
 use tokio::time::{sleep, timeout};
 
@@ -26,6 +26,9 @@ const TIER_PATIENCE: usize = 3;
 const NOTE_CHARS: usize = 60;
 /// Time a lookup may take before the old address is kept.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The first answer of the server on a new connection.
+type Reply = Result<Option<ServerFrame>, String>;
 
 /// The address that binds a UDP socket of the same family as `peer`.
 fn wildcard(peer: &SocketAddr) -> SocketAddr {
@@ -294,29 +297,49 @@ impl Client {
 
     /// Connects, sends the hello, and resends the input that the server has not consumed.
     async fn establish(&mut self, hello: &Hello) -> Attempt {
+        let (link, reply) = match self.send_hello(hello).await {
+            Ok(sent) => sent,
+            Err(attempt) => return attempt,
+        };
+        let welcome = match self.read_welcome(hello, reply) {
+            Ok(welcome) => welcome,
+            Err(attempt) => return attempt,
+        };
+        if let Err(message) = self.take_welcome(hello, welcome).await {
+            return Attempt::Fatal(message);
+        }
+        self.send_input_again(&link, welcome.input_offset);
+        if self.params.agent.is_some() {
+            link.send(ClientFrame::AgentOffer);
+        }
+        Attempt::Linked(link)
+    }
+
+    /// Opens a connection, or takes the prepared one, and sends the hello on it. Returns the link
+    /// with the first answer of the server.
+    async fn send_hello(&mut self, hello: &Hello) -> Result<(Link, Reply), Attempt> {
         let limit = self.params.attempt_timeout;
         let prepared = self.prepared.take();
         let attempt = timeout(limit, async {
-            let (link, idx) = match prepared {
+            let (mut link, idx) = match prepared {
                 Some(prepared) => prepared,
                 None => self.race().await?,
             };
             vlog!(2, "sending {}", hello_name(hello));
             link.send(ClientFrame::Hello(hello.clone()));
-            let mut link = link;
             let reply = link.reader.next().await;
             Ok::<_, String>((link, idx, reply))
         })
         .await;
-        let (link, reply) = match attempt {
+        match attempt {
             Ok(Ok((link, idx, reply))) => {
                 self.current = idx;
-                (link, reply)
+                Ok((link, reply))
             }
             Ok(Err(note)) => {
                 vlog!(1, "connecting failed: {note}");
                 self.note = Some(sanitize(note.as_bytes(), NOTE_CHARS));
-                return Attempt::Retry;
+                Err(Attempt::Retry)
             }
             Err(_) => {
                 vlog!(1, "no answer within {limit:?}");
@@ -324,20 +347,24 @@ impl Client {
                     "{}: no answer",
                     self.params.tiers[self.current].name()
                 ));
-                return Attempt::Retry;
+                Err(Attempt::Retry)
             }
-        };
-        let welcome = match reply {
-            Ok(Some(ServerFrame::Welcome(welcome))) => welcome,
-            // the first start may not have arrived, so it is tried again as a start
+        }
+    }
+
+    /// Takes the welcome out of the first answer, or says what to do instead.
+    fn read_welcome(&mut self, hello: &Hello, reply: Reply) -> Result<Welcome, Attempt> {
+        match reply {
+            Ok(Some(ServerFrame::Welcome(welcome))) => Ok(welcome),
             // nobody has started the shell yet, so this client does it.
             Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
                 if matches!(hello, Hello::Attach { .. }) && !self.started =>
             {
                 vlog!(1, "no running session to join: starting a new one");
                 self.params.attach = false;
-                return Attempt::Again;
+                Err(Attempt::Again)
             }
+            // the first start may not have arrived, so it is tried again as a start.
             Ok(Some(ServerFrame::Error(ErrorCode::NotStarted)))
                 if matches!(
                     hello,
@@ -348,19 +375,21 @@ impl Client {
                 ) && self.input.end() == 0 =>
             {
                 self.started = false;
-                return Attempt::Again;
+                Err(Attempt::Again)
             }
-            Ok(Some(ServerFrame::Error(ErrorCode::ReplayGap))) => {
-                return Attempt::Fatal(
-                    "the server no longer has the output since the connection was lost".to_owned(),
-                );
-            }
-            Ok(Some(ServerFrame::Error(code))) => {
-                return Attempt::Fatal(format!("the server refused the session: {code:?}"));
-            }
-            Err(message) => return Attempt::Fatal(message),
-            Ok(_) => return Attempt::Retry,
-        };
+            Ok(Some(ServerFrame::Error(ErrorCode::ReplayGap))) => Err(Attempt::Fatal(
+                "the server no longer has the output since the connection was lost".to_owned(),
+            )),
+            Ok(Some(ServerFrame::Error(code))) => Err(Attempt::Fatal(format!(
+                "the server refused the session: {code:?}"
+            ))),
+            Err(message) => Err(Attempt::Fatal(message)),
+            Ok(_) => Err(Attempt::Retry),
+        }
+    }
+
+    /// Takes over the offsets of the welcome, after checking them against what the client sent.
+    async fn take_welcome(&mut self, hello: &Hello, welcome: Welcome) -> Result<(), String> {
         if matches!(hello, Hello::Attach { .. }) {
             // a client without history takes over the offsets of the server.
             self.output_offset = welcome.output_offset;
@@ -379,13 +408,10 @@ impl Client {
             welcome.input_offset,
             welcome.output_offset
         );
+        let id = self.params.connect.id.as_str();
         match hello {
             Hello::Attach { .. } => {
-                vlog!(
-                    1,
-                    "joined the running session {}",
-                    self.params.connect.id.as_str()
-                );
+                vlog!(1, "joined the running session {id}");
                 vlog!(
                     2,
                     "the server replays its output from offset {}",
@@ -393,18 +419,16 @@ impl Client {
                 );
             }
             Hello::Resume { output_offset, .. } => {
-                vlog!(1, "resumed the session {}", self.params.connect.id.as_str());
+                vlog!(1, "resumed the session {id}");
                 vlog!(2, "resumed at output offset {output_offset}");
             }
-            Hello::Start { .. } => {
-                vlog!(1, "started the session {}", self.params.connect.id.as_str())
-            }
+            Hello::Start { .. } => vlog!(1, "started the session {id}"),
         }
         if check_welcome(hello, welcome, self.input.start(), self.input.end()).is_err() {
-            return Attempt::Fatal("the server answered with unexpected offsets".to_owned());
+            return Err("the server answered with unexpected offsets".to_owned());
         }
         if self.input.ack(welcome.input_offset).is_err() {
-            return Attempt::Fatal("the server consumed input that was never sent".to_owned());
+            return Err("the server consumed input that was never sent".to_owned());
         }
         // the server forgot output while the client was away. The stream goes on at the new
         // offset, and the gap is shown in the output where it happened, with its exact size.
@@ -419,9 +443,11 @@ impl Client {
             self.output_offset = welcome.output_offset;
             self.note_gap(welcome.output_offset - output_offset).await;
         }
-        // everything after the offset of the server is sent again, including what was typed
-        // offline.
-        let mut offset = welcome.input_offset;
+        Ok(())
+    }
+
+    /// Sends everything after the offset of the server again, including what was typed offline.
+    fn send_input_again(&mut self, link: &Link, mut offset: u64) {
         while let Ok(chunk) = self.input.read_from(offset, MAX_DATA_LEN) {
             if chunk.is_empty() {
                 break;
@@ -431,9 +457,5 @@ impl Client {
             link.send(ClientFrame::Input(chunk));
         }
         self.input_since = (self.input.end() > self.input.start()).then(Instant::now);
-        if self.params.agent.is_some() {
-            link.send(ClientFrame::AgentOffer);
-        }
-        Attempt::Linked(link)
     }
 }
