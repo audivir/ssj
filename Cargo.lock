@@ -1029,12 +1029,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "ssj-client"
+name = "ssj-assets"
 version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "ssj-client",
+]
+
+[[package]]
+name = "ssj-client"
+version = "0.1.0"
+dependencies = [
+ "clap",
  "confique",
  "core-foundation",
  "dialoguer",

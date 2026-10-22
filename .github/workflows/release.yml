@@ -78,11 +78,7 @@ jobs:
       # the man page and the completions are the same on every target, so one build supplies them
       - name: Collect the man page and the completions
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          out="$(dirname "$(find "target/${{ matrix.target }}/release/build" -path '*ssj-client*/out/ssj.1' | head -1)")"
-          mkdir -p assets/completions
-          cp "$out/ssj.1" assets/
-          cp "$out/ssj.bash" "$out/_ssj" "$out/ssj.fish" assets/completions/
+        run: cargo run --release -p ssj-assets -- assets
       - uses: actions/upload-artifact@v7
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         with:

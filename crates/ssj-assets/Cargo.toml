@@ -1,0 +1,17 @@
+[package]
+name = "ssj-assets"
+version.workspace = true
+edition.workspace = true
+description = "The man page and the shell completions of ssj"
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+ssj-client.workspace = true
+
+[lints]
+workspace = true

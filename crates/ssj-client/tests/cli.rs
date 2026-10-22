@@ -455,38 +455,6 @@ fn the_flags_of_the_listing_and_the_completion() {
 }
 
 #[test]
-fn the_man_page_and_the_completions_are_built() {
-    let found = |name: &str| std::path::Path::new(env!("SSJ_ASSETS")).join(name);
-    let page = std::fs::read_to_string(found("ssj.1")).unwrap();
-    for word in [
-        "transport",
-        "client.toml",
-        "server.toml",
-        "port_range",
-        "auto_attach",
-        "forward_agent",
-        "congestion",
-    ] {
-        assert!(page.contains(word), "{word}");
-    }
-    for file in ["ssj.bash", "_ssj", "ssj.fish"] {
-        let text = std::fs::read_to_string(found(file)).unwrap();
-        assert!(text.contains("transport"), "{file}");
-    }
-    // the id after the host of `attach` and `kill` is completed from the sessions of that host.
-    let zsh = std::fs::read_to_string(found("_ssj")).unwrap();
-    assert!(
-        zsh.starts_with("#compdef ssj\n"),
-        "compdef stays the first line"
-    );
-    assert!(zsh.contains("ssj --complete $line[1]"));
-    let bash = std::fs::read_to_string(found("ssj.bash")).unwrap();
-    assert!(bash.contains("ssj --complete \"${pos[1]}\""));
-    let fish = std::fs::read_to_string(found("ssj.fish")).unwrap();
-    assert!(fish.contains("ssj --complete $words[2]"));
-}
-
-#[test]
 fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
     use ssj_client::cli::{LocalEcho, parse_local_echo};
     use ssj_client::config::Config;

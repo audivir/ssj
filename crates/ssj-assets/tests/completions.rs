@@ -7,9 +7,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Where the generated files are (the build script writes them next to the man page).
+/// A generated file, written once for all tests of the process.
 fn generated(name: &str) -> PathBuf {
-    Path::new(env!("SSJ_ASSETS")).join(name)
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("ssj-assets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        ssj_assets::write(&dir).unwrap();
+        dir
+    })
+    .join(name)
 }
 
 /// A directory with a fake `ssj`: `--complete` prints the names of a host.
@@ -443,7 +450,7 @@ const ALL_OPTIONS: &str = "verbose quiet force log-file name auto-attach no-auto
     server-binary udp-host detach-key send-env json";
 
 /// The options that each command reads, written out again from the code of the commands and not
-/// from the table that the build script reads.
+/// from the table that the generator reads.
 const READS: [(&str, &str); 6] = [
     (
         "list",
@@ -751,4 +758,36 @@ fn zsh_offers_what_each_position_takes_part_3() {
 #[test]
 fn zsh_offers_what_each_position_takes_part_4() {
     zsh_offers(3, 4);
+}
+
+#[test]
+fn the_man_page_and_the_completions_are_built() {
+    let found = generated;
+    let page = std::fs::read_to_string(found("ssj.1")).unwrap();
+    for word in [
+        "transport",
+        "client.toml",
+        "server.toml",
+        "port_range",
+        "auto_attach",
+        "forward_agent",
+        "congestion",
+    ] {
+        assert!(page.contains(word), "{word}");
+    }
+    for file in ["ssj.bash", "_ssj", "ssj.fish"] {
+        let text = std::fs::read_to_string(found(file)).unwrap();
+        assert!(text.contains("transport"), "{file}");
+    }
+    // the id after the host of `attach` and `kill` is completed from the sessions of that host.
+    let zsh = std::fs::read_to_string(found("_ssj")).unwrap();
+    assert!(
+        zsh.starts_with("#compdef ssj\n"),
+        "compdef stays the first line"
+    );
+    assert!(zsh.contains("ssj --complete $line[1]"));
+    let bash = std::fs::read_to_string(found("ssj.bash")).unwrap();
+    assert!(bash.contains("ssj --complete \"${pos[1]}\""));
+    let fish = std::fs::read_to_string(found("ssj.fish")).unwrap();
+    assert!(fish.contains("ssj --complete $words[2]"));
 }

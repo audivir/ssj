@@ -1,13 +1,11 @@
-//! Writes the man page and the shell completions to `$OUT_DIR`, from where the release workflow
-//! picks them up.
+//! The man page and the shell completions of `ssj`, made from its command line. The release
+//! workflow writes them with `cargo run -p ssj-assets -- DIR`.
 
-use std::{env, fs, path::PathBuf};
+use std::{fs, io, path::Path};
 
 use clap::CommandFactory;
 use clap_complete::Shell;
-
-#[path = "src/options.rs"]
-mod options;
+use ssj_client::options;
 
 /// What the options cannot show: the config files and the cache.
 const COMMAND: &str = r#".SH RUNNING A COMMAND
@@ -109,11 +107,8 @@ The session names last seen on each host, for tab completion. Written by \fBssj 
 refreshed in the background.
 "#;
 
-fn main() {
-    println!("cargo:rerun-if-changed=src/options.rs");
-    let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-    // where the tests and the release workflow find the files.
-    println!("cargo:rustc-env=SSJ_ASSETS={}", out.display());
+/// Writes `ssj.1`, `ssj.bash`, `_ssj`, and `ssj.fish` to `out`.
+pub fn write(out: &Path) -> io::Result<()> {
     // the generators list hidden options too, so they are left out here.
     let build = |full: clap::Command| {
         let visible: Vec<clap::Arg> = full
@@ -141,8 +136,7 @@ fn main() {
     let command = build(options::Options::command());
     let mut page = Vec::new();
     clap_mangen::Man::new(options::command().version(env!("CARGO_PKG_VERSION")))
-        .render(&mut page)
-        .expect("render the man page");
+        .render(&mut page)?;
     page.extend_from_slice(COMMAND.as_bytes());
     // the options that take a value: the word after one of them is not a destination
     let value_options = command
@@ -187,7 +181,7 @@ fn main() {
     }
     page.extend_from_slice(page_commands.as_bytes());
     page.extend_from_slice(FILES.as_bytes());
-    fs::write(out.join("ssj.1"), page).expect("write the man page");
+    fs::write(out.join("ssj.1"), page)?;
 
     let tree = completion_tree(&command);
     for (shell, file) in [
@@ -204,8 +198,9 @@ fn main() {
             Shell::Fish => fish(&text, &value_options, &free_options),
             _ => text,
         };
-        fs::write(out.join(file), text).expect("write the completion");
+        fs::write(out.join(file), text)?;
     }
+    Ok(())
 }
 
 /// The long name of the option with this id.

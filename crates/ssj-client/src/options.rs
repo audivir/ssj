@@ -1,14 +1,11 @@
-//! The options of `ssj` as `clap` sees them. The file has no dependency on the rest of the crate,
-//! so `build.rs` includes it to generate the completions and the man page. Every value is text
-//! here, and `cli::parse` checks it.
+//! The options of `ssj` as `clap` sees them, which `ssj-assets` also turns into the completions
+//! and the man page. Every value is text here, and `cli::parse` checks it.
 
 use clap::builder::PossibleValuesParser;
 use clap::{CommandFactory, Parser, ValueHint};
 
 /// The flags that have a counterpart which turns them off: the id of each, its name, and the
 /// line that the help shows for both.
-// `build.rs` includes this file for the completions and the man page and does not call `command`.
-#[allow(dead_code)]
 const PAIRS: [[&str; 4]; 3] = [
     [
         "auto_attach",
@@ -29,8 +26,6 @@ const PAIRS: [[&str; 4]; 3] = [
 /// option may stand, since the word is not known yet; after it only these make sense, and the
 /// completions and the man page show only these. The words after a destination that is not a
 /// command belong to the command on the host and have none.
-// `build.rs` includes this file for the completions and the man page; the crate uses it in a test.
-#[allow(dead_code)]
 pub const COMMAND_OPTIONS: [(&str, &[&str]); 6] = [
     (
         "list",
@@ -112,7 +107,6 @@ pub const COMMAND_OPTIONS: [(&str, &[&str]); 6] = [
 /// The command for parsing and for `--help`. The help shows a flag and its counterpart on one line
 /// (`--auto-attach / --no-auto-attach`), the way `typer` does: the flag gets that text as its long
 /// name, which nobody types, and keeps the real name as a hidden alias. The counterpart is hidden.
-#[allow(dead_code)]
 pub fn command() -> clap::Command {
     let mut command = Options::command();
     for [on, off, name, shown] in PAIRS {

@@ -383,13 +383,13 @@ redraw.
   three shells offer the values after a space and after `=`, and clap rejects anything else with
   the list. The sets are written again in the `parse_*` functions of `cli.rs`, which turn the text
   into the types, and in the test table of `completions.rs`.
-- The completions come from a `clap` command that only `build.rs` sees (`completion_tree`): the
+- The completions come from a `clap` command that only `ssj-assets` builds (`completion_tree`): the
   options, and a subcommand for each command word with the options it reads (`COMMAND_OPTIONS` in
   `options.rs`, the same table that makes the parser refuse the others), a destination, and the
   ids of sessions. `clap_complete` writes from it the options of each command, their values (the
   fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and files for
   `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first word. The
-  parser does not use the tree. What `clap` cannot know is added by the build script to each file:
+  parser does not use the tree. What `clap` cannot know is added by `ssj-assets` to each file:
   the hosts of `~/.ssh/config` for the destination and for `--udp-host` (`_ssh_hosts` in Zsh,
   `_known_hosts_real` of bash-completion in Bash when it is loaded, `__fish_print_hostnames` in
   Fish), the sessions of the host for `attach` (one), `kill`, and `detach` (any number), and the
@@ -398,7 +398,7 @@ redraw.
   word after a command, the sessions after the host of a command that takes them, the options of a
   command after its host, and the values of options. After the destination of `connect` and after
   any other destination, the words belong to the command that runs on the host: files, since its
-  layout (`~/.local/share/...`) is mostly the one of this machine, and no options (`ssj host ls -l`), and so after `ssj attach --`. Zsh does it in the case that `build.rs` extends and with a rest
+  layout (`~/.local/share/...`) is mostly the one of this machine, and no options (`ssj host ls -l`), and so after `ssj attach --`. Zsh does it in the case that `ssj-assets` extends and with a rest
   that completes nothing (so that its `_arguments` does not offer the options before a dash), Bash
   through the default completion that follows an empty answer, Fish by its default for words that
   no rule takes.
@@ -415,11 +415,12 @@ redraw.
   `connect`, a host that is no command, and `--`. The same table runs in Bash (with `COMP_WORDS`),
   Fish (with `complete -C`), and Zsh (with the completion system in a pseudo terminal, `zpty`, so
   that the functions of `clap` run for real). The options that each command reads are written out
-  again there, from the code of the commands, and not taken from the table of the build script.
-- `build.rs` writes the man page (`ssj.1`, with a section on running a command and a FILES
-  section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish to `$OUT_DIR`, and passes the path to
-  the compiler as `SSJ_ASSETS`. The options for internal use (`--complete`, `--batch`) are left
-  out.
+  again there, from the code of the commands, and not taken from the table that `ssj-assets` reads.
+- The crate `ssj-assets` makes the man page (`ssj.1`, with a section on running a command and a
+  FILES section for `client.toml` and `server.toml`) and the completions for Bash, Zsh, and Fish
+  from the parser of the client; the release workflow writes them with
+  `cargo run -p ssj-assets -- DIR`, and its tests run the completions in the shells. The options
+  for internal use (`--complete`, `--batch`) are left out.
 - `ssj list` prints one line for each session (id, state, age, protocol, name). On a terminal a
   header line (`ID STATE AGE PROTOCOL NAME`) comes first; a pipe gets the rows alone.
 - `ssj list --json` prints a JSON array of `{"id", "name", "state", "age_secs", "protocol"}`.
@@ -1419,7 +1420,7 @@ UDP phase:
   `detached_timeout`.
 - `ssj-server` runs as root with a warning on stderr (root is never needed, but refusing helps
   nobody who has a reason).
-- The client CLI uses `clap`. The options live in one file that the build script includes, so the
-  man page and the completions cannot drift from the parser.
+- The client CLI uses `clap`. The man page and the completions are made from the same `clap`
+  command as the parser (`ssj-assets`), so they cannot drift from it.
 - One protocol version per binary, with no backward compatibility. Old server files stay
   side by side (`ssj-server-p<N>`). Revisit at the first protocol bump.

@@ -32,11 +32,6 @@ pty-process.workspace = true
 ssj-server.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
-[build-dependencies]
-clap = { workspace = true, features = ["derive"] }
-clap_complete.workspace = true
-clap_mangen.workspace = true
-
 [target.'cfg(target_os = "linux")'.dependencies]
 netlink-sys.workspace = true
 

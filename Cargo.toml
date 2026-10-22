@@ -31,6 +31,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 socket2 = "0.6.5"
+ssj-client = { path = "crates/ssj-client", version = "0.1.0" }
 ssj-config = { path = "crates/ssj-config", version = "0.1.0" }
 ssj-net = { path = "crates/ssj-net", version = "0.1.0" }
 ssj-proto = { path = "crates/ssj-proto", version = "0.1.0" }
