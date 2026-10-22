@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use ssj_client::bootstrap::{remote_command, shell_quote};
-use ssj_client::cli::{Args, ServerPath, misplaced_option, parse};
+use ssj_client::cli::{Args, ServerPath, parse};
 
 fn args(list: &[&str]) -> Result<Args, String> {
     parse(list.iter().map(|s| s.to_string()))
@@ -140,8 +140,6 @@ fn subcommands_need_a_destination_after_them() {
     let id = "abcdef012345".to_owned();
     let cases: Vec<(Vec<&str>, Command, &str)> = vec![
         (vec!["host"], Command::Connect, "host"),
-        (vec!["list"], Command::Connect, "list"),
-        (vec!["kill"], Command::Connect, "kill"),
         (vec!["list", "me@host"], Command::List, "me@host"),
         (vec!["attach", "host"], Command::Attach(None), "host"),
         (
@@ -191,6 +189,8 @@ fn subcommands_need_a_destination_after_them() {
         assert_eq!(parsed.destination, destination, "{words:?}");
     }
     for bad in [
+        vec!["list"],
+        vec!["kill"],
         vec!["list", "a", "b"],
         vec!["kill", "host", "../../x"],
         vec!["kill", "host", "a b"],
@@ -244,21 +244,6 @@ fn connect_is_the_plain_connection_to_a_host_with_the_name_of_a_command() {
             .unwrap_err()
             .contains("missing destination")
     );
-}
-
-#[test]
-fn a_lone_command_word_is_a_host_with_a_warning_that_names_the_way_out() {
-    use ssj_client::cli::lone_command_hint;
-    for word in ["list", "attach", "kill", "detach", "install"] {
-        let hint = lone_command_hint(word).unwrap();
-        assert!(hint.contains(&format!("ssj connect {word}")), "{hint}");
-        // the word alone is still the host
-        assert_eq!(args(&[word]).unwrap().destination, word);
-    }
-    // `ssj edit` alone is the editor, and other words are hosts
-    assert!(lone_command_hint("edit").is_none());
-    assert!(lone_command_hint("host").is_none());
-    assert!(lone_command_hint("connect").is_none());
 }
 
 #[test]
@@ -477,20 +462,7 @@ fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
 }
 
 #[test]
-fn the_help_shows_a_flag_and_its_counterpart_on_one_line() {
-    let help = ssj_client::options::command()
-        .render_long_help()
-        .to_string();
-    for line in [
-        "--auto-attach / --no-auto-attach",
-        "-A, --forward-agent / --no-forward-agent",
-        "--install / --no-install",
-    ] {
-        assert!(help.contains(line), "{line}\n{help}");
-    }
-    // the counterparts have no line of their own.
-    assert!(!help.contains("\n      --no-auto-attach"));
-    // and both spellings still work.
+fn a_flag_and_its_counterpart_override_each_other() {
     assert!(args(&["--auto-attach", "h"]).unwrap().auto_attach);
     assert!(
         !args(&["--auto-attach", "--no-auto-attach", "h"])
@@ -604,22 +576,16 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
             "host",
             Some("cd /tmp && ls | wc -l"),
         ),
-        // hosts that are called like our commands: after `--` the single word is the host.
+        // an option of ssj after the destination is for the host as well.
         (
-            vec!["attach", "--", "ls"],
+            vec!["host", "--install"],
             Command::Connect,
-            "attach",
-            Some("ls"),
-        ),
-        (
-            vec!["list", "--", "ls"],
-            Command::Connect,
-            "list",
-            Some("ls"),
+            "host",
+            Some("--install"),
         ),
         // a `--` before the destination ends the options, as with `ssh`.
         (vec!["--", "ls"], Command::Connect, "ls", None),
-        // and without it the command word wins, as always.
+        // a command word is a command.
         (vec!["attach", "ls"], Command::Attach(None), "ls", None),
         (vec!["list", "ls"], Command::List, "ls", None),
     ];
@@ -641,26 +607,6 @@ fn a_command_after_the_destination_runs_in_the_session_as_with_ssh() {
     ] {
         assert!(args(&bad).is_err(), "{bad:?}");
     }
-}
-
-#[test]
-fn an_option_after_the_destination_gets_a_hint_and_a_command_does_not() {
-    for word in [
-        "--install",
-        "--install=x",
-        "--transport",
-        "-q",
-        "-A",
-        "--no-install",
-    ] {
-        assert!(misplaced_option(word).is_some(), "{word}");
-    }
-    for word in ["ls", "--nothing", "-Z", "-", "--", "echo"] {
-        assert!(misplaced_option(word).is_none(), "{word}");
-    }
-    // it is still run as a command, as `ssh` would.
-    let parsed = args(&["host", "--install"]).unwrap();
-    assert_eq!(parsed.remote_command.as_deref(), Some("--install"));
 }
 
 #[test]

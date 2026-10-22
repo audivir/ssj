@@ -14,25 +14,7 @@ type Key = Option<u8>;
 /// The words of a command.
 type Words = Vec<String>;
 
-/// The flags that have a counterpart which turns them off: the id of each, its name, and the
-/// line that the help shows for both.
-const PAIRS: [[&str; 4]; 3] = [
-    [
-        "auto_attach",
-        "no_auto_attach",
-        "auto-attach",
-        "auto-attach / --no-auto-attach",
-    ],
-    [
-        "forward_agent",
-        "no_forward_agent",
-        "forward-agent",
-        "forward-agent / --no-forward-agent",
-    ],
-    ["install", "no_install", "install", "install / --no-install"],
-];
-
-/// A command of `ssj`. Its word is a command only when a destination follows it.
+/// A command of `ssj`.
 pub struct CommandWord {
     pub word: &'static str,
     /// What it does, in a line for the completion of the first word.
@@ -180,20 +162,8 @@ pub fn commands() -> clap::Command {
 /// the command for the host. The options are global, so that they may stand before the command
 /// word too; each command has the options that it does not read as hidden ones, so that
 /// [`crate::cli::parse`] can name them in its error.
-///
-/// The help shows a flag and its counterpart on one line (`--auto-attach / --no-auto-attach`), the
-/// way `typer` does: the flag gets that text as its long name, which nobody types, and keeps the
-/// real name as a hidden alias. The counterpart is hidden.
 pub fn command() -> clap::Command {
     let all = Options::augment_args(clap::Command::new("ssj"));
-    let pairs = |mut command: clap::Command| {
-        for [on, off, name, shown] in PAIRS {
-            command = command
-                .mut_arg(off, |arg| arg.hide(true))
-                .mut_arg(on, |arg| arg.long(shown).alias(name));
-        }
-        command
-    };
     let mut tree = commands()
         .args(all.get_arguments().filter(|arg| arg.is_hide_set()).cloned())
         .override_usage(
@@ -208,21 +178,10 @@ pub fn command() -> clap::Command {
                 .filter(|arg| sub.get_arguments().all(|has| has.get_id() != arg.get_id()))
                 .map(|arg| arg.clone().hide(true))
                 .collect();
-            // `ssj list -- ls`: the words after `--` show that `list` is the name of a host
-            let escaped = clap::Arg::new("escaped")
-                .index(sub.get_positionals().count() + 1)
-                .last(true)
-                .num_args(1..)
-                .hide(true);
-            let sub = if found.word == "connect" {
-                sub
-            } else {
-                sub.arg(escaped)
-            };
-            pairs(sub.args(missing))
+            sub.args(missing)
         });
     }
-    pairs(tree).mut_args(|arg| {
+    tree.mut_args(|arg| {
         let option = arg.get_long().is_some() || arg.get_short().is_some();
         arg.global(option)
     })
@@ -270,7 +229,7 @@ pub struct Options {
     #[arg(long, value_name = "NAME", overrides_with = "name", value_parser = parse_name)]
     pub name: Option<SessionName>,
 
-    /// Join the only session without a client, or always start a new one (default)
+    /// Join the only session without a client
     #[arg(long, overrides_with = "no_auto_attach")]
     pub auto_attach: bool,
 
@@ -278,7 +237,7 @@ pub struct Options {
     #[arg(long, overrides_with = "auto_attach")]
     pub no_auto_attach: bool,
 
-    /// Let programs on the host use your ssh agent (SSH_AUTH_SOCK) for signing, or not (default)
+    /// Let programs on the host use your ssh agent (SSH_AUTH_SOCK) for signing
     #[arg(short = 'A', long, overrides_with = "no_forward_agent")]
     pub forward_agent: bool,
 
@@ -328,7 +287,7 @@ pub struct Options {
     #[arg(long, value_name = "TIME", overrides_with = "detached_timeout")]
     pub detached_timeout: Option<String>,
 
-    /// Install the server on the host without asking, or never install it
+    /// Install the server on the host without asking
     #[arg(long, overrides_with = "no_install")]
     pub install: bool,
 

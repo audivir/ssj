@@ -21,8 +21,7 @@ As with \fBssh\fR, everything after the destination belongs to the command, opti
 .PP
 The commands of \fBssj\fR (\fBlist\fR, \fBattach\fR, \fBkill\fR, \fBdetach\fR, \fBinstall\fR, \fBedit\fR)
 keep their options after the destination: \fBssj list host \-\-json\fR, and take only the options
-listed under COMMANDS. A host with the name of one of them is written \fBssj connect list\fR, or
-\fBssj attach \-\- ls\fR.
+listed under COMMANDS. A host with the name of one of them is written \fBssj connect list\fR.
 "#;
 
 /// The FILES section around the keys of the two config files, which come from their structs.
@@ -269,17 +268,6 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
             "_describe -t commands 'ssj commands' commands \"$@\"",
             "_describe -t commands 'ssj commands' commands \"$@\"; _ssj_hosts",
         );
-    // `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
-    let line = "    local context curcontext=\"$curcontext\" state line\n";
-    assert!(text.contains(line), "the declaration of the state");
-    let commands = words(false).join("|");
-    text = text.replacen(
-        line,
-        &format!(
-            "{line}    if (( CURRENT >= 4 )) && [[ $words[2] == ({commands}) && $words[3] == -- ]]; then\n        _files\n        return\n    fi\n"
-        ),
-        1,
-    );
     // any other first word is the destination, and the rest belongs to the command for the host,
     // dashes included (`ssj host ls -l`): files, since the layout of the host is mostly the same
     // (`~/.local/share/...`)
@@ -354,8 +342,6 @@ _ssj_sessions() {
         word=${COMP_WORDS[i]}
         if [[ -n $skip ]]; then
             [[ $word == = ]] || skip=
-        elif [[ $word == -- ]]; then
-            pos+=("$word")
         elif [[ $word == -* ]]; then
             [[ $value_options == *" $word "* ]] && skip=1
         else
@@ -410,9 +396,6 @@ _ssj_sessions() {
     elif [[ -n $is_command ]]; then
         if [[ ${#pos[@]} -eq 1 ]]; then
             hosts=1
-        elif [[ ${pos[1]} == -- ]]; then
-            # `ssj attach -- ls`: the rest is the command for the host
-            return
         else
             # `kill` and `detach` take any number of sessions, `attach` one
             local only=

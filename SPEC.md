@@ -389,11 +389,9 @@ redraw.
   subcommand for each word (its options, a destination, and the ids of sessions), from which
   `ssj-assets` (`completion_tree`) writes the completions. `command()` adds what the parser needs:
   the destination and the command for the host when no command word comes first, options that are
-  global so that they may stand before the word too, the options that a command does not read as
-  hidden ones, so that the error can name `client.toml`, and a hidden rest after `--`. The parser
-  and the help of each command (`ssj kill --help`) are those of `clap`. A word is a command only
-  when a destination follows it: when `clap` finds none, the line is parsed again after the word
-  `connect`. An option that stands both before and after the command word counts once, with the
+  global so that they may stand before the word too, and the options that a command does not read
+  as hidden ones, so that the error can name `client.toml`. The parser and the help of each
+  command (`ssj kill --help`) are those of `clap`. An option that stands both before and after the command word counts once, with the
   value after it (`ssj -v list host -v` is `-v`). `clap_complete` writes from the tree the options of each command, their
   values (the fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and
   files for `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first
@@ -1117,20 +1115,15 @@ The session starts the command and not an interactive shell, and ends with its e
   not an option (or the value of one). Everything after it, options included, belongs to the
   command: `ssj host ls -l`, `ssj host make -j4`, and `ssj host --name x` runs `--name x` on the
   host. A `--` directly after the destination is dropped, so `ssj host -- ls -l` works too.
-  Options of `ssj` stand before the destination. When the command starts with a dash and is an
-  option of `ssj` (a command never starts with one), `ssj` warns on the standard error and runs it
-  as asked; after an explicit `--` it does not warn.
+  Options of `ssj` stand before the destination.
 - The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) are the
-  exception: when a second word follows a command word, the line is one of those commands, and
-  its options may stand anywhere (`ssj list host --json`). A command takes only the options that
+  exception: a command word as the first word is always the command, and its options may stand anywhere (`ssj list host --json`). A command takes only the options that
   it reads (`COMMANDS` in `options.rs`): any other, such as `--send-env` before `list`, is
   an error that points to `client.toml`. Before the command word the options are not known yet
   to the completions, and the error comes when the line is parsed.
 - A host with the name of a command is written `ssj connect list`, the plain connection (`ssj connect HOST [COMMAND]...`, whose words after the destination are for the host, as without
-  `connect`), or `ssj attach -- ls` (a command word with nothing after it but the dashes). A
-  command word alone, `ssj list`, is the host as well, with a warning on the standard error that
-  names `ssj connect list`; `edit` alone is the editor and has none, and `connect` alone is a
-  usage error. A `--` before the destination ends the options, as with `ssh`: `ssj -- host`.
+  `connect`). A command word alone, `ssj list`, is an error that names the missing destination;
+  `edit` alone is the editor, and `connect` alone is a usage error. A `--` before the destination ends the options, as with `ssh`: `ssj -- host`.
 - `--name` and `--auto-attach` are refused with a command, and the command is ignored by an
   `attach`, since the shell of a session that runs already is not started again.
 

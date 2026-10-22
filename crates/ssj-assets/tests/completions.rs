@@ -155,7 +155,6 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert_eq!(hosts("ssj connect me@box -l", 3), "");
     assert!(hosts("ssj list me@box -", 3).contains("--json"));
     assert_eq!(hosts("ssj me@box ''", 2), "");
-    assert_eq!(hosts("ssj attach -- ''", 3), "");
     assert_eq!(hosts("ssj --name x attach ''", 4), "boxa boxb");
     assert_eq!(hosts("ssj --transport udp list ''", 4), "boxa boxb");
 }
@@ -564,8 +563,6 @@ fn positions() -> Vec<Position> {
     add("ssj me@box ls ", files());
     add("ssj me@box ls -", none());
     add("ssj me@box -", none());
-    // `--` ends the options: the host is called like the command
-    add("ssj attach -- ", files());
     // each command: the host, the ids, its options and their values
     for (command, reads) in READS {
         add(&format!("ssj {command} "), hosts());

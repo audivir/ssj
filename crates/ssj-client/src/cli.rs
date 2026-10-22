@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use clap::FromArgMatches;
-use clap::error::ErrorKind;
 use clap::parser::ValueSource;
 use ssj_net::Compress;
 use ssj_proto::{EnvFilter, PROTOCOL, SessionName};
@@ -253,40 +252,17 @@ pub fn parse_detach_key(text: &str) -> Result<Option<u8>, String> {
 ///
 /// As with `ssh`, everything after the destination belongs to the command that runs in the
 /// session, options included (`ssj host ls -l`). The exception are the commands of `ssj`
-/// (`ssj list host --json`), which keep their options after the destination. A command word is a
-/// command only when a destination follows it: alone it is the name of a host.
+/// (`ssj list host --json`), which keep their options after the destination.
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let args: Vec<String> = args.into_iter().collect();
     let command = crate::options::command();
-    let parse = |args: &[String]| {
-        let words = std::iter::once("ssj").chain(args.iter().map(String::as_str));
-        command.clone().try_get_matches_from(words)
-    };
-    // `ssj list` alone or `ssj list -- ls`: the host `list`, as `ssj connect list` would be
-    let lone = |matches: &clap::ArgMatches| {
-        matches
-            .subcommand()
-            .is_some_and(|(_, sub)| escaped(sub) && sub.get_one::<String>("destination").is_none())
-    };
-    let matches = match parse(&args) {
-        Ok(matches) if !lone(&matches) => matches,
-        Err(error) if error.kind() != ErrorKind::MissingRequiredArgument => {
-            return Err(render(error));
+    let words = std::iter::once("ssj".to_owned()).chain(args);
+    let matches = match command.clone().try_get_matches_from(words) {
+        Ok(matches) => matches,
+        Err(error) if error.use_stderr() => {
+            return Err(error.render().to_string().trim_end().to_owned());
         }
-        first => {
-            let connect: Vec<String> = std::iter::once("connect".to_owned())
-                .chain(args.iter().cloned())
-                .collect();
-            match (first, parse(&connect)) {
-                (_, Ok(matches)) => {
-                    if let Some(hint) = lone_host(&matches).and_then(lone_command_hint) {
-                        eprintln!("ssj: warning: {hint}");
-                    }
-                    matches
-                }
-                (Err(error), _) | (_, Err(error)) => return Err(render(error)),
-            }
-        }
+        // help and version go to the output and end the program.
+        Err(error) => error.exit(),
     };
     let (word, matches) = match matches.subcommand() {
         Some((word, sub)) => (Some(word), sub),
@@ -299,14 +275,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut words = strings(matches, "destination").into_iter();
     let destination = words.next();
     let mut remote: Vec<String> = words.collect();
-    // `ssj host -- --install` runs it on purpose
+    // a `--` right after the destination is dropped: `ssj host -- ls -l`
     if remote.first().is_some_and(|word| word == "--") {
         remote.remove(0);
-    } else if let Some(hint) = remote.first().and_then(|word| misplaced_option(word)) {
-        eprintln!("ssj: warning: {hint}");
-    }
-    if escaped(matches) {
-        return Err("a command of ssj takes no command to run after `--`".to_owned());
     }
     let ids = match word {
         Some("attach" | "kill" | "detach") => strings(matches, "id"),
@@ -315,72 +286,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     from_options(options, word, destination, ids, &remote)
 }
 
-/// Whether words follow a `--` after a command word (which `connect` does not have).
-fn escaped(matches: &clap::ArgMatches) -> bool {
-    matches.try_contains_id("escaped").unwrap_or(false)
-}
-
-/// The host of `ssj connect HOST`.
-fn lone_host(matches: &clap::ArgMatches) -> Option<&str> {
-    let (_, sub) = matches.subcommand()?;
-    sub.get_many::<String>("destination")?
-        .next()
-        .map(String::as_str)
-}
-
-/// The text of an error of `clap`. Help and version go to the output and end the program.
-fn render(error: clap::Error) -> String {
-    if error.use_stderr() {
-        error.render().to_string().trim_end().to_owned()
-    } else {
-        error.exit()
-    }
-}
-
 /// The values of a positional argument.
 fn strings(matches: &clap::ArgMatches, id: &str) -> Vec<String> {
     matches
         .get_many::<String>(id)
         .map_or_else(Vec::new, |values| values.cloned().collect())
-}
-
-/// A hint for a word after the destination that is an option of `ssj`. The host would run it as
-/// a command, which a command never is, since it starts with a dash.
-pub fn misplaced_option(word: &str) -> Option<String> {
-    let name = word.split('=').next().unwrap_or(word);
-    let known = crate::options::command().get_arguments().any(|arg| {
-        match (name.strip_prefix("--"), name.strip_prefix('-')) {
-            (Some(long), _) => {
-                arg.get_long() == Some(long)
-                    || arg
-                        .get_all_aliases()
-                        .is_some_and(|aliases| aliases.contains(&long))
-            }
-            (None, Some(short)) => short
-                .chars()
-                .next()
-                .is_some_and(|first| arg.get_short() == Some(first)),
-            _ => false,
-        }
-    });
-    known.then(|| {
-        format!(
-            "`{name}` is after the destination, so the host runs it as a command; options go \
-             before the destination, or after `--` to run it on the host on purpose"
-        )
-    })
-}
-
-/// A hint for a command word that stands alone: it is the name of a host then, which is what
-/// someone who wanted the command does not mean.
-pub fn lone_command_hint(word: &str) -> Option<String> {
-    // `ssj edit` alone is the editor of `client.toml`
-    (is_command_word(word) && word != "edit").then(|| {
-        format!(
-            "`{word}` is taken as the name of a host, since no destination follows it; the command \
-             is `ssj {word} user@host`, and `ssj connect {word}` is the host without this warning"
-        )
-    })
 }
 
 /// The error for an option that the command does not read, as `--send-env` before `list`: the

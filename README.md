@@ -246,9 +246,8 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 - `--name` and `--auto-attach` are refused with a command, since a session that runs already
   would not run it.
 - A host named like one of the commands (`attach`, `list`, `kill`, `install`, `edit`) is written
-  `ssj connect list` (with a command: `ssj connect list uptime`), or before the dashes: `ssj attach -- ls` runs `ls` on the host `attach`, and `ssj attach ls` attaches to a session on the host
-  `ls`. A command word with nothing after it, `ssj list`, is the host as well, and `ssj` warns
-  that it took it as one.
+  `ssj connect list` (with a command: `ssj connect list uptime`). A command word needs a
+  destination: `ssj list` alone is an error.
 
 ## Connection
 
