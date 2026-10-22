@@ -147,7 +147,10 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     assert!(hosts("ssj connect --tr", 2).contains("--transport"));
     assert_eq!(hosts("ssj connect me@box ''", 3), "");
     // the values of options: the fixed ones, files, and the hosts of the ssh config
-    assert_eq!(hosts("ssj connect --transport ''", 3), "auto udp tcp stdio");
+    assert_eq!(
+        hosts("ssj connect --transport ''", 3),
+        "auto udp socket tcp stdio"
+    );
     assert_eq!(hosts("ssj attach me@box --compress ''", 4), "off auto");
     assert_eq!(hosts("ssj connect --udp-host ''", 3), "boxa boxb");
     assert_eq!(hosts("ssj attach me@box --udp-host ''", 4), "boxa boxb");
@@ -343,7 +346,7 @@ const FIXED: [(&str, &str); 4] = [
     ("--local-echo", "auto off"),
     ("--compress", "auto off"),
     ("--congestion", "auto bbr cubic"),
-    ("--transport", "auto stdio tcp udp"),
+    ("--transport", "auto socket stdio tcp udp"),
 ];
 
 #[test]
@@ -550,7 +553,10 @@ fn positions() -> Vec<Position> {
     add("ssj connect ", hosts());
     add("ssj connect -", dashed(CONNECT));
     add("ssj connect --name ", words("work build other"));
-    add("ssj connect --transport ", words("auto udp tcp stdio"));
+    add(
+        "ssj connect --transport ",
+        words("auto udp socket tcp stdio"),
+    );
     add("ssj connect --local-echo ", words("off auto"));
     add("ssj connect --congestion ", words("auto bbr cubic"));
     add("ssj connect --compress ", words("off auto"));
@@ -568,7 +574,7 @@ fn positions() -> Vec<Position> {
         add(&format!("ssj {command} "), hosts());
         add(&format!("ssj {command} me@box -"), dashed(reads));
         for (name, values) in [
-            ("transport", "auto udp tcp stdio"),
+            ("transport", "auto udp socket tcp stdio"),
             ("compress", "off auto"),
             ("udp-host", "boxa boxb box-c"),
             ("log-file", "FILES"),

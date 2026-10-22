@@ -2,11 +2,17 @@
 
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
+/// The variables as they travel: pairs of name and value.
+type Vars = Vec<(String, String)>;
+
 /// Variable list of the client that passed the size and syntax checks of the protocol.
 ///
 /// It does not decide which variables the server accepts. That filter is a separate step.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Env(Vec<(String, String)>);
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vars", into = "Vars")]
+pub struct Env(Vars);
 
 /// Reason a variable list was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +22,26 @@ pub enum EnvError {
     InvalidName,
     InvalidValue,
     Duplicate,
+}
+
+impl std::fmt::Display for EnvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl TryFrom<Vars> for Env {
+    type Error = EnvError;
+
+    fn try_from(vars: Vars) -> Result<Self, EnvError> {
+        Self::new(vars)
+    }
+}
+
+impl From<Env> for Vars {
+    fn from(env: Env) -> Self {
+        env.0
+    }
 }
 
 impl Env {
@@ -32,7 +58,7 @@ impl Env {
 
     /// Checks count, sizes, names (`[A-Za-z_][A-Za-z0-9_]*`), and values (no NUL byte; for `TERM`,
     /// `LANG`, and `LC_*` only the characters of terminal and locale names).
-    pub fn new(vars: Vec<(String, String)>) -> Result<Self, EnvError> {
+    pub fn new(vars: Vars) -> Result<Self, EnvError> {
         if vars.len() > Self::MAX_VARS {
             return Err(EnvError::TooMany);
         }

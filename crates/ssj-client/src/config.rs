@@ -41,7 +41,7 @@ pub struct Config {
     /// More variables to send, besides TERM and the SendEnv of ssh.
     #[config(default = [], deserialize_with = send_env)]
     pub send_env: EnvFilter,
-    /// "auto", "udp", "tcp", or "stdio": how to reach the server.
+    /// "auto", "udp", "socket", "tcp", or "stdio": how to reach the server.
     #[config(default = "auto")]
     pub transport: Transport,
     /// `ssj connect host` joins the only session without a client.

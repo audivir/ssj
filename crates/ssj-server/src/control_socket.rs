@@ -123,6 +123,13 @@ pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The path of a control socket as the line `SSJ CONNECT` gives it, if it can stand there.
+pub fn socket_field(path: &Path) -> Option<String> {
+    path.to_str()
+        .filter(|path| ssj_proto::bootstrap::is_socket_path(path))
+        .map(str::to_owned)
+}
+
 pub fn socket_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.sock"))
 }

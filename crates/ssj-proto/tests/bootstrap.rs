@@ -15,6 +15,7 @@ fn connect() -> Connect {
         fingerprint,
         new: false,
         name: None,
+        socket: None,
     }
 }
 
@@ -345,6 +346,41 @@ fn the_name_is_an_optional_field_after_new() {
         " name=work new",
         " name=work x",
         " name=0123456789012345678901234567890123",
+    ] {
+        let line = format!("{}{tail}\n", plain.trim_end());
+        assert_eq!(
+            parse_connect(line.as_bytes()),
+            Err(BootstrapError::Malformed),
+            "{tail:?}"
+        );
+    }
+}
+
+#[test]
+fn the_socket_is_an_optional_field_after_the_name() {
+    let plain = format_connect(&connect());
+    let mut connect = connect();
+    connect.new = true;
+    connect.name = SessionName::parse("work");
+    connect.socket = Some("/run/user/1000/ssj/abcdef012345.sock".to_owned());
+    let line = format_connect(&connect);
+    assert!(
+        line.ends_with(" new name=work socket=/run/user/1000/ssj/abcdef012345.sock\n"),
+        "{line:?}"
+    );
+    assert_eq!(parse_connect(line.as_bytes()), Ok(Some(connect)));
+
+    // a path must be absolute, have nothing that `ssh -W` reads otherwise, stand once, and come
+    // last.
+    for tail in [
+        " socket=",
+        " socket=run/x.sock",
+        " socket=/run/a b.sock",
+        " socket=/run/x.sock:22",
+        " socket=/run/\u{1b}x.sock",
+        " socket=/a socket=/b",
+        " socket=/a name=work",
+        " socket=/a new",
     ] {
         let line = format!("{}{tail}\n", plain.trim_end());
         assert_eq!(

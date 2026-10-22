@@ -155,7 +155,8 @@ pub enum Tier {
         /// Finds the address again when it may have changed. `None` keeps `addr` for good.
         resolver: Option<Resolver>,
     },
-    /// A byte stream with TLS (TCP through `ssh -W`) or without (the `ssh` channel itself).
+    /// A byte stream with TLS (TCP through `ssh -W`) or without (the socket through `ssh -W`, and
+    /// the `ssh` channel itself).
     Stream { name: &'static str, dial: Dial },
 }
 
@@ -977,8 +978,12 @@ async fn build_tiers(
     let udp_possible = matches!(choice, Transport::Auto | Transport::Udp) && connect.udp.is_some();
     let config = config.filter(|_| udp_possible);
     let jump = choice == Transport::Auto && config.is_some_and(|c| c.jump);
-    let order =
-        crate::tunnel::tier_order(choice, jump, connect.udp.is_some(), connect.tcp.is_some());
+    let offered = [
+        connect.udp.is_some(),
+        connect.socket.is_some(),
+        connect.tcp.is_some(),
+    ];
+    let order = crate::tunnel::tier_order(choice, jump, offered);
     let mut tiers = Vec::new();
     let mut notes = Vec::new();
     for kind in order {
@@ -1003,6 +1008,11 @@ async fn build_tiers(
                     Err(message) => notes.push(message),
                 }
             }
+            Kind::Socket => tiers.push(crate::tunnel::socket_tier(
+                args,
+                connect.socket.as_deref().expect("offered"),
+                ATTEMPT_TIMEOUT,
+            )),
             Kind::Tcp => tiers.push(crate::tunnel::tcp_tier(
                 args,
                 ssj_net::tls_connector(identity, connect.fingerprint),
@@ -1020,6 +1030,9 @@ async fn build_tiers(
         match choice {
             Transport::Udp if connect.udp.is_none() => {
                 notes.push("the server offers no UDP port".to_owned())
+            }
+            Transport::Socket if connect.socket.is_none() => {
+                notes.push("the server offers no socket".to_owned())
             }
             Transport::Tcp if connect.tcp.is_none() => {
                 notes.push("the server offers no TCP port".to_owned())

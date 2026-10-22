@@ -677,7 +677,8 @@ fn list_attach_detach_attach_kill_through_the_client() {
     let listing = text(&listed.stdout);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     assert!(
-        listing.contains("disconnected") && listing.contains("protocol 1"),
+        listing.contains("disconnected")
+            && listing.contains(&format!("protocol {}", ssj_proto::PROTOCOL)),
         "{listing}"
     );
     let id = listing.split_whitespace().next().unwrap().to_owned();
@@ -937,7 +938,8 @@ fn host() -> Host {
 
 impl Host {
     fn installed(&self) -> PathBuf {
-        self.data.join("ssj/bin/ssj-server-p1")
+        self.data
+            .join(format!("ssj/bin/ssj-server-p{}", ssj_proto::PROTOCOL))
     }
 
     /// Runs `ssj` as a script would, without a terminal, with the words as given.
@@ -1060,13 +1062,13 @@ fn install_uploads_checks_and_makes_the_default_path_work() {
         .arg("--version")
         .output()
         .unwrap();
-    assert!(text(&version.stdout).contains("protocol 1"));
+    assert!(text(&version.stdout).contains(&format!("protocol {}", ssj_proto::PROTOCOL)));
     // no temporary files stay behind.
     let names: Vec<String> = std::fs::read_dir(host.data.join("ssj/bin"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["ssj-server-p1"]);
+    assert_eq!(names, [format!("ssj-server-p{}", ssj_proto::PROTOCOL)]);
 
     // an installed file of the same protocol is replaced, and the output says which one.
     let again = host.ssj(
@@ -1510,13 +1512,13 @@ fn n_and_escape_decline() {
     }
 }
 
-/// A stand-in for `ssh` that also does what the transports need: `-W host:port` joins stdin and
-/// stdout to a TCP connection, and `-G` prints a configuration. `extra` runs first, with `$1` as
+/// A stand-in for `ssh` that also does what the transports need: `-W host:port` and `-W PATH` join
+/// stdin and stdout to a TCP connection or a unix socket, and `-G` prints a configuration. `extra` runs first, with `$1` as
 /// the first argument, and may end the script.
 fn transport_ssh(config: &str, extra: &str) -> PathBuf {
     let relay = "import os, socket, sys, threading\n\
-host, port = sys.argv[1].rsplit(':', 1)\n\
-s = socket.create_connection((host, int(port)))\n\
+if sys.argv[1].startswith('/'):\n    s = socket.socket(socket.AF_UNIX)\n    s.connect(sys.argv[1])\n\
+else:\n    host, port = sys.argv[1].rsplit(':', 1)\n    s = socket.create_connection((host, int(port)))\n\
 def up():\n    while True:\n        d = os.read(0, 65536)\n        if not d:\n            break\n        s.sendall(d)\n    s.shutdown(socket.SHUT_WR)\n\
 threading.Thread(target=up, daemon=True).start()\n\
 while True:\n    d = s.recv(65536)\n    if not d:\n        break\n    os.write(1, d)\n";
@@ -1598,6 +1600,13 @@ fn verbose_output_goes_to_the_log_file_and_names_the_steps() {
 }
 
 #[test]
+fn the_control_socket_through_ssh_w_carries_a_session() {
+    let ssh = transport_ssh("", "");
+    let output = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "socket"]);
+    assert_session(&output);
+}
+
+#[test]
 fn tcp_through_ssh_w_carries_a_session() {
     let ssh = transport_ssh("", "");
     let output = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "tcp"]);
@@ -1635,19 +1644,37 @@ fn text_printed_before_the_stream_is_skipped() {
 }
 
 #[test]
-fn a_blocked_udp_port_falls_back_to_tcp() {
+fn a_blocked_udp_port_falls_back_to_the_control_socket() {
     let marker = fake_ssh("").with_file_name("forwarded");
     let ssh = transport_ssh("", &note_forwarding(&marker));
     // nothing answers on this address (reserved for documentation)
     let started = Instant::now();
     let output = run_client_with(&ssh, &ASK, "xyz\n", &["--udp-host", "192.0.2.1"]);
     assert_session(&output);
-    assert!(marker.exists(), "TCP was not used");
+    let forwarded = std::fs::read_to_string(&marker).expect("ssh -W was not used");
+    assert!(forwarded.starts_with('/'), "{forwarded}");
     assert!(
         started.elapsed() < Duration::from_secs(20),
         "{:?}",
         started.elapsed()
     );
+}
+
+#[test]
+fn a_forbidden_socket_falls_back_to_tcp() {
+    let marker = fake_ssh("").with_file_name("forwarded");
+    // the host allows no forwarding of unix sockets, as `AllowStreamLocalForwarding no` does.
+    let ssh = transport_ssh(
+        "",
+        &format!(
+            "case \"$forward\" in /*) echo 'channel 0: open failed: administratively prohibited' >&2; exit 255;; esac; {}",
+            note_forwarding(&marker)
+        ),
+    );
+    let output = run_client_with(&ssh, &ASK, "xyz\n", &NO_UDP);
+    assert_session(&output);
+    let forwarded = std::fs::read_to_string(&marker).expect("TCP was not used");
+    assert!(forwarded.starts_with("127.0.0.1:"), "{forwarded}");
 }
 
 #[test]
@@ -1661,10 +1688,10 @@ fn forbidden_forwarding_falls_back_to_the_ssh_channel() {
     assert_session(&output);
 }
 
-/// An `extra` for [`transport_ssh`] that notes every use of `-W` in a file.
+/// An `extra` for [`transport_ssh`] that notes the target of every use of `-W` in a file.
 fn note_forwarding(marker: &Path) -> String {
     format!(
-        "if [ -n \"$forward\" ]; then echo forwarded >> {}; fi",
+        "if [ -n \"$forward\" ]; then echo \"$forward\" >> {}; fi",
         marker.display()
     )
 }

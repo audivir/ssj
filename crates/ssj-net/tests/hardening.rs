@@ -49,7 +49,8 @@ async fn handshake_without_the_ssj_alpn_is_refused() {
     );
     assert!(ok.connect(addr, SERVER_NAME).unwrap().await.is_ok());
 
-    for alpn in [&[b"h3".as_slice()][..], &[b"ssj/2"], &[]] {
+    let next = format!("ssj/{}", ssj_proto::PROTOCOL + 1).into_bytes();
+    for alpn in [&[b"h3".as_slice()][..], &[next.as_slice()], &[]] {
         let client = client_with_alpn(&client_id, server_id.fingerprint(), alpn);
         let result = client.connect(addr, SERVER_NAME).unwrap().await;
         assert!(result.is_err(), "ALPN {alpn:?} must be refused");

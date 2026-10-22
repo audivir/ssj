@@ -48,6 +48,18 @@ pub struct Connect {
     pub new: bool,
     /// The name of the session, when it has one (`name=NAME` on the line).
     pub name: Option<SessionName>,
+    /// The control socket of the session on the host (`socket=PATH` on the line), which the
+    /// client reaches through `ssh -W` and which carries the session without TLS.
+    pub socket: Option<String>,
+}
+
+/// Whether `path` can stand on the line and after `ssh -W`: absolute, and without whitespace, a
+/// colon (which `ssh` would read as a port), or a control character.
+pub fn is_socket_path(path: &str) -> bool {
+    path.starts_with('/')
+        && !path
+            .chars()
+            .any(|c| c.is_whitespace() || c == ':' || c.is_control())
 }
 
 /// Failure to read a line of the bootstrap.
@@ -60,7 +72,8 @@ pub enum BootstrapError {
 }
 
 /// Formats the line, including the final newline:
-/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]`.
+/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]
+/// [socket=PATH]`.
 pub fn format_connect(connect: &Connect) -> String {
     let port = |kind: &str, port: Option<u16>| match port {
         Some(port) => format!("{kind}:{port}"),
@@ -79,6 +92,10 @@ pub fn format_connect(connect: &Connect) -> String {
     if let Some(name) = &connect.name {
         line.push_str(" name=");
         line.push_str(name.as_str());
+    }
+    if let Some(socket) = &connect.socket {
+        line.push_str(" socket=");
+        line.push_str(socket);
     }
     line.push('\n');
     line
@@ -114,20 +131,28 @@ fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
     else {
         return Err(BootstrapError::Malformed);
     };
-    // what may follow, each once and in this order: `new`, and `name=NAME`.
-    let (mut new, mut name) = (false, None);
+    // what may follow, each once and in this order: `new`, `name=NAME`, and `socket=PATH`.
     let mut rest = parts.peekable();
-    if rest.peek() == Some(&&b"new"[..]) {
-        new = true;
-        rest.next();
-    }
-    if let Some(field) = rest.next() {
-        let text = field
-            .strip_prefix(b"name=")
-            .and_then(|text| std::str::from_utf8(text).ok())
-            .and_then(SessionName::parse);
-        name = Some(text.ok_or(BootstrapError::Malformed)?);
-    }
+    let new = rest.next_if(|field| *field == b"new").is_some();
+    let mut value = |key: &[u8]| {
+        rest.next_if(|field| field.starts_with(key))
+            .map(|field| std::str::from_utf8(&field[key.len()..]).ok())
+    };
+    let name = match value(b"name=") {
+        Some(text) => Some(
+            text.and_then(SessionName::parse)
+                .ok_or(BootstrapError::Malformed)?,
+        ),
+        None => None,
+    };
+    let socket = match value(b"socket=") {
+        Some(text) => Some(
+            text.filter(|path| is_socket_path(path))
+                .ok_or(BootstrapError::Malformed)?
+                .to_owned(),
+        ),
+        None => None,
+    };
     if rest.next().is_some() {
         return Err(BootstrapError::Malformed);
     }
@@ -142,6 +167,7 @@ fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
         fingerprint: parse_fingerprint(fingerprint)?,
         new,
         name,
+        socket,
     })
 }
 

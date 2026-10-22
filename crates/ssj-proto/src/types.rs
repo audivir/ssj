@@ -1,7 +1,10 @@
 //! Small validated types of the protocol: window size, session id, and session name.
 
+use serde::{Deserialize, Serialize};
+
 /// Terminal dimensions in character cells, always between 1 and [`WindowSize::MAX`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "(u16, u16)", into = "(u16, u16)")]
 pub struct WindowSize {
     rows: u16,
     cols: u16,
@@ -23,6 +26,20 @@ impl WindowSize {
 
     pub fn cols(self) -> u16 {
         self.cols
+    }
+}
+
+impl TryFrom<(u16, u16)> for WindowSize {
+    type Error = &'static str;
+
+    fn try_from((rows, cols): (u16, u16)) -> Result<Self, &'static str> {
+        Self::new(rows, cols).ok_or("a window size out of range")
+    }
+}
+
+impl From<WindowSize> for (u16, u16) {
+    fn from(size: WindowSize) -> Self {
+        (size.rows, size.cols)
     }
 }
 

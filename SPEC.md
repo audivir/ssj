@@ -40,7 +40,7 @@ the workspace root):
    is visible to other users in `ps`.
 1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
    range and a TCP port on the loopback address, prints the session id, both ports, and the server
-   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]`), and detaches from the `ssh`
+   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME] [socket=PATH]`), and detaches from the `ssh`
    channel. The optional field `new` says that this server has just made the session; a session
    that ran leaves it out, and the client then reads the first line as `attached to session`. The
    optional field `name=NAME` gives the name of the session, so that `ssj attach HOST` and a join
@@ -127,6 +127,14 @@ protocol version, and two peers talk only if their versions are equal.
 - The README lists the protocol of every release that broke the wire format ("Protocol versions"). A
   developer who increases `PROTOCOL` adds a row there.
 - The bootstrap line `SSJ CONNECT` has no version of its own and is covered by `N`.
+- A frame is a big endian `u32` length and a body in the format of `postcard`: the frame types
+  derive `serde`, so the body is the index of the variant and its fields, integers as varints and
+  byte strings with their length in front. The decoder rejects a length of 0 or above 128 KiB from
+  the header, a body with bytes after the frame, and the values that the types do not exclude: a
+  data chunk that is empty or above 32 KiB, an empty `Gap`, a window size outside 1 to 4096, and
+  an environment that `Env` refuses. `Output` is the first variant of the server frames, so that
+  `peek_server` finds its data from the first byte of the body. Protocol 2 replaced the format of
+  protocol 1, which was written by hand with a type byte and fixed-width integers.
 
 ### Reconnect (client)
 
@@ -199,15 +207,24 @@ stderr as lines.
 ### Transports
 
 UDP can be blocked, and a host behind a jump host cannot be reached by datagrams at all. The
-session core works on any pair of byte streams, so three transports carry the same frames, in
+session core works on any pair of byte streams, so four transports carry the same frames, in
 this order of preference:
 
 1. **UDP**: QUIC, as described above. Fastest, and the only one that survives a changing path
    without a new connection.
+1. **The socket through `ssh -W`**: the line `SSJ CONNECT` names the control socket of the
+   session (`socket=PATH`), and the client runs `ssh -W <path> user@host`, which `sshd` connects to
+   the socket (`AllowStreamLocalForwarding`, on by default). The client sends `STREAM`, and after
+   the answer `OK` the socket is its byte stream, as for `--stdio`. No TLS runs inside: `ssh`
+   encrypts, and only the user can open the socket. It has neither the second encryption of TCP
+   nor the extra process of the `ssh` channel. A path that `ssh -W` would read otherwise (with
+   whitespace or a colon) is left off the line, and the transport with it.
 1. **TCP through `ssh -W`**: the server also listens on `127.0.0.1` (kernel assigned port, only
    reachable from the host itself). The client runs `ssh -W 127.0.0.1:<port> user@host` and speaks
    TLS 1.3 through it, with the same pinned mutual authentication, no resumption, and no 0-RTT.
    `TCP_NODELAY` is set on the server side. The jump host chain of the `ssh` configuration works.
+   The TLS is what keeps other users of the host out of the port, and it encrypts a second time
+   inside `ssh`. It remains for hosts that forward TCP but not sockets.
 1. **The `ssh` channel**: `ssj-server --stdio <id>` connects to the control socket, sends
    `STREAM`, and after the answer `OK` the socket is the byte stream of a client. The process
    copies it to stdout and from stdin. Shell startup files may print text first, so the stream
@@ -215,12 +232,13 @@ this order of preference:
    No TLS runs inside, since `ssh` already authenticates and encrypts, and the socket allows only
    the same user.
 
-The choice is `--transport auto|udp|tcp|stdio` or `transport` in `client.toml`. `auto` races UDP
-against TCP: QUIC starts first, TCP starts 300 milliseconds later if QUIC has not opened, and the
-first connection that opens carries the session. Before the first connection QUIC is given 1.5
-seconds and TCP, which needs a whole `ssh` handshake that takes seconds on a distant host, gets
-8 seconds. If both fail, the `ssh` channel is the next partner of QUIC, and each failure moves
-on at once. A reconnect races the same way: when the session runs on TCP, TCP starts at once and
+The choice is `--transport auto|udp|socket|tcp|stdio` or `transport` in `client.toml`. `auto`
+races UDP against the first stream (the socket): QUIC starts first, the stream starts 300
+milliseconds later if QUIC has not opened, and the first connection that opens carries the
+session. Before the first connection QUIC is given 1.5 seconds and the stream, which needs a whole
+`ssh` handshake that takes seconds on a distant host, gets 8 seconds. If both fail, TCP and then
+the `ssh` channel are the next partners of QUIC, and each failure moves on at once. A reconnect
+races the same way: when the session runs on a stream, the stream starts at once and
 QUIC beside it, so a network where UDP works again is found without a delay and a network where it
 does not costs nothing. A change of the network while the session is on a stream also tries QUIC
 (1.5 seconds) on the new path, without touching the working connection; if it opens, the client
@@ -266,7 +284,7 @@ hundred through the move with the old connection swallowed, held back and delive
 working in one direction only, and they check that a silent second connection does not end the
 working one.
 
-Every connection on these two transports starts a new `ssh`, which
+Every connection on the stream transports starts a new `ssh`, which
 cannot ask for a passphrase (`BatchMode=yes`), so they need an agent or a shared connection
 (`ControlMaster auto`, `ControlPersist`) when the key has a passphrase. The same holds for the
 reconnects of a session that started over UDP and later fell back.
@@ -672,7 +690,8 @@ as the base) times the start until the shell answers a command, and the end afte
   changes (1.79 s against 1.35 s for `ssh`).
 - The bootstrap is one `ssh`, and its handshake is most of the time. `ssj` adds a retry and the
   QUIC handshake (two round trips), then `Hello` and `Welcome` (one more), then the shell starts.
-- The TCP and stdio transports open a second `ssh` connection, which costs as much as the first.
+- The socket, TCP, and stdio transports open a second `ssh` connection, which costs as much as the
+  first.
 - Before this was measured, the end of a UDP session took two seconds: the server process ended
   before its close message left, and the client waited for an answer that never came. The server
   now waits for the close message to leave (at most one second, after the client has gone).
@@ -686,8 +705,8 @@ Optional and off by default (`compress = "auto"` in `client.toml` or `server.tom
 `--compress auto`; the client passes its value to the server it starts). It exists for slow links:
 a build log or a pasted text shrinks to a fifth or less.
 
-- Both directions have a compressed frame: `Compressed` (server, tag `0x88`) for output and
-  `Compressed` (client, tag `0x08`) for input. The body is a zstd frame of what the plain frame
+- Both directions have a compressed frame: `Compressed` of the server for output and
+  `Compressed` of the client for input. The body is a zstd frame of what the plain frame
   would hold, at most 32 KiB, and the offsets count the plain bytes. The algorithm is zstd
   at level 3 (the C library through the `zstd` crate; `ring` needs a C compiler anyway, and
   `cargo zigbuild` builds both). Each frame is compressed on its own, with no dictionary and no
@@ -910,7 +929,7 @@ Leaving (the shell keeps running):
 - `ssj detach DESTINATION [ID...]` detaches the connected client from another terminal. It runs
   `ssj-server --detach [ID...]`, which sends `DETACH` on the control socket. The server answers
   `ERR no client is connected` when the state is not connected. Otherwise the session sends the
-  frame `Detached` (0x8c) to the client, waits 300 ms so that the frame can leave before the
+  frame `Detached` to the client, waits 300 ms so that the frame can leave before the
   endpoint is closed, and then does what `Detach` does. The client leaves with exit code 0 and
   the same message as after the detach key.
 - `Detach` keeps the session running and **disables the detached timeout** until a client
@@ -1061,8 +1080,6 @@ default (`slow_client = "drop"`) the server does not wait for a connected client
 - The client handles `Gap(N)` like a gap after a reconnect: it takes back what it showed ahead
   of the server (local echo), adds N to its offset, writes the notice (CAN, color reset, the line
   `[ssj: N bytes of output were dropped]`), and acknowledges the new offset.
-- The unreleased protocol 1 gained the `Gap` frame (tag `0x87`) and its golden file was
-  regenerated, since no release spoke the old format.
 - `slow_client = "wait"` is the earlier behavior and the one of `ssh`: while a client is connected
   the server stops reading the PTY when the buffer is full, so nothing is lost and a slow link
   slows the job down. A client that acknowledges nothing for `away_after` (10 seconds) counts as
@@ -1330,7 +1347,7 @@ Bootstrap (client):
 - The client starts `ssh` with an argument vector and never through a shell. A host argument that
   starts with `-` is rejected, to prevent option injection such as `-oProxyCommand`.
 - `ssh` runs without a terminal, so output is not altered and stdin is not echoed.
-- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]`, of
+- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME] [socket=PATH]`, of
   bounded length, and ignores other output such as banners and `.bashrc` noise. Remote text is
   never printed to the terminal unfiltered, because it could contain escape sequences.
 - The server reads the client fingerprint from stdin with a length limit and a timeout.
@@ -1404,7 +1421,7 @@ UDP phase:
 - Offering two protocol versions in the ALPN list: against the decision to keep the code small.
 - Power-state APIs for sleep and wake: they need a run loop or D-Bus for no gain, since waking always brings the interfaces back and fires the network watch.
 - Extra OSCs sent by `ssj` itself (desktop notification, progress indicator, badge): kept out for now.
-- `ControlMaster` for the second `ssh` of the TCP and stdio transports: a stale master socket after a network change hangs new `ssh` calls, which is what `ssj` exists to avoid.
+- `ControlMaster` for the second `ssh` of the socket, TCP, and stdio transports: a stale master socket after a network change hangs new `ssh` calls, which is what `ssj` exists to avoid.
 - A server-side terminal emulator or `smcup` tracking: against the dumb-pipe rule. Full-screen programs are covered by the escape rule.
 - Hole punching for hosts behind NAT: the TCP tier through `ssh` covers them.
 - A manifest of server digests inside the client: built and removed again as too complex for what the release checksums and attestation already give.

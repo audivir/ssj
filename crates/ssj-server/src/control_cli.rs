@@ -75,8 +75,9 @@ pub fn choose(sessions: Vec<Found>, selector: Option<&str>) -> Result<Found, Str
 pub fn attach_session(found: &Found, pin: [u8; 32]) -> ExitCode {
     match ask(&found.path, &Request::Attach(pin)) {
         Ok(Reply::Connect(mut connect)) => {
-            // the client joins by an id or a selector, and learns the name here.
+            // the client joins by an id or a selector, and learns the name and the socket here.
             connect.name.clone_from(&found.info.name);
+            connect.socket = crate::control_socket::socket_field(&found.path);
             let mut out = std::io::stdout();
             let _ = out.write_all(format_reply(&Reply::Connect(connect)).as_bytes());
             let _ = out.flush();

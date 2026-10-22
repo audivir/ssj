@@ -330,7 +330,7 @@ async fn run_session(args: Args, settings: Config, input: BootstrapInput) -> Exi
     .with_transports(args.udp, args.tcp)
     // QUIC takes no more unacknowledged output than may wait for a connected client.
     .with_send_window(settings.live_backlog as u64);
-    let connect = match frontend.open(pin).await {
+    let mut connect = match frontend.open(pin).await {
         Ok(connect) => connect,
         Err(err) => return fail(&err.to_string(), 1),
     };
@@ -340,7 +340,8 @@ async fn run_session(args: Args, settings: Config, input: BootstrapInput) -> Exi
         Ok(socket) => socket,
         Err(err) => return fail(&format!("cannot create the control socket: {err}"), 1),
     };
-    let (listener, _socket_file) = socket;
+    let (listener, socket_file) = socket;
+    connect.socket = control_socket::socket_field(&socket_file.0);
 
     let mut out = std::io::stdout();
     let _ = out.write_all(format_connect(&connect).as_bytes());

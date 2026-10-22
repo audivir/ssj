@@ -118,7 +118,7 @@ fn default_command_runs_the_installed_file_or_reports_it_missing() {
     assert_eq!(String::from_utf8_lossy(&missing.stdout), "SSJ MISSING\n");
 
     // installed: the file runs, and every argument arrives as one word.
-    let file = bin.join("ssj-server-p1");
+    let file = bin.join(format!("ssj-server-p{}", ssj_proto::PROTOCOL));
     std::fs::write(
         &file,
         "#!/bin/sh\nfor a in \"$@\"; do echo \"arg:$a\"; done\n",
@@ -270,6 +270,7 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
     for (word, transport) in [
         ("auto", Transport::Auto),
         ("udp", Transport::Udp),
+        ("socket", Transport::Socket),
         ("tcp", Transport::Tcp),
         ("stdio", Transport::Stdio),
     ] {

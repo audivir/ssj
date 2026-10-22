@@ -141,7 +141,7 @@ The options of a command follow its word: `ssj connect -A user@host`, `ssj list 
 | Option | What it does |
 | ---------------------------------------- | ---------------------------------------------------------------- |
 | `user@host:2222`, `ssh://user@host:2222` | Port of the ssh server. |
-| `--transport auto\|udp\|tcp\|stdio` | `auto` is the default; `tcp` is `ssh -W`; `stdio` is the `ssh` channel. |
+| `--transport auto\|udp\|socket\|tcp\|stdio` | `auto` is the default; `socket` and `tcp` go through `ssh -W`; `stdio` is the `ssh` channel. |
 | `--ssh-command 'ssh -J jump'` | Replaces `ssh`. |
 | `--server-path ~/bin/ssj-server` | Server file on the host, when it is not in the default place. |
 | `--udp-host 203.0.113.7` | UDP address, when it differs from the host name. |
@@ -278,10 +278,11 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 | Order | Transport | How |
 | ----- | --------- | ---------------------------- |
 | 1 | `udp` | QUIC over UDP. |
-| 2 | `tcp` | TLS over TCP through `ssh -W`. |
-| 3 | `stdio` | The `ssh` channel itself. |
+| 2 | `socket` | The socket of the session through `ssh -W`, encrypted by `ssh` alone. |
+| 3 | `tcp` | TLS over TCP through `ssh -W`, for hosts that forward TCP but not sockets. |
+| 4 | `stdio` | The `ssh` channel itself, for hosts that forward nothing. |
 
-- `tcp` and `stdio` start a new `ssh` for every connection and cannot ask for a passphrase, so
+- `socket`, `tcp`, and `stdio` start a new `ssh` for every connection and cannot ask for a passphrase, so
   use an agent or a shared connection (`ControlMaster auto`, `ControlPersist 10m` in your `ssh`
   configuration).
 - Choose a transport with `--transport` or `transport` in `client.toml`. See the specification
@@ -396,7 +397,7 @@ auto_install = "ask"                  # "ask", "always", or "never"
 detach_key = "ctrl-\\"                # a key such as "ctrl-]" that detaches anywhere, or "none"
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = []                         # more variables to send, besides TERM and the SendEnv of ssh
-transport = "auto"                    # "auto", "udp", "tcp", or "stdio"
+transport = "auto"                    # "auto", "udp", "socket", "tcp", or "stdio"
 auto_attach = false                   # `ssj connect host` joins the only session without a client
 local_echo = "off"                    # "off" or "auto": show typed characters at once
 compress = "off"                      # "off" or "auto": compress while the link is the limit
@@ -480,6 +481,7 @@ A client and a server talk only if they speak the same protocol version.
 | Protocol | First release | Change |
 | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | 1 | 0.1.0 | First published format. It includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent forwarding. |
+| 2 | next | The frames are encoded with `postcard`. |
 
 ## Development
 

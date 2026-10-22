@@ -22,24 +22,38 @@ fn a_jump_host_or_proxy_command_is_found_in_the_ssh_configuration() {
 
 #[test]
 fn the_order_of_transports_follows_the_choice_the_path_and_the_server() {
-    use Kind::{Stdio, Tcp, Udp};
-    let order = |choice, jump, udp, tcp| tier_order(choice, jump, udp, tcp);
+    use Kind::{Socket, Stdio, Tcp, Udp};
+    let order = |choice, jump, udp, socket, tcp| tier_order(choice, jump, [udp, socket, tcp]);
 
     // automatic: the fastest first, the one that always works last.
-    assert_eq!(order(Transport::Auto, false, true, true), [Udp, Tcp, Stdio]);
+    assert_eq!(
+        order(Transport::Auto, false, true, true, true),
+        [Udp, Socket, Tcp, Stdio]
+    );
     // a jump host leaves out UDP.
-    assert_eq!(order(Transport::Auto, true, true, true), [Tcp, Stdio]);
+    assert_eq!(
+        order(Transport::Auto, true, true, true, true),
+        [Socket, Tcp, Stdio]
+    );
     // what the server does not offer is left out.
-    assert_eq!(order(Transport::Auto, false, false, true), [Tcp, Stdio]);
-    assert_eq!(order(Transport::Auto, false, true, false), [Udp, Stdio]);
-    assert_eq!(order(Transport::Auto, false, false, false), [Stdio]);
+    assert_eq!(
+        order(Transport::Auto, false, false, false, true),
+        [Tcp, Stdio]
+    );
+    assert_eq!(
+        order(Transport::Auto, false, true, false, false),
+        [Udp, Stdio]
+    );
+    assert_eq!(order(Transport::Auto, false, false, false, false), [Stdio]);
 
     // a choice is kept, and an unavailable one gives nothing.
-    assert_eq!(order(Transport::Udp, true, true, true), [Udp]);
-    assert_eq!(order(Transport::Tcp, false, true, true), [Tcp]);
-    assert_eq!(order(Transport::Stdio, false, true, true), [Stdio]);
-    assert!(order(Transport::Udp, false, false, true).is_empty());
-    assert!(order(Transport::Tcp, false, true, false).is_empty());
+    assert_eq!(order(Transport::Udp, true, true, true, true), [Udp]);
+    assert_eq!(order(Transport::Socket, false, true, true, true), [Socket]);
+    assert_eq!(order(Transport::Tcp, false, true, true, true), [Tcp]);
+    assert_eq!(order(Transport::Stdio, false, true, true, true), [Stdio]);
+    assert!(order(Transport::Udp, false, false, true, true).is_empty());
+    assert!(order(Transport::Socket, false, true, false, true).is_empty());
+    assert!(order(Transport::Tcp, false, true, true, false).is_empty());
 }
 
 #[test]

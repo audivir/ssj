@@ -455,6 +455,7 @@ fn start_client_inner(
             fingerprint: server.fingerprint,
             new: false,
             name: None,
+            socket: None,
         },
         tiers,
         attempt_timeout,

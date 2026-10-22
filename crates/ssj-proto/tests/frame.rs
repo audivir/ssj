@@ -2,7 +2,7 @@ mod common;
 
 use common::{client_frames, server_frames};
 use ssj_proto::frame::{MAX_DATA_LEN, MAX_FRAME_LEN};
-use ssj_proto::{ClientFrame, DecodeError, EnvError, ServerFrame, decode_client, decode_server};
+use ssj_proto::{ClientFrame, DecodeError, ServerFrame, decode_client, decode_server};
 
 /// Feeds `stream` in chunks of `step` bytes, like a socket would, and collects all frames.
 type Decode<F> = fn(&[u8]) -> Result<Option<(F, usize)>, DecodeError>;
@@ -73,164 +73,92 @@ fn bad_length_is_rejected_from_the_header_alone() {
     assert_eq!(decode_client(&header), Ok(None));
 }
 
-fn raw(tag: u8, body: &[u8]) -> Vec<u8> {
-    let mut out = ((body.len() + 1) as u32).to_be_bytes().to_vec();
-    out.push(tag);
+fn raw(body: &[u8]) -> Vec<u8> {
+    let mut out = (body.len() as u32).to_be_bytes().to_vec();
     out.extend_from_slice(body);
     out
 }
 
+fn varint(mut n: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    while n >= 0x80 {
+        out.push(n as u8 | 0x80);
+        n >>= 7;
+    }
+    out.push(n as u8);
+    out
+}
+
+// the bodies in the layout of postcard: the index of the variant, then its fields. The window
+// size is 24 by 80, and a start has its environment and then the flag of the agent.
 #[test]
 fn malformed_client_frames_are_rejected() {
-    let size = [0, 24, 0, 80];
-    // a start has the flag of the agent after the size.
-    let hello = |kind: u8, rest: &[u8]| {
-        let agent: &[u8] = if kind == 0 { &[0] } else { &[] };
-        raw(0x01, &[&[kind][..], &size, agent, rest].concat())
-    };
-    let cases: Vec<(&str, Vec<u8>, DecodeError)> = vec![
+    let oversized = [&[1][..], &varint(MAX_DATA_LEN + 1), &[0; MAX_DATA_LEN + 1]].concat();
+    let cases: Vec<(&str, &[u8])> = vec![
+        ("unknown type", &[12]),
+        ("close with a body", &[4, 0]),
+        ("ping with a body", &[7, 0]),
+        ("ack cut in its varint", &[3, 0x80]),
+        ("ack with trailing bytes", &[3, 1, 0]),
+        ("empty input", &[1, 0]),
+        ("input shorter than its length", &[1, 5, b'a']),
+        ("oversized input", &oversized),
+        ("zero rows", &[2, 0, 80]),
+        ("zero cols", &[2, 24, 0]),
+        ("huge cols", &[2, 24, 0xff, 0xff, 0x03]),
+        ("unknown hello kind", &[0, 9, 24, 80]),
+        ("attach with trailing bytes", &[0, 2, 24, 80, 1]),
+        ("resume without offset", &[0, 1, 24, 80]),
+        // the count is not trusted for the allocation.
         (
-            "unknown type",
-            raw(0x7f, &[]),
-            DecodeError::UnknownType(0x7f),
+            "env count without entries",
+            &[0, 0, 24, 80, 0xff, 0xff, 0x03],
         ),
-        (
-            "server tag from a client",
-            raw(0x81, &[0; 16]),
-            DecodeError::UnknownType(0x81),
-        ),
-        (
-            "close with a body",
-            raw(0x05, &[0]),
-            DecodeError::TrailingBytes,
-        ),
-        ("ack too short", raw(0x04, &[0; 7]), DecodeError::Truncated),
-        (
-            "ack too long",
-            raw(0x04, &[0; 9]),
-            DecodeError::TrailingBytes,
-        ),
-        ("empty input", raw(0x02, &[]), DecodeError::InvalidValue),
-        (
-            "oversized input",
-            raw(0x02, &vec![0; MAX_DATA_LEN + 1]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "zero rows",
-            raw(0x03, &[0, 0, 0, 80]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "zero cols",
-            raw(0x03, &[0, 24, 0, 0]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "huge cols",
-            raw(0x03, &[0, 24, 0xff, 0xff]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "unknown hello kind",
-            hello(9, &[]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "attach with trailing bytes",
-            hello(2, &[1]),
-            DecodeError::TrailingBytes,
-        ),
-        (
-            "resume without offset",
-            hello(1, &[0; 4]),
-            DecodeError::Truncated,
-        ),
-        // would allocate 65535 pairs if the count were trusted.
-        (
-            "env count over the limit",
-            hello(0, &[0xff, 0xff]),
-            DecodeError::Env(EnvError::TooMany),
-        ),
-        (
-            "env missing entries",
-            hello(0, &[0, 2, 0, 1, b'A', 0, 1, b'B']),
-            DecodeError::Truncated,
-        ),
-        (
-            "env name is not utf-8",
-            hello(0, &[0, 1, 0, 1, 0xff, 0, 0]),
-            DecodeError::InvalidValue,
-        ),
+        ("env missing entries", &[0, 0, 24, 80, 2, 1, b'A', 0]),
+        ("env name is not utf-8", &[0, 0, 24, 80, 1, 1, 0xff, 0, 0]),
         (
             "env name with equals",
-            hello(0, &[0, 1, 0, 3, b'A', b'=', b'B', 0, 0]),
-            DecodeError::Env(EnvError::InvalidName),
+            &[0, 0, 24, 80, 1, 3, b'A', b'=', b'B', 0, 0],
         ),
-        (
-            "agent flag out of range",
-            raw(0x01, &[&[0][..], &size, &[2], &[0, 0]].concat()),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "agent data without bytes",
-            raw(0x0a, &[0, 0, 0, 1]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "agent close with a body",
-            raw(0x0b, &[0, 0, 0, 1, 0]),
-            DecodeError::TrailingBytes,
-        ),
-        (
-            "env value with NUL",
-            hello(0, &[0, 1, 0, 1, b'A', 0, 1, 0]),
-            DecodeError::Env(EnvError::InvalidValue),
-        ),
+        ("env value with NUL", &[0, 0, 24, 80, 1, 1, b'A', 1, 0, 0]),
         (
             "env duplicate",
-            hello(0, &[0, 2, 0, 1, b'A', 0, 0, 0, 1, b'A', 0, 0]),
-            DecodeError::Env(EnvError::Duplicate),
+            &[0, 0, 24, 80, 2, 1, b'A', 0, 1, b'A', 0, 0],
         ),
+        ("agent flag out of range", &[0, 0, 24, 80, 0, 2]),
+        ("agent data without bytes", &[10, 1, 0]),
+        ("agent close with a body", &[11, 1, 0]),
     ];
-    for (name, bytes, expected) in cases {
-        assert_eq!(decode_client(&bytes).unwrap_err(), expected, "{name}");
+    for (name, body) in cases {
+        assert_eq!(
+            decode_client(&raw(body)).unwrap_err(),
+            DecodeError::Invalid,
+            "{name}"
+        );
     }
+    assert_eq!(decode_client(&raw(&[7])), Ok(Some((ClientFrame::Ping, 5))));
 }
 
 #[test]
 fn malformed_server_frames_are_rejected() {
-    let cases: Vec<(&str, Vec<u8>, DecodeError)> = vec![
-        (
-            "client tag from a server",
-            raw(0x05, &[]),
-            DecodeError::UnknownType(0x05),
-        ),
-        (
-            "welcome too short",
-            raw(0x81, &[0; 15]),
-            DecodeError::Truncated,
-        ),
-        ("empty output", raw(0x82, &[]), DecodeError::InvalidValue),
-        (
-            "unknown exit kind",
-            raw(0x84, &[2, 0]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "unknown error code",
-            raw(0x85, &[0]),
-            DecodeError::InvalidValue,
-        ),
-        (
-            "unknown error code, high",
-            raw(0x85, &[200]),
-            DecodeError::InvalidValue,
-        ),
+    let cases: Vec<(&str, &[u8])> = vec![
+        ("unknown type", &[12]),
+        ("pong with a body", &[5, 0]),
+        ("welcome too short", &[1, 3]),
+        ("empty output", &[0, 0]),
+        ("unknown exit kind", &[3, 2, 0]),
+        ("unknown error code", &[4, 6]),
+        ("unknown error code, high", &[4, 200]),
+        ("empty gap", &[6, 0]),
     ];
-    for (name, bytes, expected) in cases {
-        assert_eq!(decode_server(&bytes).unwrap_err(), expected, "{name}");
+    for (name, body) in cases {
+        assert_eq!(
+            decode_server(&raw(body)).unwrap_err(),
+            DecodeError::Invalid,
+            "{name}"
+        );
     }
+    assert_eq!(decode_server(&raw(&[5])), Ok(Some((ServerFrame::Pong, 5))));
 }
 
 #[test]
@@ -243,9 +171,11 @@ fn encoding_bad_data_leaves_the_buffer_unchanged() {
         assert!(frame.encode(&mut out).is_err());
         assert_eq!(out, b"keep");
     }
-    let mut out = b"keep".to_vec();
-    assert!(ServerFrame::Output(vec![]).encode(&mut out).is_err());
-    assert_eq!(out, b"keep");
+    for frame in [ServerFrame::Output(vec![]), ServerFrame::Gap(0)] {
+        let mut out = b"keep".to_vec();
+        assert!(frame.encode(&mut out).is_err());
+        assert_eq!(out, b"keep");
+    }
 }
 
 /// xorshift, so the test needs no dependency and is reproducible.
@@ -306,26 +236,6 @@ fn decoders_do_not_panic_on_random_or_mutated_input() {
     }
 }
 
-#[test]
-fn ping_and_pong_carry_no_body() {
-    assert_eq!(
-        decode_client(&raw(0x07, &[0])).unwrap_err(),
-        DecodeError::TrailingBytes
-    );
-    assert_eq!(
-        decode_server(&raw(0x86, &[0])).unwrap_err(),
-        DecodeError::TrailingBytes
-    );
-    assert_eq!(
-        decode_client(&raw(0x07, &[])),
-        Ok(Some((ClientFrame::Ping, 5)))
-    );
-    assert_eq!(
-        decode_server(&raw(0x86, &[])),
-        Ok(Some((ServerFrame::Pong, 5)))
-    );
-}
-
 // looking at a frame must agree with decoding it, for every frame and every cut of the stream.
 #[test]
 fn peeking_agrees_with_decoding() {
@@ -356,7 +266,9 @@ fn peeking_agrees_with_decoding() {
     ServerFrame::Pong.encode(&mut two).unwrap();
     ServerFrame::Output(b"x".to_vec()).encode(&mut two).unwrap();
     assert_eq!(peek_server(&two), Ok(Peek::Other));
-    // an output frame without data, and a header that is too large, are errors.
-    assert!(peek_server(&[0, 0, 0, 1, 0x82]).is_err());
+    // an output frame without data, one without its length, and a header that is too large, are
+    // errors.
+    assert!(peek_server(&raw(&[0, 0])).is_err());
+    assert!(peek_server(&raw(&[0])).is_err());
     assert!(peek_server(&[0xff, 0xff, 0xff, 0xff]).is_err());
 }

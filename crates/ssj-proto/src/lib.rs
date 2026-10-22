@@ -26,7 +26,7 @@ pub use types::{SessionId, SessionName, WindowSize, is_selector};
 /// Version of the wire protocol. Two peers talk only if their versions are equal.
 ///
 /// Increase it with every change of the wire format, and store a new golden file for it.
-pub const PROTOCOL: u16 = 1;
+pub const PROTOCOL: u16 = 2;
 
 /// ALPN identifier of the protocol, the only one a peer offers or accepts.
 pub fn alpn() -> Vec<u8> {
