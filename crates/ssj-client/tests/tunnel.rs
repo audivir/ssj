@@ -52,7 +52,8 @@ fn the_host_name_is_taken_from_the_ssh_configuration() {
         config,
         SshConfig {
             hostname: Some("server.example.org".to_owned()),
-            jump: false
+            jump: false,
+            send_env: Vec::new(),
         }
     );
     let jump = parse_ssh_config("hostname 10.0.0.5\nproxyjump bastion\n");
@@ -61,4 +62,14 @@ fn the_host_name_is_taken_from_the_ssh_configuration() {
     assert_eq!(parse_ssh_config(""), SshConfig::default());
     // no value, no host.
     assert_eq!(parse_ssh_config("hostname \nhostname\n").hostname, None);
+}
+
+#[test]
+fn the_sendenv_lines_of_ssh_are_the_patterns() {
+    let text = "host example\nsendenv LC_THEME\nsendenv LANG\nsendenv LC_*\nsendenv bad-name\n\
+                setenv A=b\nsendenv  \n";
+    assert_eq!(
+        parse_ssh_config(text).send_env,
+        ["LC_THEME", "LANG", "LC_*"]
+    );
 }

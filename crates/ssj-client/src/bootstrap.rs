@@ -1,6 +1,5 @@
 //! Running the server through `ssh`.
 
-use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
@@ -24,50 +23,6 @@ const SHOWN_CHARS: usize = 400;
 /// Quotes `text` for a POSIX shell.
 pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
-}
-
-/// The patterns of `SendEnv` that `ssh` has for the destination (its command line, `~/.ssh/config`,
-/// and the system files), as `ssh -G` prints them. `ssh` sends these variables to the host, and
-/// `ssj` sends them as well. Only the real `ssh` is asked, since another program may not know `-G`;
-/// `None` means that there is no answer, which is not the same as an answer without patterns.
-pub async fn ssh_send_env(args: &Args) -> Option<Vec<String>> {
-    let program = &args.ssh_command[0];
-    if Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        != Some("ssh")
-        || args.destination.starts_with('-')
-    {
-        return None;
-    }
-    let mut ssh = Command::new(program);
-    ssh.args(&args.ssh_command[1..])
-        .args(args.ssh_port_args())
-        .args(["-G", "--"])
-        .arg(&args.destination)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let output = timeout(Duration::from_secs(2), ssh.output())
-        .await
-        .ok()?
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    // a real answer starts with the host name.
-    (output.status.success() && text.lines().any(|line| line.starts_with("hostname ")))
-        .then(|| parse_send_env(&text))
-}
-
-/// The `sendenv` lines of the output of `ssh -G`, one pattern on each line. A pattern that `ssj`
-/// would not take is left out.
-pub fn parse_send_env(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| line.strip_prefix("sendenv "))
-        .map(str::trim)
-        .filter(|pattern| ssj_proto::EnvFilter::new(vec![(*pattern).to_owned()]).is_ok())
-        .map(str::to_owned)
-        .collect()
 }
 
 /// Quotes a path on the host. A leading `~/` stays the home directory of the host: a shell expands
@@ -315,7 +270,7 @@ pub async fn start_server(
 mod tests {
     use std::process::Command;
 
-    use super::{parse_send_env, quote_path};
+    use super::quote_path;
 
     fn echoed(path: &str) -> String {
         let out = Command::new("sh")
@@ -337,13 +292,5 @@ mod tests {
         assert_eq!(echoed("/opt/ssj server"), "/opt/ssj server");
         assert_eq!(echoed("~other/x"), "~other/x");
         assert_eq!(echoed("$HOME/x"), "$HOME/x");
-    }
-
-    #[test]
-    fn the_sendenv_lines_of_ssh_are_the_patterns() {
-        let text = "host example\nsendenv LC_THEME\nsendenv LANG\nsendenv LC_*\nsendenv bad-name\n\
-                    setenv A=b\nsendenv  \n";
-        assert_eq!(parse_send_env(text), ["LC_THEME", "LANG", "LC_*"]);
-        assert!(parse_send_env("").is_empty());
     }
 }

@@ -24,7 +24,7 @@ const STDERR_KEPT: usize = 2048;
 /// Characters of the error output shown.
 const SHOWN: usize = 120;
 /// Time `ssh -G` gets.
-const CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
+const CONFIG_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The `ssh` command for a connection that stays open: no escape character, no terminal, and no
 /// questions, since a reconnect cannot ask for a passphrase. An agent or a shared connection
@@ -82,6 +82,9 @@ pub struct SshConfig {
     pub hostname: Option<String>,
     /// A jump host or a proxy command is in the way. UDP does not travel through one.
     pub jump: bool,
+    /// The patterns of `SendEnv`: `ssh` sends these variables to the host, and `ssj` sends them as
+    /// well. A pattern that `ssj` would not take is left out.
+    pub send_env: Vec<String>,
 }
 
 /// Reads the output of `ssh -G`: lines of a lowercase key and a value.
@@ -100,6 +103,9 @@ pub fn parse_ssh_config(config: &str) -> SshConfig {
             "proxyjump" | "proxycommand" if !value.is_empty() && value != "none" => {
                 out.jump = true;
             }
+            "sendenv" if ssj_proto::EnvFilter::new(vec![value.to_owned()]).is_ok() => {
+                out.send_env.push(value.to_owned());
+            }
             _ => {}
         }
     }
@@ -111,7 +117,7 @@ pub fn jump_in_config(config: &str) -> bool {
     parse_ssh_config(config).jump
 }
 
-/// Asks `ssh -G` about the destination. `None` if `ssh` cannot say.
+/// Asks `ssh -G` about the destination, once for the whole connection. `None` if `ssh` cannot say.
 pub async fn ssh_config(args: &Args) -> Option<SshConfig> {
     let mut ssh = Command::new(&args.ssh_command[0]);
     ssh.args(&args.ssh_command[1..])

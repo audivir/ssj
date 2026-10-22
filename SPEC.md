@@ -667,8 +667,9 @@ as the base) times the start until the shell answers a command, and the end afte
 - Before this was measured, the end of a UDP session took two seconds: the server process ended
   before its close message left, and the client waited for an answer that never came. The server
   now waits for the close message to leave (at most one second, after the client has gone).
-- `ssh -G` (which finds the `HostName`) and the lookup of the address run while the bootstrap
-  `ssh` runs, and no longer after it.
+- `ssh -G` runs once, before the bootstrap, since the `SendEnv` patterns go with it; the
+  `HostName` and the jump host come from the same answer. The lookup of the address for UDP runs
+  while the bootstrap `ssh` runs, and no longer after it.
 
 ### Compression (`compress`)
 
@@ -1194,8 +1195,8 @@ them.
 
 - Client: `ssj` sends what `ssh` sends, and `TERM`. The patterns (shell-style `*` and `?`) are:
   - the `SendEnv` of `ssh` for the destination, from its command line, `~/.ssh/config`, and the
-    system files, read with `ssh -G` (2 seconds at most, and only when the command is `ssh`). When
-    `ssh` gives no answer (another command, an error), `LANG` and `LC_*` stand in for it, so that
+    system files, read with `ssh -G` (2 seconds at most; an answer counts only with a `hostname`
+    line). When `ssh` gives no answer (another command, an error), `LANG` and `LC_*` stand in for it, so that
     the host does not lose the locale. An answer without a `SendEnv` sends no locale, as `ssh` does;
   - `send_env` of `client.toml` (a list, empty by default), on top;
   - every `--send-env PATTERN` of the command line (repeatable), on top, as `-o SendEnv` is in
