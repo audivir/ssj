@@ -7,8 +7,7 @@ use ssj_net::Congestion;
 use ssj_proto::EnvFilter;
 
 use crate::cli::{
-    LocalEcho, Transport, parse_compress, parse_detach_key, parse_escape, parse_local_echo,
-    parse_transport,
+    LocalEcho, Transport, parse_compress, parse_detach_key, parse_local_echo, parse_transport,
 };
 
 /// What to do when the server is not installed on the host.
@@ -34,11 +33,8 @@ pub struct Config {
     /// "ask", "always", or "never": what to do when the host has no server.
     #[config(default = "ask")]
     pub auto_install: AutoInstall,
-    /// One character, or "none".
-    #[config(default = "~", deserialize_with = escape_char)]
-    pub escape_char: Key,
-    /// "none", or a key such as "ctrl-]" that detaches anywhere.
-    #[config(default = "none", deserialize_with = detach_key)]
+    /// A key such as "ctrl-]" that detaches anywhere, or "none".
+    #[config(default = "ctrl-\\", deserialize_with = detach_key)]
     pub detach_key: Key,
     /// Replaces ssh, such as "ssh -J jump".
     #[config(default = "ssh", deserialize_with = ssh_command)]
@@ -66,7 +62,6 @@ pub struct Config {
     pub congestion: Option<Congestion>,
 }
 
-parsed!(escape_char, String => Key, |s| parse_escape(&s));
 parsed!(detach_key, String => Key, |s| parse_detach_key(&s));
 parsed!(ssh_command, String => Vec<String>, |s| {
     let words: Vec<String> = s.split_whitespace().map(str::to_owned).collect();

@@ -461,8 +461,7 @@ fn start_client_inner(
         first_attempt_timeout: attempt_timeout,
         stream_dead_after,
         env: Env::default(),
-        escape: Some(b'~'),
-        detach_key: None,
+        detach_key: Some(0x1c),
         hangup_detaches,
         local_echo: false,
         compress: false,
@@ -720,14 +719,14 @@ async fn a_closed_terminal_while_offline_leaves_the_session_for_a_later_return()
 }
 
 #[tokio::test]
-async fn escape_dot_detaches_and_the_session_keeps_running() {
+async fn the_detach_key_detaches_and_the_session_keeps_running() {
     let client_id = Identity::generate();
     let mut server = start_server(ECHO_LINES, client_id.fingerprint());
     let mut terminal = start_client(&server, client_id);
     terminal.type_line("hello").await;
     terminal.wait_for("got:hello").await;
 
-    terminal.typed.write_all(b"~.").await.unwrap();
+    terminal.typed.write_all(b"\x1c").await.unwrap();
 
     let finished = timeout(Duration::from_secs(10), terminal.client)
         .await
@@ -755,7 +754,7 @@ async fn escape_dot_detaches_and_the_session_keeps_running() {
 }
 
 #[tokio::test]
-async fn escape_dot_works_without_a_connection_so_the_user_is_never_stuck() {
+async fn the_detach_key_works_without_a_connection_so_the_user_is_never_stuck() {
     let client_id = Identity::generate();
     let mut server = start_server(ECHO_LINES, client_id.fingerprint());
     let mut terminal = start_client(&server, client_id);
@@ -770,7 +769,7 @@ async fn escape_dot_works_without_a_connection_so_the_user_is_never_stuck() {
         .unwrap()
         .close(9u8.into(), b"killed by the test");
     sleep(Duration::from_millis(500)).await;
-    terminal.typed.write_all(b"\n~.").await.unwrap();
+    terminal.typed.write_all(b"\n\x1c").await.unwrap();
 
     let finished = timeout(Duration::from_secs(10), terminal.client)
         .await
@@ -864,7 +863,7 @@ async fn attaching_client_continues_a_running_session_and_survives_a_later_loss(
     let mut first = start_client(&server, client_id_clone(&client_id));
     first.type_line("one").await;
     first.wait_for("got:one:1").await;
-    first.typed.write_all(b"~.").await.unwrap();
+    first.typed.write_all(b"\x1c").await.unwrap();
     let finished = timeout(Duration::from_secs(10), first.client)
         .await
         .unwrap()

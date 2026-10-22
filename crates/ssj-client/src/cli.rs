@@ -122,8 +122,6 @@ pub struct Args {
     pub download_url: Option<String>,
     /// The server file to upload instead of the one from the release.
     pub server_binary: Option<PathBuf>,
-    /// `None` turns the escape character off.
-    pub escape: Option<u8>,
     /// A control byte that detaches wherever it is typed; `None` turns it off.
     pub detach_key: Option<u8>,
     pub transport: Transport,
@@ -148,7 +146,7 @@ pub struct Args {
     pub log_file: Option<PathBuf>,
     /// Never prompt and give up early: for refreshes that nobody waits for.
     pub batch: bool,
-    /// Which of `ssh_command` and `escape` (and the others below) the command line set, since the
+    /// Which of `ssh_command` and `detach_key` (and the others below) the command line set, since the
     /// config file only fills in the rest.
     pub explicit: Explicit,
 }
@@ -157,7 +155,6 @@ pub struct Args {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Explicit {
     pub ssh_command: bool,
-    pub escape: bool,
     pub detach_key: bool,
     pub transport: bool,
     pub auto_attach: bool,
@@ -183,8 +180,7 @@ impl Args {
             auto_install: None,
             download_url: None,
             server_binary: None,
-            escape: Some(b'~'),
-            detach_key: None,
+            detach_key: Some(DEFAULT_DETACH_KEY),
             transport: Transport::Auto,
             auto_attach: false,
             forward_agent: false,
@@ -205,9 +201,6 @@ impl Args {
     pub fn apply_config(&mut self, config: &crate::config::Config) {
         if !self.explicit.ssh_command {
             self.ssh_command = config.ssh_command.clone();
-        }
-        if !self.explicit.escape {
-            self.escape = config.escape_char;
         }
         if !self.explicit.detach_key {
             self.detach_key = config.detach_key;
@@ -250,14 +243,8 @@ impl Args {
     }
 }
 
-/// One printable ASCII character, or `none`.
-pub fn parse_escape(text: &str) -> Result<Option<u8>, String> {
-    match text.as_bytes() {
-        b"none" => Ok(None),
-        [byte] if byte.is_ascii() && !byte.is_ascii_control() => Ok(Some(*byte)),
-        _ => Err("expected one printable ASCII character or none".to_owned()),
-    }
-}
+/// The detach key when none is chosen: `ctrl-\\`.
+pub const DEFAULT_DETACH_KEY: u8 = 0x1c;
 
 /// A control key as `ctrl-]` or `^]` (letters in either case, and `[ \ ] ^ _`), or `none`. Enter,
 /// Tab, and Escape are refused, since they are part of every line and every key sequence.
@@ -594,10 +581,6 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         (_, true) => Some(AutoInstall::Never),
         _ => None,
     };
-    let escape = match &options.escape_char {
-        Some(text) => parse_escape(text).map_err(|e| format!("--escape-char: {e}"))?,
-        None => Some(b'~'),
-    };
     let detach_key = match &options.detach_key {
         Some(text) => parse_detach_key(text).map_err(|e| format!("--detach-key: {e}"))?,
         None => None,
@@ -704,7 +687,6 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         name,
         explicit: Explicit {
             ssh_command: options.ssh_command.is_some(),
-            escape: options.escape_char.is_some(),
             detach_key: options.detach_key.is_some(),
             transport: transport.is_some(),
             auto_attach: auto_attach.is_some(),
@@ -723,7 +705,6 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         auto_install,
         download_url: options.download_url,
         server_binary: options.server_binary.map(PathBuf::from),
-        escape,
         detach_key,
         transport: transport.unwrap_or_default(),
         auto_attach: auto_attach.unwrap_or(false),

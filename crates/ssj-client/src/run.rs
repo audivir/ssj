@@ -30,7 +30,6 @@ use crate::cli::{Args, Command, LocalEcho, Transport};
 use crate::config::Config;
 use crate::debounce::Debounce;
 use crate::echo::Echo;
-use crate::escape::{Action, EscapeFilter, help};
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
 use crate::select::choose;
@@ -183,8 +182,6 @@ pub struct Params {
     /// Silence after which a stream (TCP or `ssh` channel) is given up.
     pub stream_dead_after: Duration,
     pub env: Env,
-    /// `None` turns the escape character off.
-    pub escape: Option<u8>,
     /// A control byte that detaches wherever it is typed.
     pub detach_key: Option<u8>,
     /// A closed terminal or `SIGHUP` detaches and does not end the session: `ssj` runs inside an
@@ -1174,7 +1171,6 @@ async fn connect_session(
             first_attempt_timeout: FIRST_ATTEMPT_TIMEOUT,
             stream_dead_after: STREAM_DEAD_AFTER,
             env,
-            escape: args.escape,
             detach_key: args.detach_key,
             hangup_detaches: std::env::var_os("SSH_TTY").is_some(),
             attach,
@@ -1553,7 +1549,6 @@ struct Client {
     output_offset: u64,
     /// Output that the server has been told about.
     acked_output: u64,
-    escape: EscapeFilter,
     echo: Echo,
     compress: bool,
     compressor: Compressor,
@@ -1577,7 +1572,6 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         return Err("no way to reach the server".to_owned());
     }
     let size = io.size;
-    let escape = EscapeFilter::new(params.escape).with_detach_key(params.detach_key);
     let echo = Echo::new(params.local_echo, size.cols());
     let compress = params.compress;
     let mut io = io;
@@ -1600,7 +1594,6 @@ pub async fn run_session(params: Params, io: Io) -> Result<Finished, String> {
         input_since: None,
         output_offset: 0,
         acked_output: 0,
-        escape,
         echo,
         compress,
         compressor: Compressor::new(),
@@ -2269,51 +2262,44 @@ impl Client {
         ClientFrame::Input(bytes.to_vec())
     }
 
-    /// Applies typed bytes: input for the shell, or a local escape.
+    /// Applies typed bytes: input for the shell, up to the detach key, which leaves the session.
     async fn handle_typed(
         &mut self,
         typed: &[u8],
         link: Option<&mpsc::UnboundedSender<ClientFrame>>,
     ) -> Result<Option<Finished>, String> {
-        for action in self.escape.feed(typed) {
-            match action {
-                Action::Send(bytes) => {
-                    let stored = self.input.push(&bytes);
-                    self.input_since.get_or_insert_with(Instant::now);
-                    if stored < bytes.len() {
-                        // the reads leave room for the longest expansion, so this does not happen.
-                        return Err("the input buffer overflowed".to_owned());
-                    }
-                    if let Some(link) = link {
-                        // the acknowledgement of the output goes out in the same write.
-                        self.ack_output(link, true);
-                        let frame = self.input_frame(&bytes);
-                        let _ = link.send(frame);
-                        // only with a connection: without one the echo cannot come.
-                        let drawn = self.echo.typed(&bytes, Instant::now());
-                        if !drawn.is_empty() {
-                            let _ = self.io.output.write_all(&drawn).await;
-                            let _ = self.io.output.flush().await;
-                        }
-                    }
-                }
-                Action::Detach => {
-                    if let Some(link) = link {
-                        let _ = link.send(ClientFrame::Detach);
-                    }
-                    return Ok(Some(Finished::Detached));
-                }
-                Action::Help => {
-                    let _ = self
-                        .io
-                        .output
-                        .write_all(help(self.params.detach_key).as_bytes())
-                        .await;
+        let key_at = self
+            .params
+            .detach_key
+            .and_then(|key| typed.iter().position(|byte| *byte == key));
+        let bytes = &typed[..key_at.unwrap_or(typed.len())];
+        if !bytes.is_empty() {
+            let stored = self.input.push(bytes);
+            self.input_since.get_or_insert_with(Instant::now);
+            if stored < bytes.len() {
+                // the reads leave room for what is free, so this does not happen.
+                return Err("the input buffer overflowed".to_owned());
+            }
+            if let Some(link) = link {
+                // the acknowledgement of the output goes out in the same write.
+                self.ack_output(link, true);
+                let frame = self.input_frame(bytes);
+                let _ = link.send(frame);
+                // only with a connection: without one the echo cannot come.
+                let drawn = self.echo.typed(bytes, Instant::now());
+                if !drawn.is_empty() {
+                    let _ = self.io.output.write_all(&drawn).await;
                     let _ = self.io.output.flush().await;
                 }
             }
         }
-        Ok(None)
+        if key_at.is_none() {
+            return Ok(None);
+        }
+        if let Some(link) = link {
+            let _ = link.send(ClientFrame::Detach);
+        }
+        Ok(Some(Finished::Detached))
     }
 
     /// Passes bytes between the terminal and the server until the session ends or the link breaks.
@@ -2344,8 +2330,7 @@ impl Client {
             .clone()
             .map(|socket| Forward::new(socket, link.out.clone()));
         loop {
-            // two bytes of reserve: the escape can turn one typed byte into two.
-            let room = self.input.free().saturating_sub(2).min(self.chunk.len());
+            let room = self.input.free().min(self.chunk.len());
             let change_at = change.map(|(_, at)| at);
             if crate::log::take_terminal_lines() {
                 redraw_at = Some(tokio::time::Instant::now() + REDRAW_AFTER_LOG);

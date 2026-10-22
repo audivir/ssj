@@ -144,7 +144,7 @@ pub enum ServerFrame {
     /// to its output offset.
     Gap(u64),
     /// Someone detached this client from the host (`ssj detach`): the client leaves and the
-    /// session keeps running, as after `~.`.
+    /// session keeps running, as after the detach key.
     Detached,
     /// Output that is compressed (see [`crate::compress`]). It holds the same as an `Output`
     /// frame and counts for the output offset by its uncompressed length.

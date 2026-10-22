@@ -38,12 +38,8 @@ line override the file.
 \fBauto_install\fR = "ask" | "always" | "never"
 Whether to install the server when it is missing.
 .TP
-\fBescape_char\fR = "~" | "none"
-The escape character.
-.TP
-\fBdetach_key\fR = "none" | "ctrl-]"
-A key that detaches from the session wherever it is typed. Off by default, since the key is not
-sent to the program.
+\fBdetach_key\fR = "ctrl-\\\\" | "ctrl-]" | "none"
+A key that detaches from the session wherever it is typed. The program does not receive the key.
 .TP
 \fBssh_command\fR = "ssh -J jump"
 The command that replaces \fBssh\fR.

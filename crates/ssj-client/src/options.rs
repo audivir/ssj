@@ -62,7 +62,6 @@ pub const COMMAND_OPTIONS: [(&str, &[&str]); 6] = [
             "download_url",
             "server_binary",
             "udp_host",
-            "escape_char",
             "detach_key",
         ],
     ),
@@ -260,11 +259,7 @@ pub struct Options {
     #[arg(long, value_name = "HOST", value_hint = ValueHint::Hostname, overrides_with = "udp_host")]
     pub udp_host: Option<String>,
 
-    /// One printable character, or none
-    #[arg(long, value_name = "CHAR", overrides_with = "escape_char")]
-    pub escape_char: Option<String>,
-
-    /// A key that detaches anywhere, such as ctrl-] (default: none)
+    /// A key that detaches anywhere, such as ctrl-] (default: ctrl-\\)
     #[arg(long, value_name = "KEY", overrides_with = "detach_key")]
     pub detach_key: Option<String>,
 

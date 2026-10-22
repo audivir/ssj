@@ -14,7 +14,7 @@ fn defaults_apply_without_a_file_or_with_an_empty_one() {
     );
     let defaults = Config::default();
     assert_eq!(defaults.auto_install, AutoInstall::Ask);
-    assert_eq!(defaults.escape_char, Some(b'~'));
+    assert_eq!(defaults.detach_key, Some(0x1c));
     assert_eq!(defaults.ssh_command, ["ssh"]);
     // the variables come from the SendEnv of ssh; the file only adds.
     assert!(defaults.send_env.patterns().is_empty());
@@ -24,13 +24,13 @@ fn defaults_apply_without_a_file_or_with_an_empty_one() {
 fn every_key_is_read() {
     let config = Config::from_text(
         "auto_install = \"never\"  # no uploads\n\
-         escape_char = \"#\"\n\
+         detach_key = \"ctrl-a\"\n\
          ssh_command = \"ssh -J jump -o ForwardAgent=no\"\n\
          send_env = [\"TERM\", \"EDITOR\", \"MY_*\"]\n",
     )
     .unwrap();
     assert_eq!(config.auto_install, AutoInstall::Never);
-    assert_eq!(config.escape_char, Some(b'#'));
+    assert_eq!(config.detach_key, Some(0x01));
     assert_eq!(
         config.ssh_command,
         ["ssh", "-J", "jump", "-o", "ForwardAgent=no"]
@@ -38,9 +38,9 @@ fn every_key_is_read() {
     assert!(config.send_env.matches("EDITOR") && config.send_env.matches("MY_VAR"));
     assert!(!config.send_env.matches("LANG"), "nothing else is in it");
     assert_eq!(
-        Config::from_text("escape_char = \"none\"")
+        Config::from_text("detach_key = \"none\"")
             .unwrap()
-            .escape_char,
+            .detach_key,
         None
     );
     assert!(
@@ -69,15 +69,6 @@ fn mistakes_are_errors_that_name_the_problem() {
             "auto_install = \"never\"\nauto_install = \"always\"",
             "line 2: duplicate key",
         ),
-        (
-            "escape_char = \"ab\"",
-            "escape_char: expected one printable",
-        ),
-        ("escape_char = \"\"", "escape_char: expected one printable"),
-        (
-            "escape_char = \"\\t\"",
-            "escape_char: expected one printable",
-        ),
         ("ssh_command = \"   \"", "ssh_command: is empty"),
         (
             "ssh_command = [\"ssh\"]",
@@ -95,7 +86,7 @@ fn mistakes_are_errors_that_name_the_problem() {
 #[test]
 fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     let config = Config::from_text(
-        "auto_install = \"always\"\nescape_char = \"#\"\nssh_command = \"my-ssh\"\nsend_env = [\"ONLY\"]\n",
+        "auto_install = \"always\"\ndetach_key = \"ctrl-a\"\nssh_command = \"my-ssh\"\nsend_env = [\"ONLY\"]\n",
     )
     .unwrap();
 
@@ -103,7 +94,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     let mut plain = args(&["host"]);
     plain.apply_config(&config);
     assert_eq!(plain.ssh_command, ["my-ssh"]);
-    assert_eq!(plain.escape, Some(b'#'));
+    assert_eq!(plain.detach_key, Some(0x01));
     assert!(plain.send_env.matches("ONLY") && !plain.send_env.matches("LANG"));
     assert_eq!(plain.auto_install, Some(AutoInstall::Always));
 
@@ -111,7 +102,7 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     let mut flags = args(&[
         "--ssh-command",
         "other-ssh",
-        "--escape-char",
+        "--detach-key",
         "none",
         "--send-env",
         "X",
@@ -120,23 +111,23 @@ fn the_command_line_wins_over_the_file_and_the_file_over_the_defaults() {
     ]);
     flags.apply_config(&config);
     assert_eq!(flags.ssh_command, ["other-ssh"]);
-    assert_eq!(flags.escape, None);
+    assert_eq!(flags.detach_key, None);
     // --send-env comes on top of the file and does not replace it.
     assert!(flags.send_env.matches("ONLY") && !flags.send_env.matches("X"));
     assert_eq!(flags.send_env_add, ["X"]);
     assert_eq!(flags.auto_install, Some(AutoInstall::Never));
 
-    let mut one = args(&["--escape-char", "!", "host"]);
+    let mut one = args(&["--detach-key", "ctrl-b", "host"]);
     one.apply_config(&config);
     assert_eq!(
-        (one.escape, one.ssh_command),
-        (Some(b'!'), vec!["my-ssh".to_owned()])
+        (one.detach_key, one.ssh_command),
+        (Some(0x02), vec!["my-ssh".to_owned()])
     );
 }
 
 #[test]
 fn the_detach_key_is_a_control_key_or_none() {
-    assert_eq!(Config::default().detach_key, None);
+    assert_eq!(Config::default().detach_key, Some(0x1c));
     for (text, byte) in [
         ("ctrl-]", 0x1d),
         ("CTRL-]", 0x1d),

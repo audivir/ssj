@@ -150,7 +150,7 @@ pub enum SessionEvent {
 pub enum SessionCommand {
     /// Hangs up the terminal of the shell, as closing a terminal window would, and ends.
     Kill,
-    /// Tells the connected client to leave and keeps the shell running, as after `~.`.
+    /// Tells the connected client to leave and keeps the shell running, as after the detach key.
     Detach,
 }
 

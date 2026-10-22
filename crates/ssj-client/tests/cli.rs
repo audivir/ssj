@@ -209,12 +209,12 @@ fn a_command_refuses_the_options_of_the_connection() {
             && message.contains("client.toml"),
         "{message}"
     );
-    assert!(args(&["--escape-char", "none", "list", "host"]).is_err());
+    assert!(args(&["--detach-key", "none", "list", "host"]).is_err());
     assert!(args(&["kill", "host", "--json"]).is_err());
     assert!(args(&["list", "host", "--force"]).is_err());
     // the connection reads them
     assert!(args(&["--send-env=LC_THEME", "host"]).is_ok());
-    assert!(args(&["--escape-char", "none", "attach", "host"]).is_ok());
+    assert!(args(&["--detach-key", "none", "attach", "host"]).is_ok());
     assert!(args(&["--force", "kill", "host"]).is_ok());
 }
 

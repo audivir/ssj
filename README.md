@@ -167,44 +167,28 @@ Ending a session stops the shell. Leaving it keeps the shell running.
 | ------------------------------------------- | ------------------------------------------------------------------- |
 | `exit`, Ctrl-D on an empty line | Ends the session. `ssj` exits with the shell code. |
 | `ssj kill [-f] user@host [ID...]` | Ends the sessions from another terminal. |
-| `~.` at the start of a line | Detaches on purpose. The shell keeps running. |
-| The detach key, anywhere | The same, also in the middle of a line or a program. |
+| The detach key (`ctrl-\` by default), anywhere | Detaches on purpose, also in the middle of a line or a program. The shell keeps running. |
 | `ssj detach user@host [ID...]` | The same, from another terminal, for the clients of those sessions. |
 | Closing the terminal, `SIGHUP`, `SIGTERM` | Ends the session, as with `ssh`. `ssj` exits with 129. Inside an `ssh` session it detaches instead. |
 | `kill -9` of `ssj`, a lost connection | Leaves it. The shell keeps running. |
 
-The `~` is the escape character, as in `ssh`. It counts only at the start of a line:
-
-| Keys | Effect |
-| ---- | ---------------------------- |
-| `~.` | Detach and exit with code 0. |
-| `~~` | Send a literal `~`. |
-| `~?` | Print this list. |
-
-- Any other character after `~` is sent as typed.
-- `--escape-char C` sets another escape character, and `--escape-char none` turns the feature
-  off. The `escape_char` setting in `client.toml` does the same for every run.
-
 ### The detach key
 
-`~.` cannot be typed in the middle of a line or inside a program. A detach key can.
+`ctrl-\` detaches from anywhere: at a prompt, in the middle of a line, and inside a full-screen
+program. The program does not receive the key.
 
-- Set it with `--detach-key ctrl-]`, or `detach_key = "ctrl-]"` in `client.toml`.
-- Allowed keys: `ctrl-A` to `ctrl-Z`, `ctrl-\`, `ctrl-]`, `ctrl-^`, `ctrl-_`, or `none` (the
-  default, because the key is no longer sent to the program). Tab and Enter are refused.
+- Set another with `--detach-key ctrl-]`, or `detach_key = "ctrl-]"` in `client.toml`.
+- Allowed keys: `ctrl-A` to `ctrl-Z`, `ctrl-\`, `ctrl-]`, `ctrl-^`, `ctrl-_`, or `none`, which
+  turns it off. Tab and Enter are refused.
 - From another terminal, `ssj detach user@host [ID...]` makes the connected clients leave and
   prints that it did. The shell keeps running, and `ssj attach` brings you back.
 
 ### Inside an `ssh` session
 
-On a machine you reached with `ssh`, the outer `ssh` reads `~.` first and ends its own connection.
-The terminal of `ssj` is then closed.
+When the connection of an `ssh` session ends, the terminal of `ssj` is closed.
 
 - Inside an `ssh` session (`SSH_TTY` is set) this leaves the session running, since the end of
   the connection is more likely a loss than a wish. The next `ssj attach` brings you back.
-- To detach cleanly, type `~~.` (the outer `ssh` turns it into `~.`).
-- Or set a detach key, which `ssh` does not see: `detach_key = "ctrl-]"` in `client.toml` on
-  that machine. `~?` says so too.
 
 ### Choosing a session
 
@@ -233,7 +217,7 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 | Situation | What happens |
 | ------------------------------------------- | ---------------------------------------------------------------- |
 | `exit`, Ctrl+D, closed window, `kill ssj` | The session and its shell end, as with `ssh`. |
-| `~.` | The shell runs until you attach again or end it with `ssj kill`. There is no timeout. The server closes its UDP port, so a detached session listens on nothing; attaching goes through `ssh` and opens a new port. |
+| The detach key | The shell runs until you attach again or end it with `ssj kill`. There is no timeout. The server closes its UDP port, so a detached session listens on nothing; attaching goes through `ssh` and opens a new port. |
 | Lost connection (network change, sleeping laptop, `SIGKILL`) | The server waits for the client and ends the session after `detached_timeout` (off by default, in `server.toml`). |
 
 - `ssj list user@host` shows every session with its state and age.
@@ -270,7 +254,7 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 | Event | What you see |
 | ----------------------------- | --------------------------------------------------------------- |
 | The server stops answering | The window title shows `no response from the server` after a short time that depends on the speed of the link. |
-| The connection is lost | The title shows `connection lost, reconnecting`. The session keeps running, and what you type meanwhile is sent when the connection is back. `~.` works even without a connection. |
+| The connection is lost | The title shows `connection lost, reconnecting`. The session keeps running, and what you type meanwhile is sent when the connection is back. The detach key works even without a connection. |
 
 - On the TCP and `ssh` channel transports, a connection that is slow to answer (3 seconds without an
   answer to a ping or to what you typed) gets spares: `ssj` opens new connections beside it, up to
@@ -407,8 +391,7 @@ Both files are flat `key = value` lines of TOML, without tables.
 
 ```toml
 auto_install = "ask"                  # "ask", "always", or "never"
-escape_char = "~"                     # one character, or "none"
-detach_key = "none"                   # "none", or a key such as "ctrl-]" that detaches anywhere
+detach_key = "ctrl-\\"                # a key such as "ctrl-]" that detaches anywhere, or "none"
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = []                         # more variables to send, besides TERM and the SendEnv of ssh
 transport = "auto"                    # "auto", "udp", "tcp", or "stdio"

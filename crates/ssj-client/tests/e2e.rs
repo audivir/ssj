@@ -682,7 +682,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
     let cached = ssj(&runtime, &ssh, &["--complete", "user@localhost"], "");
     assert!(text(&cached.stdout).lines().any(|l| l == id), "{cached:?}");
 
-    // the first attach types a line and leaves with the escape.
+    // the first attach types a line and leaves with the detach key.
     let first = ssj_typing(
         &runtime,
         &ssh,
@@ -693,7 +693,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
 ",
                 "got:hello:1",
             ),
-            ("~.", ""),
+            ("\x1c", ""),
         ],
     );
     assert!(
@@ -714,7 +714,7 @@ fn list_attach_detach_attach_kill_through_the_client() {
         &runtime,
         &ssh,
         &["attach", "user@localhost"],
-        &[("again\n", "got:again:2"), ("~.", "")],
+        &[("again\n", "got:again:2"), ("\x1c", "")],
     );
     assert!(
         text(&second.stdout).contains("got:again:2"),
@@ -802,7 +802,7 @@ fn detach_from_another_terminal_lets_the_client_leave_and_the_shell_stays() {
         &runtime,
         &ssh,
         &["attach", "user@localhost"],
-        &[("two\n", "got:two:2"), ("~.", "")],
+        &[("two\n", "got:two:2"), ("\x1c", "")],
     );
     assert!(text(&again.stdout).contains("got:two:2"));
 
@@ -825,7 +825,7 @@ fn the_detach_key_leaves_in_the_middle_of_a_line() {
         &runtime,
         &ssh,
         &["--detach-key", "ctrl-]", "user@localhost"],
-        // typed in the middle of a line, which `~.` cannot do.
+        // typed in the middle of a line.
         &[("half a line\x1d", "")],
     );
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
@@ -1744,7 +1744,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         &runtime,
         &ssh,
         &words,
-        &[("one\n", "got:one:1"), ("~.", "")],
+        &[("one\n", "got:one:1"), ("\x1c", "")],
     );
     assert!(
         text(&first.stdout).contains("got:one:1"),
@@ -1767,7 +1767,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         &runtime,
         &ssh,
         &["--name", "work", "user@localhost"],
-        &[("two\n", "got:two:2"), ("~.", "")],
+        &[("two\n", "got:two:2"), ("\x1c", "")],
     );
     assert!(
         text(&second.stdout).contains("got:two:2"),
@@ -1789,7 +1789,7 @@ fn a_named_session_is_started_and_joined_again_by_its_name() {
         &runtime,
         &ssh,
         &["attach", "user@localhost", "work"],
-        &[("three\n", "got:three:3"), ("~.", "")],
+        &[("three\n", "got:three:3"), ("\x1c", "")],
     );
     assert!(
         text(&third.stdout).contains("got:three:3"),
@@ -1825,7 +1825,7 @@ fn auto_attach_joins_the_only_session_without_a_client() {
         &runtime,
         &ssh,
         &words,
-        &[("one\n", "got:one:1"), ("~.", "")],
+        &[("one\n", "got:one:1"), ("\x1c", "")],
     );
     assert!(
         text(&first.stdout).contains("got:one:1"),
@@ -1837,7 +1837,7 @@ fn auto_attach_joins_the_only_session_without_a_client() {
         &runtime,
         &ssh,
         &["--auto-attach", "user@localhost"],
-        &[("two\n", "got:two:2"), ("~.", "")],
+        &[("two\n", "got:two:2"), ("\x1c", "")],
     );
     assert!(
         text(&second.stdout).contains("got:two:2"),
@@ -2230,7 +2230,7 @@ fn a_lock_that_is_held_on_the_host_stops_the_save_and_is_named() {
     assert!(lock.is_dir());
 }
 
-/// A detached session on the host of the test, made as after `~.`.
+/// A detached session on the host of the test, made as after the detach key.
 fn detached_session(host: &Host, ssh: &Path) {
     let output = ssj_typing(
         &host.runtime,

@@ -146,7 +146,7 @@ was lost for good). Then:
    (`ReplayGap`), the client stops with a clear message.
 1. If the first `Start` may not have arrived, the client tries `Resume` first and falls back to
    `Start` when the server answers `NotStarted`.
-1. While there is no connection, `~.` still works, so the user is never stuck. The server is not
+1. While there is no connection, the detach key still works, so the user is never stuck. The server is not
    told, and the session keeps running with its timeout.
 
 The client sends a `Ping` every second in which nothing has come for half a second (a frame that arrived a moment ago shows that the connection works, and a ping next to a keystroke is what a stream transport must avoid, see below). It reports a stall when no frame has come for four round
@@ -866,7 +866,7 @@ Ending (the session is over):
 - `SIGTERM` or `SIGINT` to the server process does the same as `ssj kill`.
 - Closing the terminal window, or `SIGHUP` or `SIGTERM` to the client (`kill ssj`): inside an
   `ssh` session (`SSH_TTY` is set, `Params::hangup_detaches`) the client sends `Detach` and exits
-  as after `~.`, since the end of that connection is more likely a loss than a wish. Otherwise the
+  as after the detach key, since the end of that connection is more likely a loss than a wish. Otherwise the
   client sends `Hangup` and exits with code 129. The server hangs up the terminal of the shell, as a
   closing terminal would for `ssh`, and ends after the shell has exited. Without a connection
   (while the client is reconnecting) nothing can be told, and the session stays. The server
@@ -880,36 +880,29 @@ Leaving (the shell keeps running):
   `SIGKILL` or crashes) is an involuntary disconnect. The session survives, because surviving is
   the purpose of the tool, and the detached timeout applies. The server cannot tell these from a
   client that never returns, so `ssj list` and `ssj kill` clean up after a client that did.
-- An escape key sequence detaches on purpose. As in `ssh`, the escape character `~` counts only
-  at the start of a line (right after a newline or at the start of the session). Then:
-  - `~.` detaches: the client sends `Detach`, prints `[detached from session; it keeps running: ssj attach <DESTINATION>]`, and exits with code 0.
-  - The client prints two more lines, so that the start and the end of a session are visible
-    without the message of the day of a login: `[started session <NAME> (<ID>) on <DESTINATION> over <TRANSPORT>]`
-    once the first connection is up. The name and the brackets around the id are left out when the
-    session has no name the user gave. The first word is `started` for a session that the server made for this client (its `CONNECT`
-    line says `new`) and `attached to` for one that ran. The line goes in front of the output of the session,
-    and `[disconnected from <DESTINATION>]` after the shell has ended. The first goes to the
-    terminal in raw mode, ahead of the output of the session, and the second to the standard error
-    output. These two appear only when the standard input is a terminal (the detach line appears
-    always), and `-q` (`--quiet`) turns all three off. Errors are not affected, and a hangup prints
-    nothing, since the terminal is gone.
-  - `~~` sends a literal `~`.
-  - `~?` prints the list of escape sequences.
-  - Any other character after `~` is sent as typed, including the `~`.
-    The escape character is configurable (`--escape-char C` or `escape_char` in `client.toml`),
-    and `none` turns the feature off.
-- The detach key detaches from anywhere, also in the middle of a line or of a full-screen program
+- The detach key detaches on purpose: the client sends `Detach`, prints `[detached from session; it keeps running: ssj attach <DESTINATION>]`, and exits with code 0.
+  The key works anywhere, also in the middle of a line or of a full-screen program
   (`--detach-key KEY` or `detach_key` in `client.toml`). It is a control byte, `ctrl-A` to
-  `ctrl-Z` or `ctrl-\`, `ctrl-]`, `ctrl-^`, `ctrl-_` (also written `^]`), or `none`, which is the
-  default, since the byte is no longer sent to the program. Tab and Enter (`ctrl-I`, `ctrl-J`,
+  `ctrl-Z` or `ctrl-\`, `ctrl-]`, `ctrl-^`, `ctrl-_` (also written `^]`), or `none`, which turns it
+  off. The default is `ctrl-\`. The byte is not sent to the program. Tab and Enter (`ctrl-I`, `ctrl-J`,
   `ctrl-M`) are refused, and `ctrl-[` (Escape) is not accepted, since every line and key sequence
   uses them. Typed bytes before the key in the same read are sent first.
+- The client prints two more lines, so that the start and the end of a session are visible
+  without the message of the day of a login: `[started session <NAME> (<ID>) on <DESTINATION> over <TRANSPORT>]`
+  once the first connection is up. The name and the brackets around the id are left out when the
+  session has no name the user gave. The first word is `started` for a session that the server made for this client (its `CONNECT`
+  line says `new`) and `attached to` for one that ran. The line goes in front of the output of the session,
+  and `[disconnected from <DESTINATION>]` after the shell has ended. The first goes to the
+  terminal in raw mode, ahead of the output of the session, and the second to the standard error
+  output. These two appear only when the standard input is a terminal (the detach line appears
+  always), and `-q` (`--quiet`) turns all three off. Errors are not affected, and a hangup prints
+  nothing, since the terminal is gone.
 - `ssj detach DESTINATION [ID...]` detaches the connected client from another terminal. It runs
   `ssj-server --detach [ID...]`, which sends `DETACH` on the control socket. The server answers
   `ERR no client is connected` when the state is not connected. Otherwise the session sends the
   frame `Detached` (0x8c) to the client, waits 300 ms so that the frame can leave before the
   endpoint is closed, and then does what `Detach` does. The client leaves with exit code 0 and
-  the same message as after `~.`.
+  the same message as after the detach key.
 - `Detach` keeps the session running and **disables the detached timeout** until a client
   attaches again. The reason is intent: a user who detaches on purpose wants to come back later,
   for example to a long job, so the server must not end the shell behind their back. After the

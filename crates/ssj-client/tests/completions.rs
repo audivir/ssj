@@ -440,7 +440,7 @@ fn zsh_lists_the_values_of_options_with_a_fixed_set() {
 const ALL_OPTIONS: &str = "verbose quiet force log-file name auto-attach no-auto-attach \
     forward-agent no-forward-agent transport local-echo congestion compress ssh-command \
     server-path server-arg port-range detached-timeout install no-install download-url \
-    server-binary udp-host escape-char detach-key send-env json";
+    server-binary udp-host detach-key send-env json";
 
 /// The options that each command reads, written out again from the code of the commands and not
 /// from the table that the build script reads.
@@ -453,7 +453,7 @@ const READS: [(&str, &str); 6] = [
         "attach",
         "verbose quiet log-file transport local-echo congestion compress ssh-command server-path \
          server-arg port-range install no-install download-url server-binary udp-host \
-         escape-char detach-key",
+         detach-key",
     ),
     (
         "kill",
