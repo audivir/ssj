@@ -48,7 +48,8 @@ pub enum SessionState {
 }
 
 impl SessionState {
-    fn word(self) -> &'static str {
+    /// Returns the word of the state, as the listings show it.
+    pub fn word(self) -> &'static str {
         match self {
             Self::Connected => "connected",
             Self::Disconnected => "disconnected",

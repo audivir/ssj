@@ -388,7 +388,7 @@ async fn session(mut args: Args) -> u8 {
         }
         Command::List => list_sessions(&args).await,
         Command::Kill(ids) => kill_session(&args, ids).await,
-        Command::Detach(ids) => detach_session(&args, ids).await,
+        Command::Detach(ids) => send_order(&args, ids, &DETACH).await,
         Command::Edit => crate::edit::run(&args).await,
         Command::Install => match install(&args).await {
             Ok(path) => {
@@ -469,7 +469,7 @@ fn session_line(s: &SessionInfo) -> String {
     format!(
         "{}  {:<12}  {:>4}  {}",
         s.id.as_str(),
-        state_word(s.state),
+        s.state.word(),
         format_age(s.age_secs),
         s.name.as_ref().map_or("", |name| name.as_str())
     )
@@ -564,14 +564,7 @@ async fn run_choosing(
     }
     let mut remote = run_remote(args, &extra, "").await?;
     if choosing && remote.status.code() == Some(i32::from(CHOICE_EXIT_CODE)) {
-        let mut sessions: Vec<SessionInfo> = remote
-            .stdout
-            .split(|b| *b == b'\n')
-            .filter_map(|line| match parse_reply(line) {
-                Ok(Reply::Info(info)) => Some(info),
-                _ => None,
-            })
-            .collect();
+        let mut sessions = session_infos(&remote.stdout);
         if flag == "--detach" {
             // only a session with a client can be detached.
             sessions.retain(|s| s.state == SessionState::Connected);
@@ -602,34 +595,29 @@ pub fn format_age(seconds: u64) -> String {
     }
 }
 
-fn state_word(state: SessionState) -> &'static str {
-    match state {
-        SessionState::Connected => "connected",
-        SessionState::Disconnected => "disconnected",
-        SessionState::Detached => "detached",
-    }
+/// One session in the output of `ssj list --json`.
+#[derive(serde::Serialize)]
+struct JsonSession<'a> {
+    id: &'a str,
+    name: Option<&'a str>,
+    state: &'a str,
+    age_secs: u64,
+    protocol: u16,
 }
 
 /// The sessions as a JSON array, one object each.
 pub fn sessions_json(infos: &[SessionInfo]) -> String {
-    // the id and the name are restricted to characters that need no escaping.
-    let items: Vec<String> = infos
+    let sessions: Vec<_> = infos
         .iter()
-        .map(|info| {
-            let name = info
-                .name
-                .as_ref()
-                .map_or("null".to_owned(), |name| format!("\"{}\"", name.as_str()));
-            format!(
-                "{{\"id\":\"{}\",\"name\":{name},\"state\":\"{}\",\"age_secs\":{},\"protocol\":{}}}",
-                info.id.as_str(),
-                state_word(info.state),
-                info.age_secs,
-                info.protocol
-            )
+        .map(|info| JsonSession {
+            id: info.id.as_str(),
+            name: info.name.as_ref().map(|name| name.as_str()),
+            state: info.state.word(),
+            age_secs: info.age_secs,
+            protocol: info.protocol,
         })
         .collect();
-    format!("[{}]", items.join(","))
+    serde_json::to_string(&sessions).expect("plain values serialize")
 }
 
 /// Prints the cached names for tab completion and refreshes old lists in the background.
@@ -729,15 +717,7 @@ async fn list_sessions(args: &Args) -> u8 {
             return 1;
         }
     };
-    let infos: Vec<SessionInfo> = remote
-        .stdout
-        .split(|b| *b == b'\n')
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| match parse_reply(line) {
-            Ok(Reply::Info(info)) => Some(info),
-            _ => None,
-        })
-        .collect();
+    let infos = session_infos(&remote.stdout);
     let mut names = Vec::new();
     for info in &infos {
         let connected = info.state == SessionState::Connected;
@@ -785,7 +765,7 @@ pub fn list_lines(infos: &[SessionInfo], header: bool) -> Vec<String> {
     for info in infos {
         lines.push(row(
             info.id.as_str(),
-            state_word(info.state),
+            info.state.word(),
             &format_age(info.age_secs),
             &format!("protocol {}", info.protocol),
             info.name.as_ref().map_or("-", |name| name.as_str()),
@@ -807,14 +787,18 @@ async fn fetch_sessions(args: &Args) -> Result<Vec<SessionInfo>, String> {
             remote.error_text()
         ));
     }
-    Ok(remote
-        .stdout
+    Ok(session_infos(&remote.stdout))
+}
+
+/// The sessions in the output of `ssj-server --list`, one line each.
+fn session_infos(stdout: &[u8]) -> Vec<SessionInfo> {
+    stdout
         .split(|b| *b == b'\n')
         .filter_map(|line| match parse_reply(line) {
             Ok(Reply::Info(info)) => Some(info),
             _ => None,
         })
-        .collect())
+        .collect()
 }
 
 /// What `ssj kill HOST` does without an id: the only session is ended after a question (unless
@@ -844,7 +828,7 @@ async fn session_to_kill(args: &Args) -> Result<String, String> {
                 let question = format!(
                     "End the session {what} on {} ({}, {})?",
                     args.destination,
-                    state_word(s.state),
+                    s.state.word(),
                     format_age(s.age_secs)
                 );
                 if !confirm(&question) {
@@ -877,51 +861,44 @@ async fn kill_session(args: &Args, mut ids: Vec<String>) -> u8 {
             }
         }
     }
-    let count = ids.len().max(1);
-    let result = if ids.len() > 1 {
-        // one call to the host ends them all.
-        let mut extra = vec!["--kill".to_owned()];
-        extra.extend(ids);
-        run_remote(args, &extra, "").await
-    } else {
-        run_choosing(args, "--kill", ids.pop(), "Which one to end?").await
-    };
-    match result {
-        Ok(remote) if remote.server_missing() => {
-            eprintln!(
-                "ssj: no running session (ssj-server is not installed on {})",
-                args.destination
-            );
-            1
-        }
-        Ok(remote) if remote.status.success() => {
-            if count > 1 {
-                println!("{count} sessions ended");
-            } else {
-                println!("session ended");
-            }
-            0
-        }
-        Ok(remote) => {
-            eprintln!("ssj: could not end the session: {}", remote.error_text());
-            1
-        }
-        Err(message) => {
-            eprintln!("ssj: {message}");
-            1
-        }
-    }
+    send_order(args, ids, &KILL).await
 }
 
-async fn detach_session(args: &Args, mut ids: Vec<String>) -> u8 {
+/// What `ssj kill` and `ssj detach` ask the server for, and what they say.
+struct Order {
+    flag: &'static str,
+    question: &'static str,
+    done: &'static str,
+    done_many: &'static str,
+    failed: &'static str,
+}
+
+const KILL: Order = Order {
+    flag: "--kill",
+    question: "Which one to end?",
+    done: "session ended",
+    done_many: "sessions ended",
+    failed: "could not end the session",
+};
+
+const DETACH: Order = Order {
+    flag: "--detach",
+    question: "Which one to detach?",
+    done: "client detached; the session keeps running",
+    done_many: "clients detached; the sessions keep running",
+    failed: "could not detach the session",
+};
+
+/// Sends the order for the sessions `ids`, or for the only one, or for one from a menu.
+async fn send_order(args: &Args, mut ids: Vec<String>, order: &Order) -> u8 {
     let count = ids.len().max(1);
     let result = if ids.len() > 1 {
-        // one call to the host detaches them all.
-        let mut extra = vec!["--detach".to_owned()];
+        // one call to the host handles them all.
+        let mut extra = vec![order.flag.to_owned()];
         extra.extend(ids);
         run_remote(args, &extra, "").await
     } else {
-        run_choosing(args, "--detach", ids.pop(), "Which one to detach?").await
+        run_choosing(args, order.flag, ids.pop(), order.question).await
     };
     match result {
         Ok(remote) if remote.server_missing() => {
@@ -933,14 +910,14 @@ async fn detach_session(args: &Args, mut ids: Vec<String>) -> u8 {
         }
         Ok(remote) if remote.status.success() => {
             if count > 1 {
-                println!("{count} clients detached; the sessions keep running");
+                println!("{count} {}", order.done_many);
             } else {
-                println!("client detached; the session keeps running");
+                println!("{}", order.done);
             }
             0
         }
         Ok(remote) => {
-            eprintln!("ssj: could not detach the session: {}", remote.error_text());
+            eprintln!("ssj: {}: {}", order.failed, remote.error_text());
             1
         }
         Err(message) => {

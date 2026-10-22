@@ -17,6 +17,8 @@ hex.workspace = true
 clap = { workspace = true, features = ["derive", "error-context", "help", "std", "usage"] }
 quinn.workspace = true
 rustix = { workspace = true, features = ["fs", "stdio", "termios"] }
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 ssj-config.workspace = true
 ssj-net.workspace = true
