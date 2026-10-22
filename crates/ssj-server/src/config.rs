@@ -11,12 +11,12 @@ use std::time::Duration;
 use ssj_config::parsed;
 use ssj_config::serde::Deserializer;
 use ssj_config::serde::de::{Error, Unexpected, Visitor};
-use ssj_net::Congestion;
+use ssj_net::{Compress, Congestion};
 use ssj_proto::EnvFilter;
 
 use crate::cli::{
-    Settings, Timeout, check_live_backlog, check_replay_capacity, parse_away_after, parse_compress,
-    parse_port_range, parse_slow_client,
+    Settings, Timeout, check_live_backlog, check_replay_capacity, parse_away_after,
+    parse_port_range,
 };
 use crate::session::SlowClient;
 
@@ -40,16 +40,16 @@ pub struct Config {
     #[config(default = 10, deserialize_with = away_after)]
     pub away_after: Duration,
     /// "drop": the job never waits for the link. "wait": like ssh.
-    #[config(default = "drop", deserialize_with = slow_client)]
+    #[config(default = "drop")]
     pub slow_client: SlowClient,
     /// Bytes that may wait for a connected client (drop).
     #[config(default = 1048576, deserialize_with = live_backlog)]
     pub live_backlog: usize,
     /// "off" or "auto": compress output when the link is the limit.
-    #[config(default = "off", deserialize_with = compress)]
-    pub compress: bool,
+    #[config(default = "off")]
+    pub compress: Compress,
     /// "auto", "bbr", or "cubic".
-    #[config(default = "auto", deserialize_with = congestion)]
+    #[config(default = "auto")]
     pub congestion: Congestion,
     /// Absolute path of the shell, such as "/bin/zsh". Default: $SHELL.
     #[config(deserialize_with = shell)]
@@ -62,10 +62,7 @@ pub struct Config {
 parsed!(port_range, String => RangeInclusive<u16>, |s| parse_port_range(&s));
 parsed!(replay_capacity, usize => usize, check_replay_capacity);
 parsed!(away_after, u64 => Duration, |n| parse_away_after(&n.to_string()));
-parsed!(slow_client, String => SlowClient, |s| parse_slow_client(&s));
 parsed!(live_backlog, usize => usize, check_live_backlog);
-parsed!(compress, String => bool, |s| parse_compress(&s));
-parsed!(congestion, String => Congestion, |s| Congestion::parse(&s));
 parsed!(shell, String => PathBuf, |s| {
     if s.starts_with('/') { Ok(PathBuf::from(s)) } else { Err("must be an absolute path".to_owned()) }
 });

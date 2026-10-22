@@ -1076,10 +1076,12 @@ dependencies = [
 name = "ssj-net"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "quinn",
  "quinn-proto",
  "rcgen",
  "rustls",
+ "serde",
  "sha2",
  "ssj-proto",
  "tokio",
@@ -1103,6 +1105,7 @@ dependencies = [
  "pty-process",
  "quinn",
  "rustix",
+ "serde",
  "socket2",
  "ssj-config",
  "ssj-net",

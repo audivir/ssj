@@ -1,8 +1,18 @@
 //! The options of `ssj` as `clap` sees them, which `ssj-assets` also turns into the completions
-//! and the man page. Every value is text here, and `cli::parse` checks it.
+//! and the man page.
 
-use clap::builder::PossibleValuesParser;
+use std::path::PathBuf;
+
 use clap::{CommandFactory, Parser, ValueHint};
+use ssj_net::{Compress, Congestion};
+use ssj_proto::SessionName;
+
+use crate::cli::{LocalEcho, Transport, parse_detach_key};
+
+/// A control byte, or `None` for no key.
+type Key = Option<u8>;
+/// The words of a command.
+type Words = Vec<String>;
 
 /// The flags that have a counterpart which turns them off: the id of each, its name, and the
 /// line that the help shows for both.
@@ -150,11 +160,11 @@ pub struct Options {
 
     /// Write the -v output to this file and not to the terminal
     #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, overrides_with = "log_file")]
-    pub log_file: Option<String>,
+    pub log_file: Option<PathBuf>,
 
     /// Join the session of this name, or start it
-    #[arg(long, value_name = "NAME", overrides_with = "name")]
-    pub name: Option<String>,
+    #[arg(long, value_name = "NAME", overrides_with = "name", value_parser = parse_name)]
+    pub name: Option<SessionName>,
 
     /// Join the only session without a client, or always start a new one (default)
     #[arg(long, overrides_with = "no_auto_attach")]
@@ -172,50 +182,31 @@ pub struct Options {
     #[arg(long, overrides_with = "forward_agent")]
     pub no_forward_agent: bool,
 
-    /// How to reach the server: auto, udp, tcp, or stdio
-    #[arg(
-        long,
-        value_name = "WAY",
-        overrides_with = "transport",
-        value_parser = PossibleValuesParser::new(["auto", "udp", "tcp", "stdio"])
-    )]
-    pub transport: Option<String>,
+    /// How to reach the server
+    #[arg(long, value_name = "WAY", overrides_with = "transport")]
+    pub transport: Option<Transport>,
 
-    /// Show typed characters before the server echoes them: off or auto
-    #[arg(
-        long,
-        value_name = "WHEN",
-        overrides_with = "local_echo",
-        value_parser = PossibleValuesParser::new(["off", "auto"])
-    )]
-    pub local_echo: Option<String>,
+    /// Show typed characters before the server echoes them
+    #[arg(long, value_name = "WHEN", overrides_with = "local_echo")]
+    pub local_echo: Option<LocalEcho>,
 
-    /// How fast to send: auto (default), bbr, or cubic
-    #[arg(
-        long,
-        value_name = "WAY",
-        overrides_with = "congestion",
-        value_parser = PossibleValuesParser::new(["auto", "bbr", "cubic"])
-    )]
-    pub congestion: Option<String>,
+    /// How fast to send (default: auto)
+    #[arg(long, value_name = "WAY", overrides_with = "congestion")]
+    pub congestion: Option<Congestion>,
 
-    /// Compress input and output while the link is the limit: off or auto
-    #[arg(
-        long,
-        value_name = "WHEN",
-        overrides_with = "compress",
-        value_parser = PossibleValuesParser::new(["off", "auto"])
-    )]
-    pub compress: Option<String>,
+    /// Compress input and output while the link is the limit
+    #[arg(long, value_name = "WHEN", overrides_with = "compress")]
+    pub compress: Option<Compress>,
 
     /// Command that replaces ssh, split at whitespace
     #[arg(
         long,
         value_name = "COMMAND",
         allow_hyphen_values = true,
-        overrides_with = "ssh_command"
+        overrides_with = "ssh_command",
+        value_parser = parse_ssh_command
     )]
-    pub ssh_command: Option<String>,
+    pub ssh_command: Option<Words>,
 
     /// Path of the server file on the host
     #[arg(long, value_name = "PATH", value_hint = ValueHint::AnyPath, overrides_with = "server_path")]
@@ -247,15 +238,15 @@ pub struct Options {
 
     /// The server file to upload instead of the one from the release
     #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, overrides_with = "server_binary")]
-    pub server_binary: Option<String>,
+    pub server_binary: Option<PathBuf>,
 
     /// Host name or address for UDP when it differs from the destination
     #[arg(long, value_name = "HOST", value_hint = ValueHint::Hostname, overrides_with = "udp_host")]
     pub udp_host: Option<String>,
 
     /// A key that detaches anywhere, such as ctrl-] (default: ctrl-\\)
-    #[arg(long, value_name = "KEY", overrides_with = "detach_key")]
-    pub detach_key: Option<String>,
+    #[arg(long, value_name = "KEY", overrides_with = "detach_key", value_parser = parse_detach_key)]
+    pub detach_key: Option<Key>,
 
     /// Environment variable pattern to send as well as the SendEnv of ssh (repeatable)
     #[arg(long, value_name = "PATTERN")]
@@ -276,4 +267,18 @@ pub struct Options {
     /// Never prompt, give up after 2 seconds (for background refreshes)
     #[arg(long, hide = true)]
     pub batch: bool,
+}
+
+fn parse_name(text: &str) -> Result<SessionName, &'static str> {
+    SessionName::parse(text).ok_or("1 to 32 characters of letters, digits, '.', '_', '-'")
+}
+
+/// Splits the command at whitespace.
+pub fn parse_ssh_command(text: &str) -> Result<Words, &'static str> {
+    let words: Words = text.split_whitespace().map(str::to_owned).collect();
+    if words.is_empty() {
+        Err("is empty")
+    } else {
+        Ok(words)
+    }
 }

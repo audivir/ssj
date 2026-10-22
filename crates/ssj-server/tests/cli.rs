@@ -168,11 +168,11 @@ fn congestion_control_takes_a_known_way() {
 fn compression_is_auto_or_off() {
     assert_eq!(
         args(&["--compress", "auto"]).unwrap().settings.compress,
-        Some(true)
+        Some(ssj_net::Compress::Auto)
     );
     assert_eq!(
         args(&["--compress", "off"]).unwrap().settings.compress,
-        Some(false)
+        Some(ssj_net::Compress::Off)
     );
     assert!(args(&["--compress", "on"]).is_err());
     assert!(args(&["--compress"]).is_err());

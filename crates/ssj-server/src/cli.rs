@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
-use ssj_net::Congestion;
+use ssj_net::{Compress, Congestion};
 use ssj_proto::{SessionId, SessionName, is_selector};
 
 use crate::session::SlowClient;
@@ -90,17 +90,17 @@ pub struct Settings {
     /// Seconds a silent client may block the output
     #[arg(long, value_name = "SECONDS", value_parser = parse_away_after)]
     pub away_after: Option<Duration>,
-    /// What happens to output that a slow client has not taken: drop or wait
-    #[arg(long, value_name = "WAY", value_parser = parse_slow_client)]
+    /// What happens to output that a slow client has not taken
+    #[arg(long, value_name = "WAY")]
     pub slow_client: Option<SlowClient>,
     /// Bytes that may wait for a connected client
     #[arg(long, value_name = "BYTES", value_parser = parse_live_backlog)]
     pub live_backlog: Option<usize>,
-    /// Compress output when the link is the limit: off or auto
-    #[arg(long, value_name = "WHEN", value_parser = parse_compress)]
-    pub compress: Option<bool>,
-    /// How fast to send: auto, bbr, or cubic
-    #[arg(long, value_name = "WAY", value_parser = Congestion::parse)]
+    /// Compress output when the link is the limit
+    #[arg(long, value_name = "WHEN")]
+    pub compress: Option<Compress>,
+    /// How fast to send
+    #[arg(long, value_name = "WAY")]
     pub congestion: Option<Congestion>,
     /// Absolute path of the shell
     #[arg(long, value_name = "PATH")]
@@ -269,22 +269,6 @@ pub fn check_replay_capacity(size: usize) -> Result<usize, String> {
 /// Bounds of `live_backlog`: what may wait for a connected client before output is skipped.
 const MIN_LIVE_BACKLOG: usize = 16 * 1024;
 const MAX_LIVE_BACKLOG: usize = 64 << 20;
-
-pub fn parse_slow_client(text: &str) -> Result<SlowClient, String> {
-    match text {
-        "drop" => Ok(SlowClient::Drop),
-        "wait" => Ok(SlowClient::Wait),
-        _ => Err("expected drop or wait".to_owned()),
-    }
-}
-
-pub fn parse_compress(text: &str) -> Result<bool, String> {
-    match text {
-        "auto" => Ok(true),
-        "off" => Ok(false),
-        _ => Err("expected auto or off".to_owned()),
-    }
-}
 
 /// A number of bytes within the bounds of `live_backlog`.
 fn parse_live_backlog(text: &str) -> Result<usize, String> {

@@ -12,6 +12,7 @@ confique.workspace = true
 pty-process = { workspace = true, features = ["async"] }
 quinn.workspace = true
 rustix = { workspace = true, features = ["fs", "process", "stdio", "system"] }
+serde.workspace = true
 socket2 = { workspace = true, features = ["all"] }
 ssj-config.workspace = true
 ssj-net.workspace = true

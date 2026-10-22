@@ -337,11 +337,9 @@ async fn session(mut args: Args) -> u8 {
     };
     args.apply_config(&config);
     // the server compresses its output when the user asked for compression (or for none)
-    if let Some(on) = args.compress {
-        args.server_args.extend([
-            "--compress".to_owned(),
-            if on { "auto" } else { "off" }.to_owned(),
-        ]);
+    if let Some(choice) = args.compress {
+        args.server_args
+            .extend(["--compress".to_owned(), ssj_net::word(choice)]);
     }
     if let Some(command) = &args.remote_command {
         // `ssh host command` runs the command in a shell, and so does this: the login shell of the
@@ -360,7 +358,7 @@ async fn session(mut args: Args) -> u8 {
     if let Some(choice) = args.congestion {
         ssj_net::set_congestion(choice);
         args.server_args
-            .extend(["--congestion".to_owned(), choice.as_str().to_owned()]);
+            .extend(["--congestion".to_owned(), ssj_net::word(choice)]);
     }
     if args.batch {
         // nobody can answer a prompt of a background refresh, and nobody waits for it.
@@ -1139,7 +1137,7 @@ async fn connect_session(
             hangup_detaches: std::env::var_os("SSH_TTY").is_some(),
             attach,
             local_echo: raw.is_some() && args.local_echo == LocalEcho::Auto,
-            compress: args.compress == Some(true),
+            compress: args.compress == Some(ssj_net::Compress::Auto),
             agent,
             announce: (raw.is_some() && !args.quiet).then(|| Announce {
                 destination: args.destination.clone(),

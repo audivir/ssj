@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use ssj_net::Compress;
 use ssj_proto::{EnvFilter, PROTOCOL, SessionName, is_selector};
 
 use crate::config::AutoInstall;
@@ -19,7 +20,8 @@ pub enum ServerPath {
 }
 
 /// How the client reaches the server.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Transport {
     /// UDP first, then TCP through `ssh -W`, then the `ssh` channel itself.
     #[default]
@@ -30,40 +32,14 @@ pub enum Transport {
 }
 
 /// Whether typed characters are shown before the server has echoed them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LocalEcho {
+    /// Typed characters appear when the server echoes them.
     #[default]
     Off,
+    /// Typed characters appear at once, faint, until the server echoes them.
     Auto,
-}
-
-/// Parses the value of `--local-echo`.
-pub fn parse_local_echo(text: &str) -> Result<LocalEcho, String> {
-    match text {
-        "off" => Ok(LocalEcho::Off),
-        "auto" => Ok(LocalEcho::Auto),
-        _ => Err("expected off or auto".to_owned()),
-    }
-}
-
-/// Parses the value of `--compress`.
-pub fn parse_compress(text: &str) -> Result<bool, String> {
-    match text {
-        "auto" => Ok(true),
-        "off" => Ok(false),
-        _ => Err("expected auto or off".to_owned()),
-    }
-}
-
-/// Parses the value of `--transport`.
-pub fn parse_transport(text: &str) -> Result<Transport, String> {
-    match text {
-        "auto" => Ok(Transport::Auto),
-        "udp" => Ok(Transport::Udp),
-        "tcp" => Ok(Transport::Tcp),
-        "stdio" => Ok(Transport::Stdio),
-        _ => Err("expected auto, udp, tcp, or stdio".to_owned()),
-    }
 }
 
 /// What the client is asked to do.
@@ -131,7 +107,7 @@ pub struct Args {
     pub forward_agent: bool,
     pub local_echo: LocalEcho,
     /// Compression of input and output; `None` leaves it to the files.
-    pub compress: Option<bool>,
+    pub compress: Option<Compress>,
     /// `None` leaves it to the files and the default.
     pub congestion: Option<ssj_net::Congestion>,
     /// `list` prints JSON.
@@ -559,16 +535,6 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
             ..Args::blank()
         });
     }
-    let ssh_command = match &options.ssh_command {
-        Some(text) => {
-            let words: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
-            if words.is_empty() {
-                return Err("--ssh-command is empty".to_owned());
-            }
-            words
-        }
-        None => vec!["ssh".to_owned()],
-    };
     let mut server_args = options.server_arg.clone();
     if let Some(range) = &options.port_range {
         server_args.extend(["--port-range".to_owned(), range.clone()]);
@@ -581,38 +547,6 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         (_, true) => Some(AutoInstall::Never),
         _ => None,
     };
-    let detach_key = match &options.detach_key {
-        Some(text) => parse_detach_key(text).map_err(|e| format!("--detach-key: {e}"))?,
-        None => None,
-    };
-    let transport = options
-        .transport
-        .as_deref()
-        .map(|text| parse_transport(text).map_err(|e| format!("--transport: {e}")))
-        .transpose()?;
-    let congestion = options
-        .congestion
-        .as_deref()
-        .map(|text| ssj_net::Congestion::parse(text).map_err(|e| format!("--congestion: {e}")))
-        .transpose()?;
-    let compress = options
-        .compress
-        .as_deref()
-        .map(|text| parse_compress(text).map_err(|e| format!("--compress: {e}")))
-        .transpose()?;
-    let local_echo = options
-        .local_echo
-        .as_deref()
-        .map(|text| parse_local_echo(text).map_err(|e| format!("--local-echo: {e}")))
-        .transpose()?;
-    let name = options
-        .name
-        .as_deref()
-        .map(|text| {
-            SessionName::parse(text)
-                .ok_or("--name: 1 to 32 characters of letters, digits, '.', '_', '-'")
-        })
-        .transpose()?;
     let auto_attach =
         (options.auto_attach || options.no_auto_attach).then_some(options.auto_attach);
     let forward_agent =
@@ -684,16 +618,18 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         command,
         destination: target,
         ssh_port,
-        name,
+        name: options.name,
         explicit: Explicit {
             ssh_command: options.ssh_command.is_some(),
             detach_key: options.detach_key.is_some(),
-            transport: transport.is_some(),
+            transport: options.transport.is_some(),
             auto_attach: auto_attach.is_some(),
             forward_agent: forward_agent.is_some(),
-            local_echo: local_echo.is_some(),
+            local_echo: options.local_echo.is_some(),
         },
-        ssh_command,
+        ssh_command: options
+            .ssh_command
+            .unwrap_or_else(|| vec!["ssh".to_owned()]),
         server_path: options
             .server_path
             .map_or(ServerPath::Default, ServerPath::Custom),
@@ -704,19 +640,19 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
         send_env_add: options.send_env.clone(),
         auto_install,
         download_url: options.download_url,
-        server_binary: options.server_binary.map(PathBuf::from),
-        detach_key,
-        transport: transport.unwrap_or_default(),
+        server_binary: options.server_binary,
+        detach_key: options.detach_key.unwrap_or(Some(DEFAULT_DETACH_KEY)),
+        transport: options.transport.unwrap_or_default(),
         auto_attach: auto_attach.unwrap_or(false),
         forward_agent: forward_agent.unwrap_or(false),
-        local_echo: local_echo.unwrap_or_default(),
-        compress,
-        congestion,
+        local_echo: options.local_echo.unwrap_or_default(),
+        compress: options.compress,
+        congestion: options.congestion,
         json: options.json,
         verbose: options.verbose.min(3),
         quiet: options.quiet,
         force: options.force,
-        log_file: options.log_file.map(PathBuf::from),
+        log_file: options.log_file,
         batch: options.batch,
     })
 }

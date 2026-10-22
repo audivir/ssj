@@ -2006,7 +2006,7 @@ fn edit_without_a_host_changes_client_toml_and_saves_it_privately() {
         ssj_client::config::Config::from_text(&saved)
             .unwrap()
             .compress
-            == Some(true)
+            == Some(ssj_net::Compress::Auto)
     );
 
     // a second edit starts from the file.

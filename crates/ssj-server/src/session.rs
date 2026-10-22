@@ -64,7 +64,8 @@ pub struct SpawnTemplate {
 }
 
 /// What the server does with output that a connected client has not taken yet.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SlowClient {
     /// The job never waits for the link. The server keeps at most `live_backlog` bytes of unsent
     /// output and skips the oldest of the rest, and the client is told how much it missed.

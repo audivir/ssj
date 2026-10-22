@@ -241,7 +241,8 @@ pub fn tls_connector(identity: &Identity, server_pin: Fingerprint) -> TlsConnect
 }
 
 /// How a sender decides how fast to go.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Congestion {
     /// Slows down when packets are lost, which suits a wired link.
     Cubic,
@@ -254,24 +255,24 @@ pub enum Congestion {
     Auto,
 }
 
-impl Congestion {
-    /// Parses the value of `--congestion`.
-    pub fn parse(text: &str) -> Result<Self, String> {
-        match text {
-            "cubic" => Ok(Self::Cubic),
-            "bbr" => Ok(Self::Bbr),
-            "auto" => Ok(Self::Auto),
-            _ => Err("expected auto, bbr, or cubic".to_owned()),
-        }
-    }
+/// Whether data is compressed while the link is the limit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Compress {
+    /// Never compress.
+    #[default]
+    Off,
+    /// Compress while the link is slower than the data.
+    Auto,
+}
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Cubic => "cubic",
-            Self::Bbr => "bbr",
-            Self::Auto => "auto",
-        }
-    }
+/// Returns the word of a value on the command line, such as `cubic`.
+pub fn word(value: impl clap::ValueEnum) -> String {
+    value
+        .to_possible_value()
+        .expect("no value is skipped")
+        .get_name()
+        .to_owned()
 }
 
 static CONGESTION: AtomicU8 = AtomicU8::new(Congestion::Auto as u8);

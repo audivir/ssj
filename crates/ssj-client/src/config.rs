@@ -3,12 +3,11 @@
 //! Flags on the command line override the file.
 
 use ssj_config::parsed;
-use ssj_net::Congestion;
+use ssj_net::{Compress, Congestion};
 use ssj_proto::EnvFilter;
 
-use crate::cli::{
-    LocalEcho, Transport, parse_compress, parse_detach_key, parse_local_echo, parse_transport,
-};
+use crate::cli::{LocalEcho, Transport, parse_detach_key};
+use crate::options::parse_ssh_command;
 
 /// What to do when the server is not installed on the host.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ssj_config::serde::Deserialize)]
@@ -43,7 +42,7 @@ pub struct Config {
     #[config(default = [], deserialize_with = send_env)]
     pub send_env: EnvFilter,
     /// "auto", "udp", "tcp", or "stdio".
-    #[config(default = "auto", deserialize_with = transport)]
+    #[config(default = "auto")]
     pub transport: Transport,
     /// `ssj host` joins the only session without a client.
     #[config(default = false)]
@@ -52,26 +51,17 @@ pub struct Config {
     #[config(default = false)]
     pub forward_agent: bool,
     /// "off" or "auto": show typed characters at once.
-    #[config(default = "off", deserialize_with = local_echo)]
+    #[config(default = "off")]
     pub local_echo: LocalEcho,
     /// "off" or "auto": compress while the link is the limit. Not set: the server decides.
-    #[config(deserialize_with = compress)]
-    pub compress: Option<bool>,
+    pub compress: Option<Compress>,
     /// "auto", "bbr", or "cubic": how fast to send. Not set: the server decides.
-    #[config(deserialize_with = congestion)]
     pub congestion: Option<Congestion>,
 }
 
 parsed!(detach_key, String => Key, |s| parse_detach_key(&s));
-parsed!(ssh_command, String => Vec<String>, |s| {
-    let words: Vec<String> = s.split_whitespace().map(str::to_owned).collect();
-    if words.is_empty() { Err("is empty".to_owned()) } else { Ok(words) }
-});
+parsed!(ssh_command, String => Vec<String>, |s| parse_ssh_command(&s).map_err(str::to_owned));
 parsed!(send_env, Vec<String> => EnvFilter, |p| EnvFilter::new(p).map_err(|e| format!("{e:?}")));
-parsed!(transport, String => Transport, |s| parse_transport(&s));
-parsed!(local_echo, String => LocalEcho, |s| parse_local_echo(&s));
-parsed!(compress, String => bool, |s| parse_compress(&s));
-parsed!(congestion, String => Congestion, |s| Congestion::parse(&s));
 
 impl Default for Config {
     fn default() -> Self {

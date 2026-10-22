@@ -375,7 +375,7 @@ async fn run_session(args: Args, settings: Config, input: BootstrapInput) -> Exi
         live_backlog: settings.live_backlog,
         // the directory exists: the control socket was made in it.
         agent_socket: control_dir().ok().map(|dir| agent_path(&dir, id.as_str())),
-        compress: settings.compress,
+        compress: settings.compress == ssj_net::Compress::Auto,
         prestart: input.start,
         first_client_timeout: FIRST_CLIENT_TIMEOUT,
         detached_timeout: settings.detached_timeout,

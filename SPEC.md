@@ -370,19 +370,20 @@ redraw.
 ### Command line, completions, and release files
 
 - The client parses its command line with `clap` (derive). The definition lives in
-  `crates/ssj-client/src/options.rs`, free of other dependencies of the crate, and every value is
-  text there; `cli::parse` checks the values. A word is a command (`list`, `attach`, `kill`, `detach`,
-  `install`) only when a destination follows it, so a host named `list` still works. An option
-  given twice takes the last value, except `--server-arg` and `--send-env`, which collect.
+  `crates/ssj-client/src/options.rs`, and every value has its type there (a parser of its own for
+  the detach key, the session name, and the `ssh` command). A word is a command (`list`, `attach`,
+  `kill`, `detach`, `install`) only when a destination follows it, so a host named `list` still
+  works. An option given twice takes the last value, except `--server-arg` and `--send-env`, which
+  collect.
 - `ssj-server` parses its command line with `clap` (derive) as well. Each setting that
   `server.toml` has is an `Option` there, and `Config::with` puts the given ones over the file. The
   bootstrap process starts the daemon with its own arguments and `--daemon-child --session-id ID`,
   and the daemon reads the file itself.
 - The options with a fixed set of values (`--transport`, `--local-echo`, `--compress`,
-  `--congestion`) carry it in the definition (`PossibleValuesParser`), so the completions of all
-  three shells offer the values after a space and after `=`, and clap rejects anything else with
-  the list. The sets are written again in the `parse_*` functions of `cli.rs`, which turn the text
-  into the types, and in the test table of `completions.rs`.
+  `--congestion`, and `--slow-client` of the server) are enums with `clap::ValueEnum` and
+  `serde::Deserialize`, so one definition serves the command line, the config files, and the
+  completions: the three shells offer the values after a space and after `=` (Zsh with the doc
+  comment of each value), and clap and serde reject anything else with the list.
 - The completions come from a `clap` command that only `ssj-assets` builds (`completion_tree`): the
   options, and a subcommand for each command word with the options it reads (`COMMAND_OPTIONS` in
   `options.rs`, the same table that makes the parser refuse the others), a destination, and the

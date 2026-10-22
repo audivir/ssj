@@ -18,7 +18,7 @@ fn defaults_apply_without_a_file() {
     assert_eq!(config.replay_capacity, 4 << 20);
     assert_eq!(config.slow_client, SlowClient::Drop);
     assert_eq!(config.live_backlog, 1 << 20);
-    assert!(!config.compress);
+    assert_eq!(config.compress, ssj_net::Compress::Off);
     assert_eq!(config.congestion, ssj_net::Congestion::Auto);
     assert!(config.accept_env.matches("TERM") && !config.accept_env.matches("PATH"));
 }
@@ -45,7 +45,7 @@ fn every_key_is_read() {
     assert_eq!(a.away_after, Duration::from_secs(30));
     assert_eq!(a.slow_client, SlowClient::Wait);
     assert_eq!(a.live_backlog, 300_000);
-    assert!(!a.compress);
+    assert_eq!(a.compress, ssj_net::Compress::Off);
     assert_eq!(a.congestion, ssj_net::Congestion::Cubic);
     assert_eq!(a.shell.as_deref(), Some(std::path::Path::new("/bin/zsh")));
     assert!(config.accept_env.matches("EDITOR") && !config.accept_env.matches("LANG"));
@@ -103,13 +103,13 @@ fn mistakes_are_errors_that_name_the_problem() {
         ("max_detached = true", "line 1: max_detached: invalid type"),
         (
             "slow_client = \"block\"",
-            "slow_client: expected drop or wait",
+            "slow_client: unknown variant `block`, expected `drop` or `wait`",
         ),
         ("live_backlog = 10", "live_backlog: must be between"),
-        ("compress = \"zlib\"", "compress: expected auto or off"),
+        ("compress = \"zlib\"", "compress: unknown variant `zlib`"),
         (
             "congestion = \"reno\"",
-            "congestion: expected auto, bbr, or cubic",
+            "congestion: unknown variant `reno`",
         ),
         ("shell = \"zsh\"", "absolute path"),
         ("accept_env = [\"A B\"]", "accept_env: InvalidCharacter"),

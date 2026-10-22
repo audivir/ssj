@@ -428,16 +428,22 @@ fn zsh_lists_the_values_of_options_with_a_fixed_set() {
         let mut sorted: Vec<&str> = values.split(' ').collect();
         // clap lists the values in the order of the definition, which the help also shows.
         sorted.sort_unstable();
-        let line = text
-            .lines()
-            .find(|l| l.contains(&format!("'{option}=[")))
+        // a description of a value may take several lines.
+        let start = text
+            .find(&format!("'{option}=["))
             .unwrap_or_else(|| panic!("no line for {option}"));
-        let listed = line
-            .rsplit_once(":(")
-            .and_then(|(_, rest)| rest.split_once(')'))
-            .map(|(values, _)| values)
-            .unwrap();
-        let mut listed: Vec<&str> = listed.split(' ').collect();
+        let line = &text[start..start + text[start..].find(")'").unwrap()];
+        // the values are `(off auto)`, or with descriptions `((auto\:"..." udp\:"..."))`.
+        let mut listed: Vec<&str> = if line.contains("((") {
+            let mut words: Vec<&str> = line
+                .split("\\:\"")
+                .filter_map(|before| before.rsplit(['(', ' ', '\n']).next())
+                .collect();
+            words.pop();
+            words
+        } else {
+            line.rsplit_once(":(").unwrap().1.split(' ').collect()
+        };
         listed.sort_unstable();
         assert_eq!(listed, sorted, "{option}");
     }

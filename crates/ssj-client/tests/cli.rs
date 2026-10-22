@@ -281,7 +281,7 @@ fn age_is_shown_in_the_largest_fitting_unit() {
 
 #[test]
 fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
-    use ssj_client::cli::{Transport, parse_transport};
+    use ssj_client::cli::Transport;
     use ssj_client::config::Config;
 
     assert_eq!(args(&["host"]).unwrap().transport, Transport::Auto);
@@ -291,13 +291,12 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
         ("tcp", Transport::Tcp),
         ("stdio", Transport::Stdio),
     ] {
-        assert_eq!(parse_transport(word), Ok(transport));
         let parsed = args(&["--transport", word, "host"]).unwrap();
         assert_eq!(parsed.transport, transport);
         assert!(parsed.explicit.transport);
     }
     for bad in ["", "UDP", "quic", "ssh"] {
-        assert!(parse_transport(bad).is_err(), "{bad:?}");
+        assert!(args(&["--transport", bad, "host"]).is_err(), "{bad:?}");
     }
     assert!(args(&["--transport"]).is_err());
     assert!(args(&["--transport", "x", "host"]).is_err());
@@ -456,7 +455,7 @@ fn the_flags_of_the_listing_and_the_completion() {
 
 #[test]
 fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
-    use ssj_client::cli::{LocalEcho, parse_local_echo};
+    use ssj_client::cli::LocalEcho;
     use ssj_client::config::Config;
 
     assert_eq!(args(&["host"]).unwrap().local_echo, LocalEcho::Off);
@@ -465,7 +464,7 @@ fn local_echo_is_off_unless_the_flag_or_the_file_turns_it_on() {
         LocalEcho::Auto
     );
     assert!(args(&["--local-echo", "on", "host"]).is_err());
-    assert!(parse_local_echo("").is_err());
+    assert!(args(&["--local-echo", "", "host"]).is_err());
 
     let config = Config::from_text("local_echo = \"auto\"\n").unwrap();
     let mut open = args(&["host"]).unwrap();
