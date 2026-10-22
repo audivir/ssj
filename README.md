@@ -64,6 +64,9 @@ cargo install --path crates/ssj-client
 cargo install --path crates/ssj-server
 ```
 
+`cargo run -p ssj-assets -- DIR` writes the man page and the completions of a source build to
+`DIR`, in the layout of the release archive.
+
 ### The server on the host
 
 ```shell
