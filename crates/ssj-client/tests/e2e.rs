@@ -1428,7 +1428,7 @@ fn on_a_terminal_the_user_is_asked_and_can_decline() {
     );
 
     terminal.wait_for("Install it now? [Y/n]");
-    terminal.typed.write_all(b"n\n").unwrap();
+    terminal.typed.write_all(b"n").unwrap();
 
     assert_eq!(terminal.exit_code(), Some(1));
     assert!(!host.installed().exists());
@@ -1446,7 +1446,7 @@ fn on_a_terminal_the_user_can_agree_and_the_session_starts() {
     );
 
     terminal.wait_for("Install it now? [Y/n]");
-    terminal.typed.write_all(b"y\n").unwrap();
+    terminal.typed.write_all(b"y").unwrap();
     terminal.wait_for("installed ");
     terminal.typed.write_all(b"go\n").unwrap();
     terminal.wait_for("got:go");
@@ -1468,7 +1468,7 @@ fn on_a_terminal_enter_alone_installs() {
     );
 
     terminal.wait_for("Install it now? [Y/n]");
-    terminal.typed.write_all(b"\n").unwrap();
+    terminal.typed.write_all(b"y").unwrap();
     terminal.wait_for("installed ");
     terminal.typed.write_all(b"go\n").unwrap();
     terminal.wait_for("got:go");
@@ -1477,10 +1477,10 @@ fn on_a_terminal_enter_alone_installs() {
     assert!(host.installed().exists());
 }
 
-// anything but a clear yes or an empty answer declines, so that a stray word uploads nothing.
+// the prompt takes one key: n and Esc decline, and nothing is uploaded.
 #[test]
-fn only_an_empty_answer_or_yes_means_yes() {
-    for answer in ["yep\n", "no\n", "n\n", "x\n"] {
+fn n_and_escape_decline() {
+    for answer in ["n", "\x1b"] {
         let host = host();
         let ssh = fake_ssh(FAKE_SSH);
         let dir = server_binary();

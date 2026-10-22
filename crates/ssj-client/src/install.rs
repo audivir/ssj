@@ -1,6 +1,6 @@
 //! Putting the server on a host: finding the right file, uploading it, and deciding when to.
 
-use std::io::{BufRead, IsTerminal};
+use std::io::IsTerminal;
 
 use sha2::{Digest, Sha256};
 use ssj_proto::bootstrap::sanitize;
@@ -8,6 +8,7 @@ use ssj_proto::bootstrap::sanitize;
 use crate::bootstrap::{run_remote_command, sh_command};
 use crate::cli::Args;
 use crate::config::AutoInstall;
+use crate::terminal::ask;
 use crate::vlog;
 
 /// Largest server file the client uploads.
@@ -231,8 +232,7 @@ pub fn decide(
              {hint}, or use --install"
         )),
         AutoInstall::Ask => {
-            let question =
-                format!("ssj-server is not installed on {destination}. Install it now? [Y/n] ");
+            let question = format!("ssj-server is not installed on {destination}. Install it now?");
             if ask(&question) {
                 Decision::Install
             } else {
@@ -247,21 +247,12 @@ pub fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
 }
 
-/// Asks on the terminal. An empty answer (just Enter) is yes, as the capital in `[Y/n]` says, and
-/// so are `y` and `yes`. Anything else is no, and so is a closed input, which is no answer at all.
+/// Asks on the terminal, with one key. Enter and `y` agree, as the capital in `[Y/n]` says. `n` and
+/// Esc decline, and other keys are ignored. A missing terminal is no answer, which is no.
 pub fn confirm(question: &str) -> bool {
-    eprint!("{question}");
-    let mut answer = String::new();
-    match std::io::stdin().lock().read_line(&mut answer) {
-        Ok(read) if read > 0 => accepts(&answer),
-        _ => false,
-    }
-}
-
-/// Whether a line typed in reply to a `[Y/n]` question agrees.
-pub fn accepts(answer: &str) -> bool {
-    matches!(
-        answer.trim().to_ascii_lowercase().as_str(),
-        "" | "y" | "yes"
-    )
+    ask(dialoguer::Confirm::new()
+        .with_prompt(question)
+        .default(true)
+        .interact_opt())
+    .unwrap_or(false)
 }

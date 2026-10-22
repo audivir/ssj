@@ -106,7 +106,7 @@ When the server is missing, `ssj user@host` offers to install it, as set by `aut
 
 | `auto_install` | Behavior |
 | -------------- | ------------------------------------------------------------------------ |
-| `ask` (default) | On a terminal you are asked `[Y/n]`: Enter, `y`, or `yes` installs, and anything else does not. Without a terminal nothing is installed, and the message tells you what to do. |
+| `ask` (default) | On a terminal you are asked `[Y/n]`: Enter or `y` installs, and any other key does not. Without a terminal nothing is installed, and the message tells you what to do. |
 | `always` | Installs without asking. |
 | `never` | Never installs. |
 
@@ -198,7 +198,7 @@ or failing.
 - `ssj attach`, `ssj kill`, and `ssj detach` show the sessions of the host (youngest first) as a
   menu.
 - `ssj --auto-attach` shows those without a client, with a last line that starts a new one.
-- Keys: arrow keys or `j` and `k`, a number to jump, Enter to choose, `q` or Ctrl-C to cancel.
+- Keys: arrow keys or `j` and `k`, Enter to choose, `q` or Esc to cancel. Ctrl-C ends `ssj`.
 - Without a terminal nothing is asked: `--auto-attach` starts a session as before, and the other
   commands name the sessions in their error.
 - `ssj kill` without an id asks `End the session ...? [Y/n]` when only one session runs (Enter is yes,

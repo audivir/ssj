@@ -13,7 +13,6 @@ pub mod log;
 pub mod netwatch;
 pub mod options;
 pub mod run;
-pub mod select;
 pub mod sessions_cache;
 pub mod status;
 pub mod terminal;

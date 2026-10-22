@@ -32,10 +32,9 @@ use crate::debounce::Debounce;
 use crate::echo::Echo;
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::netwatch::Cause;
-use crate::select::choose;
 use crate::sessions_cache;
 use crate::status::{LineStatus, Status, TitleStatus, dropped_notice};
-use crate::terminal::{RawMode, window_size};
+use crate::terminal::{RawMode, ask, exit_on_interrupt, window_size};
 use crate::tracker::Tracker;
 use crate::tunnel::{Kind, SshConfig};
 use crate::vlog;
@@ -324,6 +323,7 @@ async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
 }
 
 async fn session(mut args: Args) -> u8 {
+    exit_on_interrupt();
     let config = match Config::load() {
         Ok(config) => config,
         Err(message) => {
@@ -487,10 +487,16 @@ async fn pick_session(title: String, mut sessions: Vec<SessionInfo>, allow_new: 
     if allow_new {
         items.push("start a new session".to_owned());
     }
-    let picked = tokio::task::spawn_blocking(move || choose(&title, items))
-        .await
-        .ok()
-        .flatten();
+    let picked = tokio::task::spawn_blocking(move || {
+        ask(dialoguer::Select::new()
+            .with_prompt(title)
+            .items(&items)
+            .default(0)
+            .interact_opt())
+    })
+    .await
+    .ok()
+    .flatten();
     match picked {
         None => Picked::Cancelled,
         Some(at) if at < sessions.len() => Picked::Session(sessions[at].id.as_str().to_owned()),
@@ -807,20 +813,6 @@ async fn fetch_sessions(args: &Args) -> Result<Vec<SessionInfo>, String> {
         .collect())
 }
 
-/// Asks a question on the terminal that Enter answers with yes, as the capital in `[Y/n]` says.
-/// Anything but an empty answer, `y`, or `yes` is no, and so is a closed input.
-fn confirm_default_yes(question: &str) -> bool {
-    use std::io::{BufRead, Write};
-    let mut err = std::io::stderr();
-    let _ = write!(err, "{question} [Y/n] ");
-    let _ = err.flush();
-    let mut answer = String::new();
-    match std::io::stdin().lock().read_line(&mut answer) {
-        Ok(read) if read > 0 => crate::install::accepts(&answer),
-        _ => false,
-    }
-}
-
 /// What `ssj kill HOST` does without an id: the only session is ended after a question (unless
 /// `-f` is given), and several sessions go into a menu, where the choice is the consent. Returns
 /// the id, or the message that ends the command.
@@ -851,7 +843,7 @@ async fn session_to_kill(args: &Args) -> Result<String, String> {
                     state_word(s.state),
                     format_age(s.age_secs)
                 );
-                if !confirm_default_yes(&question) {
+                if !confirm(&question) {
                     return Err("not ended".to_owned());
                 }
             }

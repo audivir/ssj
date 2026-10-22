@@ -101,7 +101,7 @@ fn the_policy_decides_whether_and_whom_to_ask() {
     });
     assert_eq!(decision, Decision::Install);
     assert!(
-        question.contains("me@host") && question.ends_with("[Y/n] "),
+        question.contains("me@host") && question.ends_with("Install it now?"),
         "{question}"
     );
 
@@ -109,19 +109,6 @@ fn the_policy_decides_whether_and_whom_to_ask() {
         decide(AutoInstall::Ask, host, true, |_| false),
         Decision::Skip(_)
     ));
-}
-
-#[test]
-fn the_default_answer_is_yes_and_only_a_clear_no_or_a_stray_word_declines() {
-    use ssj_client::install::accepts;
-    // Enter, y, and yes agree, in any case and with spaces around.
-    for yes in ["\n", "", " \n", "y\n", "Y\n", "yes\n", " YES \n"] {
-        assert!(accepts(yes), "{yes:?}");
-    }
-    // n, no, and anything that is not a clear yes decline, so that a stray word uploads nothing.
-    for no in ["n\n", "N\n", "no\n", "yep\n", "x\n", "ye\n", "yes please\n"] {
-        assert!(!accepts(no), "{no:?}");
-    }
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! Raw mode and window size of the local terminal.
 
-use std::io;
+use std::io::{self, Write};
 
 use rustix::stdio::stdin;
 use rustix::termios::{OptionalActions, Termios, isatty, tcgetattr, tcgetwinsize, tcsetattr};
@@ -38,4 +38,32 @@ pub fn window_size() -> WindowSize {
         .ok()
         .and_then(|size| WindowSize::new(size.ws_row, size.ws_col))
         .unwrap_or_else(|| WindowSize::new(24, 80).expect("valid size"))
+}
+
+/// Ends the process as Ctrl-C does, with the cursor shown that a prompt hid.
+fn interrupted() -> ! {
+    let _ = io::stderr().write_all(b"\x1b[?25h");
+    std::process::exit(130)
+}
+
+/// Makes a Ctrl-C end `ssj`. A prompt of `dialoguer` reads the key and then raises `SIGINT`, which
+/// would kill the process with the cursor still hidden. Needs a running runtime.
+pub fn exit_on_interrupt() {
+    if let Ok(mut interrupt) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+    {
+        tokio::spawn(async move {
+            interrupt.recv().await;
+            interrupted()
+        });
+    }
+}
+
+/// Reads the answer of a `dialoguer` prompt: `None` for a cancel (Esc or `q`) and for no terminal.
+pub fn ask<T>(answer: dialoguer::Result<Option<T>>) -> Option<T> {
+    match answer {
+        Ok(answer) => answer,
+        Err(dialoguer::Error::IO(err)) if err.kind() == io::ErrorKind::Interrupted => interrupted(),
+        Err(_) => None,
+    }
 }

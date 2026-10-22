@@ -336,8 +336,8 @@ redraw.
   `SSJ SESSION` lines on stdout and exits with code 67 (`CHOICE_EXIT_CODE`). The client sends
   `--choose` only when stdin and stderr are terminals and it is not a background refresh.
 
-- The client shows the sessions, the youngest first, in a menu on stderr (`select.rs`): arrows,
-  `j`/`k`, `Ctrl-P`/`Ctrl-N`, a number, Enter, and `q`, Ctrl-C, Ctrl-D, or Escape to cancel. For
+- The client shows the sessions, the youngest first, in a menu on stderr (drawn by `dialoguer`): arrows,
+  `j`/`k`, Enter, and `q` or Escape to cancel. Ctrl-C ends the client with exit code 130. For
   `--auto-attach` the last line starts a new session. It then runs the server again with
   `--attach ID` (or without `--reuse` for a new session), which costs a second `ssh` call.
   `detach` offers only sessions with a client, and joins the only one without asking.
@@ -350,7 +350,7 @@ redraw.
   reported on stderr, the others are still handled, and the exit code is 1 if any failed.
 
 - `ssj kill [-f] DESTINATION` without an id: with a terminal, the only session is ended after
-  `End the session <NAME> (<ID>) on <DESTINATION> (<STATE>, <AGE>)? [Y/n]` (Enter, `y`, and `yes`
+  `End the session <NAME> (<ID>) on <DESTINATION> (<STATE>, <AGE>)? [Y/n]` (Enter and `y`
   agree, anything else does not, and `-f` skips the question), and several sessions go into the menu, which is the consent.
   Without a terminal the client refuses unless `-f` is given, and says "no running session" first
   if there is none. An id given on the command line is never asked about.
@@ -745,8 +745,8 @@ Two ways to get it there:
 1. On first use: when `ssj user@host` finds no server file for its protocol, the wrapper of the
    remote command reports `SSJ MISSING` with exit code 66, which the client tells apart from every
    other failure. What happens next follows the policy `auto_install`:
-   - `ask` (default): on a terminal, the client asks `Install it now? [Y/n]`: an empty answer, `y`, or
-     `yes` installs, and anything else, or a closed input, does not. Without a terminal there is nobody to ask, so nothing is installed and the message
+   - `ask` (default): on a terminal, the client asks `Install it now? [Y/n]`: Enter or `y`
+     installs, and any other key, or a missing terminal, does not. Without a terminal there is nobody to ask, so nothing is installed and the message
      names `ssj install` and `--install`.
    - `always`: installs without asking. `never`: never installs and says how to do it by hand.
    - The flags `--install` and `--no-install` override the config file for one run.
