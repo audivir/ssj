@@ -71,13 +71,7 @@ pub fn store_states(
     let host = origin.destination.as_str();
     ensure(dir)?;
     let target = dir.join(file_name(host));
-    let temp = dir.join(format!(".{}.{}", file_name(host), std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temp)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
     writeln!(file, "@{}", origin.destination)?;
     if let Some(port) = origin.port {
         writeln!(file, "@port={port}")?;
@@ -89,8 +83,9 @@ pub fn store_states(
             writeln!(file, "{name}")?;
         }
     }
-    file.sync_all()?;
-    fs::rename(temp, target)
+    file.as_file().sync_all()?;
+    file.persist(target).map_err(|e| e.error)?;
+    Ok(())
 }
 
 /// Names of one host (`[user@]host`), or of all hosts with a list, without repeats.

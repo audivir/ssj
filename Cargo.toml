@@ -32,6 +32,7 @@ ssj-net = { path = "crates/ssj-net", version = "0.1.0" }
 ssj-proto = { path = "crates/ssj-proto", version = "0.1.0" }
 ssj-server = { path = "crates/ssj-server", version = "0.1.0" }
 system-configuration = "0.8.0"
+tempfile = "3.27.0"
 tokio = "1.53.3"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 toml = { version = "0.9.8", default-features = false, features = ["parse", "serde", "std"] }

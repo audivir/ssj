@@ -13,7 +13,7 @@
 
 use std::fs;
 use std::io::{BufRead, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -49,13 +49,9 @@ fn run_editor(editor: &str, file: &Path) -> Result<(), String> {
     }
 }
 
-/// A private temporary file with the text. The name ends in `.toml`, for the highlighting.
-fn temp_file(text: &str) -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join(format!("ssj-edit-{}", std::process::id()));
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&dir)
-        .map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+/// Writes the text to `edit.toml` in the private directory. The name ends in `.toml`, for the
+/// highlighting.
+fn write_temp(dir: &Path, text: &str) -> Result<PathBuf, String> {
     let path = dir.join("edit.toml");
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -66,13 +62,6 @@ fn temp_file(text: &str) -> Result<PathBuf, String> {
     file.write_all(text.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path)
-}
-
-fn remove_temp(path: &Path) {
-    let _ = fs::remove_file(path);
-    if let Some(dir) = path.parent() {
-        let _ = fs::remove_dir(dir);
-    }
 }
 
 /// Whether to open the editor again after an error. Anything but `d` or `n` means yes.
@@ -97,8 +86,13 @@ where
     Fut: std::future::Future<Output = Result<(), String>>,
 {
     let editor = editor();
-    let path = temp_file(initial)?;
-    let result = async {
+    // the directory (mode 0700) and the file in it go when `dir` is dropped.
+    let dir = tempfile::Builder::new()
+        .prefix("ssj-edit-")
+        .tempdir()
+        .map_err(|e| format!("cannot make a temporary directory: {e}"))?;
+    let path = write_temp(dir.path(), initial)?;
+    async {
         loop {
             vlog!(1, "running the editor {editor:?} on {}", path.display());
             run_editor(&editor, &path)?;
@@ -118,9 +112,7 @@ where
             }
         }
     }
-    .await;
-    remove_temp(&path);
-    result
+    .await
 }
 
 /// Why a text could not be saved.
@@ -132,19 +124,13 @@ enum SaveError {
 
 /// Keeps the edited text in a private file of its own, so that a refused save loses nothing.
 fn keep_copy(text: &str) -> Option<PathBuf> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let path =
-        std::env::temp_dir().join(format!("ssj-edit-kept-{}-{nanos}.toml", std::process::id()));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
+    let mut file = tempfile::Builder::new()
+        .prefix("ssj-edit-kept-")
+        .suffix(".toml")
+        .tempfile()
         .ok()?;
     file.write_all(text.as_bytes()).ok()?;
-    Some(path)
+    file.keep().ok().map(|(_, path)| path)
 }
 
 /// The message for a save that was refused because the file changed, with the place of the copy.
@@ -200,21 +186,14 @@ fn save_local(path: &Path, original: &str, text: &str) -> Result<(), SaveError> 
     if sha256_hex(current.as_bytes()) != sha256_hex(original.as_bytes()) {
         return Err(SaveError::Changed);
     }
-    let tmp = dir.join(format!(".client.toml.{}", std::process::id()));
     let written = (|| -> std::io::Result<()> {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
+        let mut file = tempfile::NamedTempFile::new_in(dir)?;
         file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
-        fs::rename(&tmp, path)
+        file.as_file().sync_all()?;
+        file.persist(path).map_err(|e| e.error)?;
+        Ok(())
     })();
     if let Err(err) = written {
-        let _ = fs::remove_file(&tmp);
         return Err(other(&format!("cannot save {}", path.display()), err));
     }
     // the lock goes with the file handle.

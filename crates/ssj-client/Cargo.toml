@@ -19,6 +19,7 @@ sha2.workspace = true
 ssj-config.workspace = true
 ssj-net.workspace = true
 ssj-proto.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 ureq.workspace = true
 
