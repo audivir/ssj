@@ -384,13 +384,15 @@ redraw.
   `serde::Deserialize`, so one definition serves the command line, the config files, and the
   completions: the three shells offer the values after a space and after `=` (Zsh with the doc
   comment of each value), and clap and serde reject anything else with the list.
-- The completions come from a `clap` command that only `ssj-assets` builds (`completion_tree`): the
-  options, and a subcommand for each command word with the options it reads (`COMMAND_OPTIONS` in
-  `options.rs`, the same table that makes the parser refuse the others), a destination, and the
-  ids of sessions. `clap_complete` writes from it the options of each command, their values (the
-  fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and files for
-  `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first word. The
-  parser does not use the tree. What `clap` cannot know is added by `ssj-assets` to each file:
+- One table in `options.rs` (`COMMANDS`) holds each command word with a line about it, the text
+  of its help, and the options it reads; the parser refuses the others with it. `commands()` turns
+  it into a `clap` command with a subcommand for each word (its options, a destination, and the ids
+  of sessions), which renders `ssj WORD --help` and, in `ssj-assets` (`completion_tree`), the
+  completions. The parser does not use the subcommands, since a word is a command only when a
+  destination follows it. `clap_complete` writes from the tree the options of each command, their
+  values (the fixed ones of `--transport`, `--local-echo`, `--congestion`, and `--compress`, and
+  files for `--log-file`, `--server-path`, and `--server-binary`) and the commands for the first
+  word. What `clap` cannot know is added by `ssj-assets` to each file:
   the hosts of `~/.ssh/config` for the destination and for `--udp-host` (`_ssh_hosts` in Zsh,
   `_known_hosts_real` of bash-completion in Bash when it is loaded, `__fish_print_hostnames` in
   Fish), the sessions of the host for `attach` (one), `kill`, and `detach` (any number), and the
@@ -1116,7 +1118,7 @@ The session starts the command and not an interactive shell, and ends with its e
 - The commands of `ssj` (`list`, `attach`, `kill`, `detach`, `install`, `edit`) are the
   exception: when a second word follows a command word, the line is one of those commands, and
   its options may stand anywhere (`ssj list host --json`). A command takes only the options that
-  it reads (`COMMAND_OPTIONS` in `options.rs`): any other, such as `--send-env` before `list`, is
+  it reads (`COMMANDS` in `options.rs`): any other, such as `--send-env` before `list`, is
   an error that points to `client.toml`. Before the command word the options are not known yet
   to the completions, and the error comes when the line is parsed.
 - A host with the name of a command is written `ssj connect list`, the plain connection (`ssj connect HOST [COMMAND]...`, whose words after the destination are for the host, as without

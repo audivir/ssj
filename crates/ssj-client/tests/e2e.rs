@@ -81,15 +81,12 @@ fn no_config() -> &'static Path {
 /// a command refuses the options of the connection, so each line gets only its own.
 fn reads(words: &[&str], option: &str) -> bool {
     let id = option.trim_start_matches("--").replace('-', "_");
-    match words.iter().find(|w| {
-        matches!(
-            **w,
-            "list" | "attach" | "kill" | "detach" | "install" | "edit"
-        )
-    }) {
-        Some(word) => ssj_client::options::COMMAND_OPTIONS
-            .iter()
-            .any(|(name, ids)| name == word && ids.contains(&id.as_str())),
+    let commands = ssj_client::options::COMMANDS;
+    match commands
+        .iter()
+        .find(|found| found.word != "connect" && words.contains(&found.word))
+    {
+        Some(found) => found.options.contains(&id.as_str()),
         None => true,
     }
 }

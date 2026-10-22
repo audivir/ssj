@@ -129,8 +129,13 @@ pub fn write(out: &Path) -> io::Result<()> {
     let mut page_commands = String::from(
         ".SH COMMANDS\nThe options that each command reads. They may stand before the command word or after the destination; any other option is an error.\n",
     );
-    for (word, ids) in options::COMMAND_OPTIONS {
-        let list = ids
+    for found in options::COMMANDS
+        .iter()
+        .filter(|found| found.word != "connect")
+    {
+        let word = found.word;
+        let list = found
+            .options
             .iter()
             .map(|id| {
                 let long = long_of(&command, id);
@@ -147,7 +152,7 @@ pub fn write(out: &Path) -> io::Result<()> {
     page.extend_from_slice(files.as_bytes());
     fs::write(out.join("ssj.1"), page)?;
 
-    let tree = completion_tree(&command);
+    let tree = completion_tree();
     for (shell, file) in [
         (Shell::Bash, "ssj.bash"),
         (Shell::Zsh, "_ssj"),
@@ -177,85 +182,40 @@ fn long_of(command: &clap::Command, id: &str) -> String {
         .unwrap_or_else(|| panic!("COMMAND_OPTIONS names {id}, which is no option"))
 }
 
-/// What the commands do, for the completion of the first word.
-const ABOUT: [(&str, &str); 7] = [
-    ("list", "List the sessions of a host"),
-    ("attach", "Join a running session"),
-    ("kill", "End sessions"),
-    ("detach", "Make the clients of sessions leave"),
-    ("install", "Put the server file on a host"),
-    ("edit", "Edit client.toml, or server.toml on a host"),
-    ("connect", "Connect to a host named like a command"),
-];
-
-/// The command with a subcommand for each command word, which only the generators see. The
-/// parser has one flat list of options (`options.rs`), and the generators write the options of a
-/// command, their values, and the hints for files and hosts from the subcommands. What the hosts
-/// have and the sessions of a host stay with the functions that are added in the shells.
-fn completion_tree(command: &clap::Command) -> clap::Command {
-    // the options only: the words after them belong to the commands below
-    let options: Vec<clap::Arg> = command
-        .get_arguments()
-        .filter(|arg| arg.get_long().is_some() || arg.get_short().is_some())
-        .cloned()
-        .collect();
-    let mut tree = clap::Command::new("ssj")
-        .version(env!("CARGO_PKG_VERSION"))
-        .disable_help_subcommand(true)
-        .args(options.clone());
-    let destination = || {
-        clap::Arg::new("destination")
-            .value_name("DESTINATION")
-            .value_hint(clap::ValueHint::Hostname)
-    };
-    for (word, about) in ABOUT {
-        let mut sub = clap::Command::new(word)
-            .about(about)
-            .disable_help_flag(true)
-            .disable_version_flag(true)
-            // only `ssj edit` can do without
-            .arg(destination().required(word != "edit"));
-        if word == "connect" {
-            // the plain connection reads the options of the connection, and the words after the
-            // destination are for the command on the host
-            sub = sub.args(options.iter().cloned()).arg(
-                clap::Arg::new("remote")
-                    .value_name("COMMAND")
-                    .num_args(0..)
-                    .trailing_var_arg(true)
-                    .value_hint(clap::ValueHint::AnyPath),
-            );
-        } else {
-            let ids = options::COMMAND_OPTIONS
-                .iter()
-                .find(|(name, _)| *name == word)
-                .map_or(&[][..], |(_, ids)| *ids);
-            for id in ids {
-                let arg = command
-                    .get_arguments()
-                    .find(|arg| arg.get_id() == id)
-                    .unwrap_or_else(|| panic!("COMMAND_OPTIONS names {id}, which is no option"));
-                sub = sub.arg(arg.clone());
-            }
-            // the ids of sessions follow the destination: one for `attach`, any for the others
-            match word {
-                "attach" => {
-                    sub = sub.arg(clap::Arg::new("id").value_name("ID"));
-                }
-                "kill" | "detach" => {
-                    sub = sub.arg(clap::Arg::new("id").value_name("ID").num_args(0..));
-                }
-                _ => {}
+/// The tree of the commands with what only the generators need. What the hosts have and the
+/// sessions of a host stay with the functions that are added in the shells.
+fn completion_tree() -> clap::Command {
+    let mut tree = options::commands().version(env!("CARGO_PKG_VERSION"));
+    for found in options::COMMANDS {
+        tree = tree.mut_subcommand(found.word, |mut sub| {
+            sub = sub
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                // the functions added to the zsh file look for the arguments without a text.
+                .mut_arg("destination", |arg| arg.help(None::<&str>));
+            if matches!(found.word, "attach" | "kill" | "detach") {
+                sub = sub.mut_arg("id", |arg| arg.help(None::<&str>));
             }
             // nothing is left to say after them, which `_arguments` of zsh would answer with the
             // options even before a dash is typed: a rest that completes nothing keeps them back
-            if word != "kill" && word != "detach" {
-                sub = sub.arg(clap::Arg::new("rest").value_name("NOTHING").num_args(0..));
+            if !matches!(found.word, "kill" | "detach" | "connect") {
+                let index = sub.get_positionals().count() + 1;
+                let rest = clap::Arg::new("rest").index(index).value_name("NOTHING");
+                sub = sub.arg(rest.num_args(0..));
             }
-        }
-        tree = tree.subcommand(sub);
+            sub
+        });
     }
     tree
+}
+
+/// The words of the commands, `connect` among them if `connect` is set.
+fn words(connect: bool) -> Vec<&'static str> {
+    options::COMMANDS
+        .iter()
+        .map(|found| found.word)
+        .filter(|word| connect || *word != "connect")
+        .collect()
 }
 
 /// The functions that the zsh file adds to what `clap` writes.
@@ -298,12 +258,7 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
     // `ssj attach -- ls`: the host is called `attach`, and the rest is the command for it
     let line = "    local context curcontext=\"$curcontext\" state line\n";
     assert!(text.contains(line), "the declaration of the state");
-    let commands = ABOUT
-        .map(|(word, _)| word)
-        .into_iter()
-        .filter(|word| *word != "connect")
-        .collect::<Vec<_>>()
-        .join("|");
+    let commands = words(false).join("|");
     text = text.replacen(
         line,
         &format!(
@@ -351,7 +306,7 @@ fn zsh(text: &str, value_options: &str, free_options: &[String]) -> String {
 /// finds the words that are no options, and offers the hosts and the sessions to them, and leaves
 /// the options and their values to `clap`.
 fn bash(text: &str, value_options: &str, free_options: &[String]) -> String {
-    let commands = ABOUT.map(|(word, _)| word).join(" ");
+    let commands = words(true).join(" ");
     let free = free_options
         .iter()
         .map(|long| format!("--{long}"))
@@ -477,7 +432,7 @@ complete -F _ssj_sessions -o bashdefault -o default ssj
 /// The fish file: the rules of `clap`, which find the command word with `argparse`, and the rules
 /// for the hosts and the sessions. The options of `connect` stand before its destination only.
 fn fish(text: &str, value_options: &str, free_options: &[String]) -> String {
-    let commands = ABOUT.map(|(word, _)| word).join(" ");
+    let commands = words(true).join(" ");
     let text = text.replace(
         "__fish_ssj_using_subcommand connect\"",
         "__fish_ssj_using_subcommand connect; and test (count (__ssj_words)) -le 1\"",
@@ -514,12 +469,7 @@ fn fish(text: &str, value_options: &str, free_options: &[String]) -> String {
         .collect::<String>();
     // the commands that keep their options after the destination, with the words after it
     // for the parser, not for the host
-    let option_commands = ABOUT
-        .map(|(word, _)| word)
-        .into_iter()
-        .filter(|word| *word != "connect")
-        .collect::<Vec<_>>()
-        .join(" ");
+    let option_commands = words(false).join(" ");
     let rules = FISH_RULES
         .replace("__OPTION_COMMANDS__", &option_commands)
         .replace("__VALUE_OPTIONS__", value_options)

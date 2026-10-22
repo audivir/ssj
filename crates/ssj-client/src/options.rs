@@ -32,87 +32,165 @@ const PAIRS: [[&str; 4]; 3] = [
     ["install", "no_install", "install", "install / --no-install"],
 ];
 
-/// The options that each command reads, by the id of the argument. Before the command word every
-/// option may stand, since the word is not known yet; after it only these make sense, and the
-/// completions and the man page show only these. The words after a destination that is not a
-/// command belong to the command on the host and have none.
-pub const COMMAND_OPTIONS: [(&str, &[&str]); 6] = [
-    (
-        "list",
-        &[
-            "verbose",
-            "log_file",
-            "ssh_command",
-            "server_path",
-            "server_arg",
-            "json",
-        ],
-    ),
-    (
-        "attach",
-        &[
-            "verbose",
+/// A command of `ssj`. Its word is a command only when a destination follows it.
+pub struct CommandWord {
+    pub word: &'static str,
+    /// What it does, in a line for the completion of the first word.
+    pub about: &'static str,
+    /// What it does, for `ssj WORD --help`.
+    pub help: &'static str,
+    /// The options that it reads, by the id of the argument. Before the command word every option
+    /// may stand, since the word is not known yet; after it only these make sense, and the help,
+    /// the completions, and the man page show only these. `connect` reads all of them.
+    pub options: &'static [&'static str],
+}
+
+/// The options of every command that runs the server on the host.
+macro_rules! remote_options {
+    ($($more:literal),*) => {
+        &["verbose", "log_file", "ssh_command", "server_path", "server_arg" $(, $more)*]
+    };
+}
+
+/// The commands of `ssj`.
+pub const COMMANDS: [CommandWord; 7] = [
+    CommandWord {
+        word: "list",
+        about: "List the sessions of a host",
+        help: "Lists the sessions on the host: id, state, age, protocol, and name. A terminal gets a \
+               header.",
+        options: remote_options!("json"),
+    },
+    CommandWord {
+        word: "attach",
+        about: "Join a running session",
+        help: "Joins a running session. ID is an id or a name. Without it the only session is \
+               joined, and with several a menu asks which one.",
+        options: remote_options!(
             "quiet",
-            "log_file",
             "transport",
             "local_echo",
             "congestion",
             "compress",
-            "ssh_command",
-            "server_path",
-            "server_arg",
             "port_range",
             "install",
             "no_install",
             "download_url",
             "server_binary",
             "udp_host",
-            "detach_key",
-        ],
-    ),
-    (
-        "kill",
-        &[
-            "verbose",
-            "log_file",
-            "ssh_command",
-            "server_path",
-            "server_arg",
-            "force",
-        ],
-    ),
-    (
-        "detach",
-        &[
-            "verbose",
-            "log_file",
-            "ssh_command",
-            "server_path",
-            "server_arg",
-        ],
-    ),
-    (
-        "install",
-        &[
+            "detach_key"
+        ),
+    },
+    CommandWord {
+        word: "kill",
+        about: "End sessions",
+        help: "Ends sessions on the host. Each ID is an id or a name. Without an ID the only \
+               session is ended after a question, and with several sessions a menu asks which \
+               one. A name that is also the id of another session gets a menu as well.",
+        options: remote_options!("force"),
+    },
+    CommandWord {
+        word: "detach",
+        about: "Make the clients of sessions leave",
+        help: "Makes the clients of sessions leave. The sessions keep running. Each ID is an id or \
+               a name. Without an ID the only session that has a client is detached, and with \
+               several a menu asks which one.",
+        options: remote_options!(),
+    },
+    CommandWord {
+        word: "install",
+        about: "Put the server file on a host",
+        help: "Puts the server file on the host: downloaded from the release of this version, or \
+               the file given with --server-binary.",
+        options: &[
             "verbose",
             "log_file",
             "ssh_command",
             "download_url",
             "server_binary",
         ],
-    ),
-    // the host runs the server to check `server.toml`
-    (
-        "edit",
-        &[
-            "verbose",
-            "log_file",
-            "ssh_command",
-            "server_path",
-            "server_arg",
-        ],
-    ),
+    },
+    // the host runs the server to check `server.toml`.
+    CommandWord {
+        word: "edit",
+        about: "Edit client.toml, or server.toml on a host",
+        help: "Edits client.toml in $EDITOR, or server.toml on the host. The text is checked \
+               before it is saved.",
+        options: remote_options!(),
+    },
+    CommandWord {
+        word: "connect",
+        about: "Connect to a host named like a command",
+        help: "Connects to the host, as `ssj DESTINATION [COMMAND]...` does. The word is for a \
+               host that is named like a command of ssj (`ssj connect list`); it is no different \
+               otherwise.",
+        options: &[],
+    },
 ];
+
+/// The command with a subcommand for each command word, for the help of a command, the man page,
+/// and the completions. The parser has one flat list of options ([`command`]), since a word is a
+/// command only when a destination follows it.
+pub fn commands() -> clap::Command {
+    // the real names of the flags, without the options for internal use.
+    let command = Options::command();
+    let options: Vec<clap::Arg> = command
+        .get_arguments()
+        .filter(|arg| arg.get_long().is_some() || arg.get_short().is_some())
+        .filter(|arg| !arg.is_hide_set() && !matches!(arg.get_id().as_str(), "help" | "version"))
+        .cloned()
+        .collect();
+    let mut tree = clap::Command::new("ssj")
+        .disable_help_subcommand(true)
+        .args(options.iter().cloned());
+    let destination = || {
+        clap::Arg::new("destination")
+            .index(1)
+            .value_name("DESTINATION")
+            .help("[user@]host[:port], or ssh://[user@]host[:port]")
+            .value_hint(ValueHint::Hostname)
+    };
+    let id = || {
+        clap::Arg::new("id")
+            .index(2)
+            .value_name("ID")
+            .help("The id or the name of a session")
+    };
+    for found in COMMANDS {
+        let mut sub = clap::Command::new(found.word)
+            .about(found.about)
+            .before_help(found.help)
+            .help_template("{usage-heading} {usage}\n\n{before-help}{all-args}")
+            // only `ssj edit` can do without
+            .arg(destination().required(found.word != "edit"));
+        if found.word == "connect" {
+            // the words after the destination are for the command on the host.
+            sub = sub.args(options.iter().cloned()).arg(
+                clap::Arg::new("remote")
+                    .index(2)
+                    .value_name("COMMAND")
+                    .num_args(0..)
+                    .trailing_var_arg(true)
+                    .value_hint(ValueHint::AnyPath),
+            );
+        }
+        for id in found.options {
+            let arg = options
+                .iter()
+                .find(|arg| arg.get_id() == id)
+                .unwrap_or_else(|| panic!("COMMANDS names {id}, which is no option"));
+            sub = sub.arg(arg.clone());
+        }
+        // the ids of sessions follow the destination: one for `attach`, any for the others.
+        match found.word {
+            "attach" => sub = sub.arg(id()),
+            "kill" | "detach" => sub = sub.arg(id().num_args(0..)),
+            _ => {}
+        }
+        tree = tree.subcommand(sub);
+    }
+    tree
+}
 
 /// The command for parsing and for `--help`. The help shows a flag and its counterpart on one line
 /// (`--auto-attach / --no-auto-attach`), the way `typer` does: the flag gets that text as its long

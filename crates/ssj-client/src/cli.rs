@@ -8,7 +8,7 @@ use ssj_proto::{EnvFilter, PROTOCOL, SessionName, is_selector};
 use crate::config::AutoInstall;
 use clap::FromArgMatches;
 
-use crate::options::Options;
+use crate::options::{COMMANDS, Options};
 
 /// Where the server file is, as seen on the remote host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -366,61 +366,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
 }
 
 /// The help of a command of `ssj`, or `None` for a word that is not one.
-pub fn command_help(word: &str) -> Option<&'static str> {
-    Some(match word {
-        "list" => {
-            "Usage: ssj list [OPTIONS] DESTINATION
-
-Lists the sessions on the host: id, state, age, protocol, and name. A terminal gets a header.
-
-Options:
-      --json  print a JSON array instead"
-        }
-        "connect" => {
-            "Usage: ssj connect [OPTIONS] DESTINATION [COMMAND]...
-
-Connects to the host, as `ssj DESTINATION [COMMAND]...` does. The word is for a host that is
-named like a command of ssj (`ssj connect list`); it is no different otherwise."
-        }
-        "attach" => {
-            "Usage: ssj attach [OPTIONS] DESTINATION [ID]
-
-Joins a running session. ID is an id or a name. Without it the only session is joined, and with
-several a menu asks which one."
-        }
-        "kill" => {
-            "Usage: ssj kill [OPTIONS] DESTINATION [ID...]
-
-Ends sessions on the host. Each ID is an id or a name. Without an ID the only session is ended
-after a question, and with several sessions a menu asks which one. A name that is also the id of
-another session gets a menu as well.
-
-Options:
-  -f, --force  do not ask before the only session is ended"
-        }
-        "detach" => {
-            "Usage: ssj detach [OPTIONS] DESTINATION [ID...]
-
-Makes the clients of sessions leave. The sessions keep running. Each ID is an id or a name. Without
-an ID the only session that has a client is detached, and with several a menu asks which one."
-        }
-        "install" => {
-            "Usage: ssj install [OPTIONS] DESTINATION
-
-Puts the server file on the host: downloaded from the release of this version, or the file given
-with --server-binary.
-
-Options:
-      --server-binary FILE  upload this file instead of the download
-      --download-url URL    take the files from this place"
-        }
-        "edit" => {
-            "Usage: ssj edit [OPTIONS] [DESTINATION]
-
-Edits client.toml in $EDITOR, or server.toml on the host. The text is checked before it is saved."
-        }
-        _ => return None,
-    })
+pub fn command_help(word: &str) -> Option<String> {
+    let mut tree = crate::options::commands();
+    // the usage names the program and the command only in a built tree.
+    tree.build();
+    Some(tree.find_subcommand_mut(word)?.render_help().to_string())
 }
 
 /// A hint for a word after the destination that is an option of `ssj`. The host would run it as
@@ -454,7 +404,7 @@ pub fn misplaced_option(word: &str) -> Option<String> {
 /// someone who wanted the command does not mean.
 pub fn lone_command_hint(word: &str) -> Option<String> {
     // `ssj edit` alone is the editor of `client.toml`
-    matches!(word, "list" | "attach" | "kill" | "detach" | "install").then(|| {
+    (is_command_word(word) && word != "edit").then(|| {
         format!(
             "`{word}` is taken as the name of a host, since no destination follows it; the command \
              is `ssj {word} user@host`, and `ssj connect {word}` is the host without this warning"
@@ -470,10 +420,10 @@ fn foreign_option(
     word: &str,
 ) -> Result<(), String> {
     use clap::parser::ValueSource;
-    let allowed = crate::options::COMMAND_OPTIONS
+    let allowed = COMMANDS
         .iter()
-        .find(|(name, _)| *name == word)
-        .map_or(&[][..], |(_, ids)| *ids);
+        .find(|found| found.word == word)
+        .map_or(&[][..], |found| found.options);
     for arg in command.get_arguments() {
         let id = arg.get_id().as_str();
         // the positional words, the options that ssj gives itself, and the ones for help
@@ -495,10 +445,7 @@ fn foreign_option(
 
 /// Words that are commands of `ssj` when a destination follows them.
 fn is_command_word(word: &str) -> bool {
-    matches!(
-        word,
-        "list" | "attach" | "kill" | "detach" | "install" | "edit"
-    )
+    word != "connect" && COMMANDS.iter().any(|found| found.word == word)
 }
 
 fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Args, String> {
@@ -561,7 +508,7 @@ fn from_options(options: Options, tail: &[String], explicit: bool) -> Result<Arg
     let local_edit = !explicit && positionals.as_slice() == ["edit"];
     let (command, destination) = match command_word {
         _ if local_edit => (Command::Edit, String::new()),
-        Some(word @ ("list" | "attach" | "kill" | "detach" | "install" | "edit")) => {
+        Some(word) if is_command_word(word) => {
             let rest = &positionals[1..];
             let (mut ids, destination) = match rest {
                 [destination] => (Vec::new(), destination.clone()),
