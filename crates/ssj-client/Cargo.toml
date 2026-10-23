@@ -11,10 +11,10 @@ name = "ssj"
 path = "src/main.rs"
 
 [dependencies]
+clap = { workspace = true, features = ["derive", "error-context", "help", "std", "usage"] }
 confique.workspace = true
 dialoguer.workspace = true
 hex.workspace = true
-clap = { workspace = true, features = ["derive", "error-context", "help", "std", "usage"] }
 quinn.workspace = true
 rustix = { workspace = true, features = ["fs", "stdio", "termios"] }
 serde.workspace = true
