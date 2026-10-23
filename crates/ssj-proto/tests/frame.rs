@@ -272,3 +272,26 @@ fn peeking_agrees_with_decoding() {
     assert!(peek_server(&raw(&[0])).is_err());
     assert!(peek_server(&[0xff, 0xff, 0xff, 0xff]).is_err());
 }
+
+// postcard takes a number that is written longer than it needs to be, so a frame can decode from
+// bytes that it does not encode to. Both inputs were found by the fuzzer; the frame has to
+// survive the round trip all the same.
+#[test]
+fn a_number_written_too_long_decodes_and_the_frame_survives_a_round_trip() {
+    let client = [
+        0, 0, 0, 10, 0, 1, 91, 90, 255, 253, 160, 255, 255, 0, 64, 0, 165,
+    ];
+    let (frame, used) = decode_client(&client).unwrap().unwrap();
+    assert_eq!(used, 14);
+    let mut again = Vec::new();
+    frame.encode(&mut again).unwrap();
+    assert_ne!(again, &client[..used]);
+    assert_eq!(decode_client(&again), Ok(Some((frame, again.len()))));
+
+    let server = [0, 0, 0, 7, 1, 0, 255, 255, 255, 255, 0];
+    let (frame, used) = decode_server(&server).unwrap().unwrap();
+    assert_eq!(used, server.len());
+    let mut again = Vec::new();
+    frame.encode(&mut again).unwrap();
+    assert_eq!(decode_server(&again), Ok(Some((frame, again.len()))));
+}
