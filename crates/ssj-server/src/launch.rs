@@ -192,7 +192,9 @@ pub fn run_parent(args: &Args) -> ExitCode {
     // a named session, or the only free one, is joined instead of starting another.
     match existing_session(args) {
         Err(message) => return fail(&message, 1),
-        Ok(Existing::Join(found)) => return control_cli::attach_session(&found, pin),
+        Ok(Existing::Join(found)) => {
+            return control_cli::attach_session(&found, pin, !args.no_hold);
+        }
         Ok(Existing::Choose(free)) => {
             let mut out = std::io::stdout();
             for found in free {
@@ -258,7 +260,10 @@ pub fn run_parent(args: &Args) -> ExitCode {
     {
         return ExitCode::from(1);
     }
-    ExitCode::SUCCESS
+    match connect.socket.as_deref() {
+        Some(path) if !args.no_hold => control_cli::hold_for_stream(std::path::Path::new(path)),
+        _ => ExitCode::SUCCESS,
+    }
 }
 
 fn report_child_failure(child: &mut std::process::Child) -> ExitCode {

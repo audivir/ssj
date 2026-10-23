@@ -143,14 +143,15 @@ pub async fn ssh_config(args: &Args) -> Option<SshConfig> {
 
 /// Collects the error output of a process in the background, so that its pipe never fills up and
 /// the text is there when the process fails.
-struct Stderr(Arc<Mutex<Vec<u8>>>);
+pub(crate) struct Stderr(Arc<Mutex<Vec<u8>>>, Option<tokio::task::JoinHandle<()>>);
 
 impl Stderr {
-    fn collect(child: &mut Child) -> Self {
+    pub(crate) fn collect(child: &mut Child) -> Self {
         let kept = Arc::new(Mutex::new(Vec::new()));
+        let mut reader = None;
         if let Some(mut stderr) = child.stderr.take() {
             let kept = kept.clone();
-            tokio::spawn(async move {
+            reader = Some(tokio::spawn(async move {
                 let mut chunk = [0u8; 512];
                 while let Ok(n) = stderr.read(&mut chunk).await {
                     if n == 0 {
@@ -160,9 +161,17 @@ impl Stderr {
                     let room = STDERR_KEPT.saturating_sub(kept.len());
                     kept.extend_from_slice(&chunk[..n.min(room)]);
                 }
-            });
+            }));
         }
-        Self(kept)
+        Self(kept, reader)
+    }
+
+    /// What was kept, once the process has closed its error output (a moment at most).
+    pub(crate) async fn finished(&mut self) -> Vec<u8> {
+        if let Some(reader) = self.1.take() {
+            let _ = timeout(Duration::from_secs(2), reader).await;
+        }
+        self.0.lock().expect("not poisoned").clone()
     }
 
     /// The text for a message, safe to show on a terminal.
@@ -317,6 +326,124 @@ async fn dial_tcp(
     }
 }
 
+/// Reads `stdout` until the sync header; returns the bytes after it. `seen` holds what was read
+/// already. An empty error means that the output ended.
+async fn read_until_sync(
+    stdout: &mut ChildStdout,
+    mut seen: Vec<u8>,
+    limit: Duration,
+) -> Result<Vec<u8>, String> {
+    timeout(limit, async {
+        let mut chunk = [0u8; 4096];
+        loop {
+            if let Some(end) = find_sync(&seen) {
+                return Ok(seen.split_off(end));
+            }
+            if seen.len() > MAX_OUTPUT {
+                return Err("the host sent no stream".to_owned());
+            }
+            match stdout.read(&mut chunk).await {
+                Ok(0) | Err(_) => return Err(String::new()),
+                Ok(n) => seen.extend_from_slice(&chunk[..n]),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| Err("no answer".to_owned()))
+}
+
+/// The `ssh` that started the server, kept open after it printed the connect line: the server
+/// process waits on it for [`ssj_proto::bootstrap::STREAM_LINE`] and then carries the session
+/// like `--stdio`, so that a transport other than QUIC does not need another login.
+pub struct Held {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+    /// What came after the connect line, if anything.
+    seen: Vec<u8>,
+    stderr: Stderr,
+}
+
+impl Held {
+    pub(crate) fn new(
+        child: Child,
+        stdin: ChildStdin,
+        stdout: ChildStdout,
+        seen: Vec<u8>,
+        stderr: Stderr,
+    ) -> Self {
+        Self {
+            child,
+            stdin,
+            stdout,
+            seen,
+            stderr,
+        }
+    }
+
+    /// Asks the server process for the stream, and returns it once the stream begins.
+    async fn open(self, limit: Duration) -> Result<Stream, String> {
+        let Self {
+            child,
+            mut stdin,
+            mut stdout,
+            seen,
+            stderr,
+        } = self;
+        if stdin
+            .write_all(ssj_proto::bootstrap::STREAM_LINE.as_bytes())
+            .await
+            .and(stdin.flush().await)
+            .is_err()
+        {
+            return Err("the first connection is closed".to_owned());
+        }
+        match read_until_sync(&mut stdout, seen, limit).await {
+            Ok(rest) => Ok(Stream {
+                reader: Box::new(std::io::Cursor::new(rest).chain(stdout)),
+                writer: Box::new(stdin),
+                guard: Some(Box::new(child)),
+            }),
+            Err(reason) if reason.is_empty() => {
+                Err(explain(&stderr, "the first connection is closed").await)
+            }
+            Err(reason) => Err(reason),
+        }
+    }
+}
+
+/// Lets the first stream of `tier` run over the kept `ssh` instead of a new login. The stream
+/// after it, and the stream when the kept `ssh` has ended (a server that does not hold it, or
+/// a wait that was too long), is made by the dial of the tier as before.
+pub fn with_held(tier: Tier, held: Held, limit: Duration) -> Tier {
+    let Tier::Stream { name, mut dial } = tier else {
+        return tier;
+    };
+    let mut held = Some(held);
+    let dial: Dial = Box::new(move || {
+        let fallback = dial();
+        match held.take() {
+            Some(held) => Box::pin(async move {
+                match held.open(limit).await {
+                    Ok(stream) => {
+                        crate::vlog!(1, "the stream runs over the first connection");
+                        Ok(stream)
+                    }
+                    Err(reason) => {
+                        crate::vlog!(
+                            1,
+                            "the first connection cannot carry it ({reason}): a new login"
+                        );
+                        fallback.await
+                    }
+                }
+            }),
+            None => fallback,
+        }
+    });
+    Tier::Stream { name, dial }
+}
+
 /// The stream of `ssj-server --stdio` on the `ssh` channel.
 pub fn stdio_tier(args: &Args, id: &SessionId, limit: Duration) -> Tier {
     let (args, id) = (args.clone(), id.clone());
@@ -345,34 +472,12 @@ async fn dial_stdio(args: &Args, id: &SessionId, limit: Duration) -> Result<Stre
     let stdin = child.stdin.take().expect("piped");
 
     // shell startup files may print text first, so the stream starts at the sync header.
-    let found = timeout(limit, async {
-        let mut seen = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            if let Some(end) = find_sync(&seen) {
-                return Ok(seen.split_off(end));
-            }
-            if seen.len() > MAX_OUTPUT {
-                return Err("the host sent no stream".to_owned());
-            }
-            match stdout.read(&mut chunk).await {
-                Ok(0) | Err(_) => return Err(String::new()),
-                Ok(n) => seen.extend_from_slice(&chunk[..n]),
-            }
+    let rest = match read_until_sync(&mut stdout, Vec::new(), limit).await {
+        Ok(rest) => rest,
+        Err(reason) if reason.is_empty() => {
+            return Err(explain(&stderr, "the connection ended").await);
         }
-    })
-    .await;
-    let rest = match found {
-        Ok(Ok(rest)) => rest,
-        Ok(Err(reason)) => {
-            let reason = if reason.is_empty() {
-                "the connection ended".to_owned()
-            } else {
-                reason
-            };
-            return Err(explain(&stderr, &reason).await);
-        }
-        Err(_) => return Err("no answer".to_owned()),
+        Err(reason) => return Err(reason),
     };
     let _ = SYNC_HEADER;
     let reader = std::io::Cursor::new(rest).chain(stdout);

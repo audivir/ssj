@@ -70,7 +70,14 @@ pub fn negotiate(hello: Hello, view: &ServerView<'_>) -> Result<(Welcome, Action
                 input_offset: view.input_received,
                 output_offset: character_boundary(view.output),
             };
-            Ok((welcome, Action::Redraw(size)))
+            // with every byte of the output still there, the replay draws the screen, and the
+            // pause of a redraw would only delay the client.
+            let action = if view.output.start() == 0 {
+                Action::Resize(size)
+            } else {
+                Action::Redraw(size)
+            };
+            Ok((welcome, action))
         }
     }
 }

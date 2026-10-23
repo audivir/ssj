@@ -232,6 +232,15 @@ this order of preference:
    No TLS runs inside, since `ssh` already authenticates and encrypts, and the socket allows only
    the same user.
 
+**The first `ssh` carries the first stream.** After the line `SSJ CONNECT` the server process stays
+on the `ssh` channel (at most 20 seconds) and reads from stdin. The input of the client has a
+second line always: `SSJ START …`, or `SSJ START -` when there is nothing to start, so that the
+server does not wait for one. If the client writes `SSJ STREAM`, the process becomes `--stdio`
+for the session (the sync header and the stream follow), and the first stream transport of the
+client uses this channel instead of a second login. If the client closes the channel, the process
+ends. A server that ends at once (`--no-hold`, or an older one) makes the client log in again, so
+the wire protocol is unchanged. Later streams, spares and mirrors open their own logins.
+
 The choice is `--transport auto|udp|socket|tcp|stdio` or `transport` in `client.toml`. `auto`
 races UDP against the first stream (the socket): QUIC starts first, the stream starts 300
 milliseconds later if QUIC has not opened, and the first connection that opens carries the

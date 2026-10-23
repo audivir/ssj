@@ -62,6 +62,9 @@ pub struct Args {
     /// Whether the UDP (QUIC) and the TCP transport are offered.
     pub udp: bool,
     pub tcp: bool,
+    /// Whether the process that `ssh` runs ends after the connect line, and not waits there for a
+    /// client that wants the stream over the same channel.
+    pub no_hold: bool,
     /// Set by the bootstrap process when it starts the real server.
     pub daemon_child: bool,
     /// The id of the session, chosen by the bootstrap process so that it shows in the arguments of
@@ -158,6 +161,9 @@ struct Options {
     /// Offer no TCP port
     #[arg(long)]
     no_tcp: bool,
+    /// End the process on the ssh channel after the connect line, so that no stream can use it
+    #[arg(long)]
+    no_hold: bool,
     /// Argument of the shell (repeatable)
     #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
     shell_arg: Vec<OsString>,
@@ -223,6 +229,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         shell_args: options.shell_arg,
         udp: !options.no_udp,
         tcp: !options.no_tcp,
+        no_hold: options.no_hold,
         daemon_child: options.daemon_child,
         session_id: options.session_id,
         settings: options.settings,

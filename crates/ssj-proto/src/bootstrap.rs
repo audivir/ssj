@@ -27,6 +27,18 @@ pub fn find_sync(bytes: &[u8]) -> Option<usize> {
         .map(|at| at + SYNC_HEADER.len())
 }
 
+/// The second line of the input of the server when the client has no `SSJ START` line to send. A
+/// server waits a moment for a second line, and a client that keeps the `ssh` channel open cannot
+/// end that wait by closing its input. Older servers take it for a broken start line and ignore it.
+pub const NO_START_LINE: &str = "SSJ START -\n";
+/// What the client writes to the server after the `SSJ CONNECT` line to carry the session over
+/// that same `ssh` channel: the stream of `--stdio` follows. Without it (the input ends, or
+/// nothing comes for [`HOLD_TIMEOUT`]) the server process ends.
+pub const STREAM_LINE: &str = "SSJ STREAM\n";
+/// How long the server process stays on the `ssh` channel after the connect line, waiting for
+/// [`STREAM_LINE`]. A client that gets QUIC to work closes the channel at once.
+pub const HOLD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Exit code of `ssj-server --reuse --choose` when several sessions have no client: it prints their
 /// `SSJ SESSION` lines instead of picking one or starting another, and the client asks the user.
 pub const CHOICE_EXIT_CODE: u8 = 67;

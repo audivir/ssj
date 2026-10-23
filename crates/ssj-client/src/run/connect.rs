@@ -16,13 +16,13 @@ use super::{
     ATTEMPT_TIMEOUT, Announce, FIRST_ATTEMPT_TIMEOUT, Finished, Io, Params, STREAM_DEAD_AFTER,
     Tier, hangup_signals, notice, say,
 };
-use crate::bootstrap::{Remote, StartError, run_remote, start_server};
+use crate::bootstrap::{Remote, Spawned, StartError, run_remote, spawn_server, start_server};
 use crate::cli::{Args, LocalEcho, Transport};
 use crate::config::Config;
 use crate::install::{Decision, confirm, decide, install, interactive};
 use crate::status::{LineStatus, Status, TitleStatus};
 use crate::terminal::{RawMode, window_size};
-use crate::tunnel::{Kind, SshConfig};
+use crate::tunnel::{Held, Kind, SshConfig, with_held};
 use crate::vlog;
 
 /// The agent socket to forward, if the user asked for it.
@@ -93,20 +93,8 @@ async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
         .ok_or_else(|| format!("{host} has no address"))
 }
 
-/// Starts the server. If it is missing, installs it when the policy and the user agree.
-async fn start_or_install(
-    args: &Args,
-    config: &Config,
-    fingerprint: &[u8; 32],
-    extra: &[String],
-    prestart: Option<&Prestart>,
-) -> Result<Connect, String> {
-    vlog!(
-        1,
-        "starting the server on {} through {}",
-        args.destination,
-        args.ssh_command[0]
-    );
+/// The arguments of the first start of the server, and whether `--reuse` is among them.
+fn first_arguments(args: &Args, extra: &[String]) -> (Vec<String>, bool) {
     // with several sessions to join and a person at the terminal, the server hands the choice back.
     let mut extra = extra.to_vec();
     // `--reuse` may start a session, and a bare `--attach` cannot name one.
@@ -115,8 +103,28 @@ async fn start_or_install(
     if choosing {
         extra.push("--choose".to_owned());
     }
+    (extra, reuse)
+}
+
+/// Starts the server. If it is missing, installs it when the policy and the user agree. `spawned`
+/// is the `ssh` of the first start, which was begun before its input was known.
+async fn start_or_install(
+    args: &Args,
+    config: &Config,
+    fingerprint: &[u8; 32],
+    extra: &[String],
+    prestart: Option<&Prestart>,
+    spawned: Option<Spawned>,
+) -> Result<(Connect, Option<Held>), String> {
+    vlog!(
+        1,
+        "starting the server on {} through {}",
+        args.destination,
+        args.ssh_command[0]
+    );
+    let (extra, reuse) = first_arguments(args, extra);
     let extra = &extra[..];
-    match start_server(args, fingerprint, extra, prestart).await {
+    match start_server(args, fingerprint, extra, prestart, spawned).await {
         Ok(connect) => Ok(connect),
         Err(StartError::Failed(message)) => Err(message),
         Err(StartError::Choose(sessions)) => {
@@ -138,7 +146,7 @@ async fn start_or_install(
                 Decision::Install => {
                     let path = install(args).await?;
                     eprintln!("ssj: installed {path}");
-                    match start_server(args, fingerprint, extra, prestart).await {
+                    match start_server(args, fingerprint, extra, prestart, None).await {
                         Ok(connect) => Ok(connect),
                         Err(StartError::Missing) => {
                             Err("the server is still missing after the installation".to_owned())
@@ -162,7 +170,7 @@ async fn choose_and_start(
     prestart: Option<&Prestart>,
     sessions: Vec<SessionInfo>,
     allow_new: bool,
-) -> Result<Connect, String> {
+) -> Result<(Connect, Option<Held>), String> {
     let title = format!(
         "ssj: {} sessions on {} {}. Which one?",
         sessions.len(),
@@ -184,7 +192,7 @@ async fn choose_and_start(
             Vec::new()
         }
     };
-    match start_server(args, fingerprint, &extra, prestart).await {
+    match start_server(args, fingerprint, &extra, prestart, None).await {
         Ok(connect) => Ok(connect),
         Err(StartError::Failed(message)) => Err(message),
         Err(StartError::Missing | StartError::Choose(_)) => {
@@ -330,6 +338,19 @@ async fn build_tiers(
     Ok(tiers)
 }
 
+/// Lets the first stream transport run over the `ssh` that started the server, if the server
+/// still holds it.
+fn with_first_stream_held(mut tiers: Vec<Tier>, held: Option<Held>) -> Vec<Tier> {
+    let Some(held) = held else {
+        return tiers;
+    };
+    if let Some(at) = tiers.iter().position(|t| matches!(t, Tier::Stream { .. })) {
+        let tier = tiers.remove(at);
+        tiers.insert(at, with_held(tier, held, ATTEMPT_TIMEOUT));
+    }
+    tiers
+}
+
 /// With `fresh` the server may start the shell of a new session at once (see `Prestart`).
 pub(super) async fn connect_session(
     args: Args,
@@ -341,6 +362,9 @@ pub(super) async fn connect_session(
     let identity = Identity::generate();
     let prepared = async {
         let fingerprint = identity.fingerprint();
+        // the login takes longer than `ssh -G`, and the server reads its input only after it, so
+        // the login starts first and the input follows.
+        let spawned = spawn_server(&args, &first_arguments(&args, extra).0).ok();
         let ssh = crate::tunnel::ssh_config(&args).await;
         vlog!(
             2,
@@ -356,10 +380,17 @@ pub(super) async fn connect_session(
             agent: agent.is_some(),
         });
         let (connect, address) = tokio::join!(
-            start_or_install(&args, config, &fingerprint, extra, prestart.as_ref()),
+            start_or_install(
+                &args,
+                config,
+                &fingerprint,
+                extra,
+                prestart.as_ref(),
+                spawned
+            ),
             udp_address(&args, ssh.as_ref())
         );
-        let connect = connect?;
+        let (connect, held) = connect?;
         let new = connect.new;
         vlog!(
             1,
@@ -369,6 +400,7 @@ pub(super) async fn connect_session(
             connect.tcp
         );
         let tiers = build_tiers(&args, &identity, &connect, ssh.as_ref(), address).await?;
+        let tiers = with_first_stream_held(tiers, held);
         vlog!(
             1,
             "transports in order: {}",

@@ -715,9 +715,15 @@ async fn the_detach_command_tells_the_client_to_leave_and_the_shell_keeps_runnin
 async fn an_attach_makes_the_program_redraw_by_changing_the_size_and_back() {
     // the shell reports the size at every SIGWINCH, and sees one within 10 ms: the server waits
     // 60 ms between the two sizes, and two signals that come before the shell looks are one.
-    let script = "trap 'echo size:$(stty size)' WINCH; echo ready; while true; do sleep 0.01; done";
+    // The output is longer than the replay buffer, so the replay cannot draw the screen.
+    let script = "trap 'echo size:$(stty size)' WINCH; head -c 20000 /dev/zero | tr '\\0' x; echo; \
+        echo ready; while true; do sleep 0.01; done";
+    let mut cfg = config(script);
+    cfg.replay_capacity = 8 * 1024;
+    // the test client does not acknowledge, so the job must not wait for it.
+    cfg.slow_client = ssj_server::session::SlowClient::Drop;
     let (conns, rx) = mpsc::channel(4);
-    let session = tokio::spawn(Session::new(Direct, config(script)).run(rx));
+    let session = tokio::spawn(Session::new(Direct, cfg).run(rx));
     let harness = Harness {
         conns,
         session: tokio::spawn(async { SessionEnd::Closed }),
@@ -741,6 +747,37 @@ async fn an_attach_makes_the_program_redraw_by_changing_the_size_and_back() {
     assert!(
         text.find("size:24 79") < text.find("size:24 80"),
         "{text:?}"
+    );
+    session.abort();
+}
+
+// the replay of all the output draws the screen, so an attach does not wait for a redraw.
+#[tokio::test]
+async fn an_attach_to_a_session_with_all_its_output_gets_the_welcome_at_once() {
+    let script = "echo ready; while true; do sleep 0.01; done";
+    let (conns, rx) = mpsc::channel(4);
+    let session = tokio::spawn(Session::new(Direct, config(script)).run(rx));
+    let harness = Harness {
+        conns,
+        session: tokio::spawn(async { SessionEnd::Closed }),
+    };
+    let mut first = harness.connect().await;
+    first.start().await;
+    first.read_until(|s| contains(&s.output, "ready")).await;
+    first.send(ClientFrame::Detach).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut second = harness.connect().await;
+    let asked = std::time::Instant::now();
+    second
+        .send(ClientFrame::Hello(Hello::Attach { size: size() }))
+        .await;
+    let seen = second.read_until(|s| s.welcome.is_some()).await;
+    assert!(seen.welcome.is_some());
+    assert!(
+        asked.elapsed() < Duration::from_millis(50),
+        "{:?}",
+        asked.elapsed()
     );
     session.abort();
 }

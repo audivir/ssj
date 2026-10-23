@@ -1542,6 +1542,8 @@ exec sh -c \"$*\"\n",
 }
 
 const NO_UDP: [&str; 2] = ["--server-arg", "--no-udp"];
+/// The server ends the first `ssh` after the connect line, so a stream needs its own login.
+const NO_HOLD: [&str; 2] = ["--server-arg", "--no-hold"];
 
 fn assert_session(output: &Output) {
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1649,7 +1651,12 @@ fn a_blocked_udp_port_falls_back_to_the_control_socket() {
     let ssh = transport_ssh("", &note_forwarding(&marker));
     // nothing answers on this address (reserved for documentation)
     let started = Instant::now();
-    let output = run_client_with(&ssh, &ASK, "xyz\n", &["--udp-host", "192.0.2.1"]);
+    let output = run_client_with(
+        &ssh,
+        &ASK,
+        "xyz\n",
+        &["--udp-host", "192.0.2.1", "--server-arg", "--no-hold"],
+    );
     assert_session(&output);
     let forwarded = std::fs::read_to_string(&marker).expect("ssh -W was not used");
     assert!(forwarded.starts_with('/'), "{forwarded}");
@@ -1671,7 +1678,12 @@ fn a_forbidden_socket_falls_back_to_tcp() {
             note_forwarding(&marker)
         ),
     );
-    let output = run_client_with(&ssh, &ASK, "xyz\n", &NO_UDP);
+    let output = run_client_with(
+        &ssh,
+        &ASK,
+        "xyz\n",
+        &["--server-arg", "--no-udp", "--server-arg", "--no-hold"],
+    );
     assert_session(&output);
     let forwarded = std::fs::read_to_string(&marker).expect("TCP was not used");
     assert!(forwarded.starts_with("127.0.0.1:"), "{forwarded}");
@@ -1701,10 +1713,32 @@ fn udp_is_used_when_it_works_and_a_jump_host_leaves_it_out() {
     for (config, forwarded) in [("", false), ("proxyjump bastion\n", true)] {
         let marker = fake_ssh("").with_file_name("forwarded");
         let ssh = transport_ssh(config, &note_forwarding(&marker));
-        let output = run_client(&ssh, &ASK, "xyz\n");
+        let output = run_client_with(&ssh, &ASK, "xyz\n", &NO_HOLD);
         assert_session(&output);
         assert_eq!(marker.exists(), forwarded, "config {config:?}");
     }
+}
+
+// with UDP blocked, the first `ssh` that started the server carries the session: no second login.
+#[test]
+fn the_first_ssh_carries_the_session_when_udp_is_blocked() {
+    let log = fake_ssh("").with_file_name("logins");
+    let ssh = transport_ssh("", &format!("echo \"$*\" >> {}", log.display()));
+    let output = run_client_with(&ssh, &ASK, "xyz\n", &NO_UDP);
+    assert_session(&output);
+    let logins = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(logins.lines().count(), 1, "{logins}");
+}
+
+// a server that does not keep the channel open is served by a second login, as before.
+#[test]
+fn a_server_that_ends_the_first_ssh_gets_a_second_login() {
+    let log = fake_ssh("").with_file_name("logins");
+    let ssh = transport_ssh("", &format!("echo \"$*\" >> {}", log.display()));
+    let output = run_client_with(&ssh, &ASK, "xyz\n", &[NO_UDP, NO_HOLD].concat());
+    assert_session(&output);
+    let logins = std::fs::read_to_string(&log).unwrap();
+    assert!(logins.lines().count() >= 2, "{logins}");
 }
 
 #[test]

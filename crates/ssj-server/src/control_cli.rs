@@ -72,7 +72,7 @@ pub fn choose(sessions: Vec<Found>, selector: Option<&str>) -> Result<Found, Str
 }
 
 /// Asks the session to accept the client with the pin, and prints the line to connect.
-pub fn attach_session(found: &Found, pin: [u8; 32]) -> ExitCode {
+pub fn attach_session(found: &Found, pin: [u8; 32], hold: bool) -> ExitCode {
     match ask(&found.path, &Request::Attach(pin)) {
         Ok(Reply::Connect(mut connect)) => {
             // the client joins by an id or a selector, and learns the name and the socket here.
@@ -81,12 +81,35 @@ pub fn attach_session(found: &Found, pin: [u8; 32]) -> ExitCode {
             let mut out = std::io::stdout();
             let _ = out.write_all(format_reply(&Reply::Connect(connect)).as_bytes());
             let _ = out.flush();
-            ExitCode::SUCCESS
+            if hold {
+                hold_for_stream(&found.path)
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Ok(Reply::Error(text)) => fail(&text),
         Ok(_) => fail("unexpected reply"),
         Err(err) => fail(&err.to_string()),
     }
+}
+
+/// Stays on the `ssh` channel after the connect line. A client whose QUIC does not open writes
+/// [`STREAM_LINE`], and the channel then carries the session, as `--stdio` does, without a second
+/// login. A client that is done with the channel closes it, or says nothing for [`HOLD_TIMEOUT`].
+pub fn hold_for_stream(path: &std::path::Path) -> ExitCode {
+    let deadline = std::time::Instant::now() + ssj_proto::bootstrap::HOLD_TIMEOUT;
+    // a line before it, such as the start line that `--attach` does not read, is skipped.
+    for _ in 0..3 {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match read_line_with_timeout(std::io::stdin(), left) {
+            Some(line) if line == ssj_proto::bootstrap::STREAM_LINE.as_bytes() => {
+                return stdio(path);
+            }
+            Some(line) if !line.is_empty() => {}
+            _ => break,
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// Reads the pin line of the client from stdin.
@@ -194,7 +217,7 @@ pub fn run(args: &Args) -> ExitCode {
             };
             match choose(sessions, selector.as_deref()) {
                 Err(message) => fail(&message),
-                Ok(found) => attach_session(&found, pin),
+                Ok(found) => attach_session(&found, pin, !args.no_hold),
             }
         }
         Mode::Stdio(id) => match choose(sessions, id.as_deref()) {
@@ -211,7 +234,7 @@ pub fn run(args: &Args) -> ExitCode {
 const STDIO_DRAIN: Duration = Duration::from_secs(2);
 
 /// Joins stdin and stdout to the session: the control socket turns into the byte stream.
-fn stdio(path: &std::path::Path) -> ExitCode {
+pub(crate) fn stdio(path: &std::path::Path) -> ExitCode {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
