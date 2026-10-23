@@ -286,8 +286,9 @@ fn a_command_after_the_destination_runs_in_the_session_and_its_exit_code_is_retu
         (vec!["--", "echo one-two | tr o 0; exit 3"], 3, "0ne-tw0"),
         (vec!["--", "printf", "'%s-%s'", "a", "b"], 0, "a-b"),
         (vec!["--", "exit", "7"], 7, ""),
-        // without the dashes, when the command has no options of its own.
+        // without the dashes, the options after the host belong to the command.
         (vec!["echo", "plain"], 0, "plain"),
+        (vec!["echo", "-n", "dashless"], 0, "dashless"),
     ] {
         let output = run_with_command(&ssh, &words);
         let stdout = String::from_utf8_lossy(&output.stdout);

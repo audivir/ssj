@@ -127,8 +127,7 @@ When the server is missing, `ssj connect user@host` offers to install it, as set
 | `ssj list user@host` | Lists sessions with state, age, and name, under a header on a terminal. `--json` prints JSON. |
 | `ssj kill [-f] user@host [ID...]` | Ends one or more sessions. `ID` is an id or a name. Without an `ID` the only session is ended after a question (`-f` skips it), and several sessions get a menu. |
 | `ssj detach user@host [ID...]` | Makes the clients leave; the sessions keep running. |
-| `ssj connect user@host -- make -j8` | Runs a command in a session that survives jumps (see below). |
-| `ssj connect user@host uptime` | The same, when the command has no options of its own. |
+| `ssj connect user@host make -j8` | Runs a command in a session that survives jumps (see below). Every word after the host belongs to the command, options included, as with `ssh`; `--` before the command is accepted but not needed. |
 | `ssj install user@host` | Puts the server file on the host (downloads it, or uploads `--server-binary`). |
 | `ssj edit` | Edits `client.toml` in `$EDITOR`. |
 | `ssj edit user@host` | Edits `server.toml` on the host in `$EDITOR`. |
@@ -479,7 +478,7 @@ A client and a server talk only if they speak the same protocol version.
 | Protocol | First release | Change |
 | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | 1 | 0.1.0 | First published format. It includes the `Gap`, `Compressed`, and `Detached` frames and the frames of agent forwarding. |
-| 2 | next | The frames are encoded with `postcard`. |
+| 2 | 0.2.0 | The frames are encoded with `postcard`. |
 
 ## Development
 

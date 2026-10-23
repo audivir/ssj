@@ -213,7 +213,7 @@ pub struct Server {
 /// Container for where the server file comes from when it is installed.
 #[derive(Args, Debug)]
 pub struct Upload {
-    /// Where the release files are, such as https://host/owner/ssj/releases/download/v0.1.0
+    /// Where the release files are, such as https://host/owner/ssj/releases/download/v0.2.0
     #[arg(long, value_name = "URL")]
     pub download_url: Option<String>,
 
