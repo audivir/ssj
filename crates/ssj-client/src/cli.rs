@@ -22,13 +22,10 @@ pub enum ServerPath {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
-    /// UDP first, then the socket and TCP through `ssh -W`, then the `ssh` channel itself.
+    /// UDP first, then the `ssh` channel itself.
     #[default]
     Auto,
     Udp,
-    /// The control socket of the session through `ssh -W`, without TLS.
-    Socket,
-    Tcp,
     Stdio,
 }
 

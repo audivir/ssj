@@ -39,8 +39,8 @@ the workspace root):
    handles authentication, host keys, and jump hosts) and sends the fingerprint of its certificate on stdin. Stdin is used because argv
    is visible to other users in `ps`.
 1. Server generates its own ephemeral keypair and certificate, binds a UDP port from a high
-   range and a TCP port on the loopback address, prints the session id, both ports, and the server
-   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME] [socket=PATH]`), and detaches from the `ssh`
+   range, prints the session id, the port, and the server
+   certificate fingerprint on stdout (`SSJ CONNECT <id> <udp:PORT|none> none <fingerprint> [new] [name=NAME] [socket=PATH]`; the third field was the TCP port of earlier servers, and the client reads and ignores it), and detaches from the `ssh`
    channel. The optional field `new` says that this server has just made the session; a session
    that ran leaves it out, and the client then reads the first line as `attached to session`. The
    optional field `name=NAME` gives the name of the session, so that `ssj attach HOST` and a join
@@ -207,24 +207,11 @@ stderr as lines.
 ### Transports
 
 UDP can be blocked, and a host behind a jump host cannot be reached by datagrams at all. The
-session core works on any pair of byte streams, so four transports carry the same frames, in
+session core works on any pair of byte streams, so two transports carry the same frames, in
 this order of preference:
 
 1. **UDP**: QUIC, as described above. Fastest, and the only one that survives a changing path
    without a new connection.
-1. **The socket through `ssh -W`**: the line `SSJ CONNECT` names the control socket of the
-   session (`socket=PATH`), and the client runs `ssh -W <path> user@host`, which `sshd` connects to
-   the socket (`AllowStreamLocalForwarding`, on by default). The client sends `STREAM`, and after
-   the answer `OK` the socket is its byte stream, as for `--stdio`. No TLS runs inside: `ssh`
-   encrypts, and only the user can open the socket. It has neither the second encryption of TCP
-   nor the extra process of the `ssh` channel. A path that `ssh -W` would read otherwise (with
-   whitespace or a colon) is left off the line, and the transport with it.
-1. **TCP through `ssh -W`**: the server also listens on `127.0.0.1` (kernel assigned port, only
-   reachable from the host itself). The client runs `ssh -W 127.0.0.1:<port> user@host` and speaks
-   TLS 1.3 through it, with the same pinned mutual authentication, no resumption, and no 0-RTT.
-   `TCP_NODELAY` is set on the server side. The jump host chain of the `ssh` configuration works.
-   The TLS is what keeps other users of the host out of the port, and it encrypts a second time
-   inside `ssh`. It remains for hosts that forward TCP but not sockets.
 1. **The `ssh` channel**: `ssj-server --stdio <id>` connects to the control socket, sends
    `STREAM`, and after the answer `OK` the socket is the byte stream of a client. The process
    copies it to stdout and from stdin. Shell startup files may print text first, so the stream
@@ -241,12 +228,11 @@ client uses this channel instead of a second login. If the client closes the cha
 ends. A server that ends at once (`--no-hold`, or an older one) makes the client log in again, so
 the wire protocol is unchanged. Later streams, spares and mirrors open their own logins.
 
-The choice is `--transport auto|udp|socket|tcp|stdio` or `transport` in `client.toml`. `auto`
-races UDP against the first stream (the socket): QUIC starts first, the stream starts 300
+The choice is `--transport auto|udp|stdio` or `transport` in `client.toml`. `auto`
+races UDP against the first stream (the `ssh` channel): QUIC starts first, the stream starts 300
 milliseconds later if QUIC has not opened, and the first connection that opens carries the
 session. Before the first connection QUIC is given 1.5 seconds and the stream, which needs a whole
-`ssh` handshake that takes seconds on a distant host, gets 8 seconds. If both fail, TCP and then
-the `ssh` channel are the next partners of QUIC, and each failure moves on at once. A reconnect
+`ssh` handshake that takes seconds on a distant host, gets 8 seconds. A reconnect
 races the same way: when the session runs on a stream, the stream starts at once and
 QUIC beside it, so a network where UDP works again is found without a delay and a network where it
 does not costs nothing. A change of the network while the session is on a stream also tries QUIC
@@ -255,7 +241,7 @@ resumes over it and drops the stream (`Pumped::Switch`). Auto leaves out UDP whe
 `proxyjump` or `proxycommand` for the host. After a connection was made, its transport is kept
 for three failed attempts before the next partner is tried, since the network is the likelier
 culprit. The server offers what it is told to
-(`--no-udp`, `--no-tcp`); the `ssh` channel is always there.
+(`--no-udp`); the `ssh` channel is always there.
 
 A stream has no keepalive of QUIC: if the path dies without a sign (a firewall, a hung `ssh`),
 the connection stays open. The client pings every second, shows "no response" after 2 seconds,
@@ -1356,7 +1342,7 @@ Bootstrap (client):
 - The client starts `ssh` with an argument vector and never through a shell. A host argument that
   starts with `-` is rejected, to prevent option injection such as `-oProxyCommand`.
 - `ssh` runs without a terminal, so output is not altered and stdin is not echoed.
-- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME] [socket=PATH]`, of
+- The client accepts exactly one line with a fixed prefix, `SSJ CONNECT <id> <udp:PORT|none> none <fingerprint> [new] [name=NAME] [socket=PATH]`, of
   bounded length, and ignores other output such as banners and `.bashrc` noise. Remote text is
   never printed to the terminal unfiltered, because it could contain escape sequences.
 - The server reads the client fingerprint from stdin with a length limit and a timeout.

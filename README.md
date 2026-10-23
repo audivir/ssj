@@ -5,8 +5,7 @@ Session survives jumps: a remote shell for flaky networks.
 - The session survives roaming, IP changes, sleep, and packet loss.
 - The native scrollback of the local terminal keeps working.
 - The server runs without root and without a daemon.
-- Transport: QUIC over UDP, with fallbacks to TLS over TCP (through `ssh -W`) and to the `ssh`
-  channel itself.
+- Transport: QUIC over UDP, with a fallback to the `ssh` channel itself.
 
 See `SPEC.md` for the design and the threat model.
 
@@ -141,7 +140,7 @@ The options of a command follow its word: `ssj connect -A user@host`, `ssj list 
 | Option | What it does |
 | ---------------------------------------- | ---------------------------------------------------------------- |
 | `user@host:2222`, `ssh://user@host:2222` | Port of the ssh server. |
-| `--transport auto\|udp\|socket\|tcp\|stdio` | `auto` is the default; `socket` and `tcp` go through `ssh -W`; `stdio` is the `ssh` channel. |
+| `--transport auto\|udp\|stdio` | `auto` is the default; `stdio` is the `ssh` channel. |
 | `--ssh-command 'ssh -J jump'` | Replaces `ssh`. |
 | `--server-path ~/bin/ssj-server` | Server file on the host, when it is not in the default place. |
 | `--udp-host 203.0.113.7` | UDP address, when it differs from the host name. |
@@ -258,7 +257,7 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 | The server stops answering | The window title shows `no response from the server` after a short time that depends on the speed of the link. |
 | The connection is lost | The title shows `connection lost, reconnecting`. The session keeps running, and what you type meanwhile is sent when the connection is back. The detach key works even without a connection. |
 
-- On the TCP and `ssh` channel transports, a connection that is slow to answer (3 seconds without an
+- On the `ssh` channel transport, a connection that is slow to answer (3 seconds without an
   answer to a ping or to what you typed) gets spares: `ssj` opens new connections beside it, up to
   six at once, and moves to the first that works. On a train this brings the session back in a
   few seconds, where `ssh` can need half a minute. The server must be installed from the same
@@ -278,13 +277,13 @@ has no history: the shell shows its prompt again, and a full-screen program draw
 | Order | Transport | How |
 | ----- | --------- | ---------------------------- |
 | 1 | `udp` | QUIC over UDP. |
-| 2 | `socket` | The socket of the session through `ssh -W`, encrypted by `ssh` alone. |
-| 3 | `tcp` | TLS over TCP through `ssh -W`, for hosts that forward TCP but not sockets. |
-| 4 | `stdio` | The `ssh` channel itself, for hosts that forward nothing. |
+| 2 | `stdio` | The `ssh` channel itself, for hosts that forward nothing. |
 
-- `socket`, `tcp`, and `stdio` start a new `ssh` for every connection and cannot ask for a passphrase, so
-  use an agent or a shared connection (`ControlMaster auto`, `ControlPersist 10m` in your `ssh`
-  configuration).
+- The first `stdio` connection reuses the `ssh` that started the server. The ones after it start
+  a new `ssh` and cannot ask for a passphrase, so use an agent or a shared connection
+  (`ControlMaster auto`, `ControlPersist 10m` in your `ssh` configuration).
+- `socket` and `tcp` of earlier versions are gone: `stdio` was as fast on a test host, and
+  `transport = "socket"` or `"tcp"` in `client.toml` is now an error. Use `"stdio"` or `"auto"`.
 - Choose a transport with `--transport` or `transport` in `client.toml`. See the specification
   for the details.
 
@@ -397,7 +396,7 @@ auto_install = "ask"                  # "ask", "always", or "never"
 detach_key = "ctrl-\\"                # a key such as "ctrl-]" that detaches anywhere, or "none"
 ssh_command = "ssh -J jump"           # replaces ssh
 send_env = []                         # more variables to send, besides TERM and the SendEnv of ssh
-transport = "auto"                    # "auto", "udp", "socket", "tcp", or "stdio"
+transport = "auto"                    # "auto", "udp", or "stdio"
 auto_attach = false                   # `ssj connect host` joins the only session without a client
 local_echo = "off"                    # "off" or "auto": show typed characters at once
 compress = "off"                      # "off" or "auto": compress while the link is the limit
@@ -461,8 +460,7 @@ $XDG_RUNTIME_DIR/ssj/          # control sockets; without it $XDG_STATE_HOME/ssj
   certificates on both sides, which are pinned through the `ssh` bootstrap, and nothing is
   written to disk.
 - Only the holder of the pinned client key can open a session. An open UDP port allows handshake
-  attempts only, and these are limited by address validation and strict resource limits. The TCP
-  port listens on the loopback address only and needs the same certificate.
+  attempts only, and these are limited by address validation and strict resource limits.
 - A session without timeout is a running shell in the background. Use `ssj list` to find
   forgotten sessions.
 - Terminal escape sequences in the output of the remote host (such as clipboard writes) reach
@@ -495,7 +493,7 @@ A client and a server talk only if they speak the same protocol version.
   test that hangs. The settings are in `.config/nextest.toml`; CI uses the `ci` profile, which
   retries a failed test once and lists it as flaky. `cargo test` works too, but it does not stop
   a hanging test.
-- `bench/bench.py` compares `ssh` with `ssj` over UDP, TCP, and the `ssh` channel: bulk output,
+- `bench/bench.py` compares `ssh` with `ssj` over UDP and the `ssh` channel: bulk output,
   keystroke latency, and an 8 MiB paste. It needs Python 3 and the release builds in
   `target/release`.
 - `bench/docker-bench.sh` runs it between two Docker containers with a simulated link

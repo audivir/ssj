@@ -262,7 +262,6 @@ fn udp_host(args: &Args, config: Option<&SshConfig>) -> String {
 
 async fn build_tiers(
     args: &Args,
-    identity: &Identity,
     connect: &Connect,
     config: Option<&SshConfig>,
     address: Option<IpAddr>,
@@ -272,12 +271,7 @@ async fn build_tiers(
     let udp_possible = matches!(choice, Transport::Auto | Transport::Udp) && connect.udp.is_some();
     let config = config.filter(|_| udp_possible);
     let jump = choice == Transport::Auto && config.is_some_and(|c| c.jump);
-    let offered = [
-        connect.udp.is_some(),
-        connect.socket.is_some(),
-        connect.tcp.is_some(),
-    ];
-    let order = crate::tunnel::tier_order(choice, jump, offered);
+    let order = crate::tunnel::tier_order(choice, jump, connect.udp.is_some());
     let mut tiers = Vec::new();
     let mut notes = Vec::new();
     for kind in order {
@@ -302,17 +296,6 @@ async fn build_tiers(
                     Err(message) => notes.push(message),
                 }
             }
-            Kind::Socket => tiers.push(crate::tunnel::socket_tier(
-                args,
-                connect.socket.as_deref().expect("offered"),
-                ATTEMPT_TIMEOUT,
-            )),
-            Kind::Tcp => tiers.push(crate::tunnel::tcp_tier(
-                args,
-                ssj_net::tls_connector(identity, connect.fingerprint),
-                connect.tcp.expect("offered"),
-                ATTEMPT_TIMEOUT,
-            )),
             Kind::Stdio => tiers.push(crate::tunnel::stdio_tier(
                 args,
                 &connect.id,
@@ -324,12 +307,6 @@ async fn build_tiers(
         match choice {
             Transport::Udp if connect.udp.is_none() => {
                 notes.push("the server offers no UDP port".to_owned())
-            }
-            Transport::Socket if connect.socket.is_none() => {
-                notes.push("the server offers no socket".to_owned())
-            }
-            Transport::Tcp if connect.tcp.is_none() => {
-                notes.push("the server offers no TCP port".to_owned())
             }
             _ => {}
         }
@@ -394,12 +371,11 @@ pub(super) async fn connect_session(
         let new = connect.new;
         vlog!(
             1,
-            "the server runs: session {}, udp {:?}, tcp {:?}",
+            "the server runs: session {}, udp {:?}",
             connect.id.as_str(),
-            connect.udp,
-            connect.tcp
+            connect.udp
         );
-        let tiers = build_tiers(&args, &identity, &connect, ssh.as_ref(), address).await?;
+        let tiers = build_tiers(&args, &connect, ssh.as_ref(), address).await?;
         let tiers = with_first_stream_held(tiers, held);
         vlog!(
             1,

@@ -18,7 +18,6 @@ use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 use sha2::{Digest, Sha256};
 
-pub use tokio_rustls::client::TlsStream as ClientStream;
 pub use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// SHA-256 digest of a certificate.
@@ -228,16 +227,6 @@ pub fn client_tls_with(
     config.enable_early_data = false;
     config.resumption = Resumption::disabled();
     config
-}
-
-/// Acceptor for TLS over TCP with the same pinned mutual authentication as the QUIC server.
-pub fn tls_acceptor(identity: &Identity, client_pin: Fingerprint) -> TlsAcceptor {
-    TlsAcceptor::from(Arc::new(server_tls(identity, client_pin)))
-}
-
-/// Connector for TLS over any byte stream with the same pinning as the QUIC client.
-pub fn tls_connector(identity: &Identity, server_pin: Fingerprint) -> TlsConnector {
-    TlsConnector::from(Arc::new(client_tls(identity, server_pin)))
 }
 
 /// How a sender decides how fast to go.

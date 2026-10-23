@@ -11,7 +11,6 @@ fn connect() -> Connect {
     Connect {
         id: SessionId::parse("abcdef012345").unwrap(),
         udp: Some(60123),
-        tcp: Some(40123),
         fingerprint,
         new: false,
         name: None,
@@ -27,7 +26,7 @@ const HEX: &str = "030b131b232b333b434b535b636b737b838b939ba3abb3bbc3cbd3dbe3ebf
 fn line_has_a_fixed_shape() {
     assert_eq!(
         format_connect(&connect()),
-        format!("SSJ CONNECT abcdef012345 udp:60123 tcp:40123 {HEX}\n")
+        format!("SSJ CONNECT abcdef012345 udp:60123 none {HEX}\n")
     );
 }
 
@@ -181,19 +180,25 @@ fn pin_line_round_trips_and_rejects_everything_else() {
 }
 
 #[test]
-fn each_transport_may_be_off() {
-    for (udp, tcp, text) in [
-        (Some(1), None, "udp:1 none"),
-        (None, Some(2), "none tcp:2"),
-        (None, None, "none none"),
-        (Some(65535), Some(65535), "udp:65535 tcp:65535"),
+fn udp_may_be_off() {
+    for (udp, text) in [
+        (Some(1), "udp:1"),
+        (None, "none"),
+        (Some(65535), "udp:65535"),
     ] {
         let mut connect = connect();
-        (connect.udp, connect.tcp) = (udp, tcp);
-        let line = format!("SSJ CONNECT abcdef012345 {text} {HEX}\n");
+        connect.udp = udp;
+        let line = format!("SSJ CONNECT abcdef012345 {text} none {HEX}\n");
         assert_eq!(format_connect(&connect), line);
         assert_eq!(parse_connect(line.as_bytes()), Ok(Some(connect)));
     }
+}
+
+// earlier servers put the port of TCP in the third field, and it is read and left alone.
+#[test]
+fn the_tcp_field_of_earlier_servers_is_accepted() {
+    let line = format!("SSJ CONNECT abcdef012345 udp:60123 tcp:40123 {HEX}\n");
+    assert_eq!(parse_connect(line.as_bytes()), Ok(Some(connect())));
 }
 
 #[test]

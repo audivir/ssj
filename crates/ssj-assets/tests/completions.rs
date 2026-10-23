@@ -143,14 +143,11 @@ fn bash_offers_the_sessions_of_the_host_after_attach_and_kill() {
     // `connect`: the hosts, the options of the connection before the host, and files for the
     // command on the host after it.
     assert_eq!(hosts("ssj connect ''", 2), "boxa boxb");
-    assert_eq!(hosts("ssj connect --transport tcp ''", 4), "boxa boxb");
+    assert_eq!(hosts("ssj connect --transport udp ''", 4), "boxa boxb");
     assert!(hosts("ssj connect --tr", 2).contains("--transport"));
     assert_eq!(hosts("ssj connect me@box ''", 3), "");
     // the values of options: the fixed ones, files, and the hosts of the ssh config
-    assert_eq!(
-        hosts("ssj connect --transport ''", 3),
-        "auto udp socket tcp stdio"
-    );
+    assert_eq!(hosts("ssj connect --transport ''", 3), "auto udp stdio");
     assert_eq!(hosts("ssj attach me@box --compress ''", 4), "off auto");
     assert_eq!(hosts("ssj connect --udp-host ''", 3), "boxa boxb");
     assert_eq!(hosts("ssj attach me@box --udp-host ''", 4), "boxa boxb");
@@ -329,7 +326,7 @@ fn fish_offers_the_commands_and_the_hosts() {
     assert!(!options("ssj list me@box --ser"));
     // `connect`: the hosts, the options before the host, and the command for the host after it
     assert_eq!(case("ssj connect "), "boxa boxb");
-    assert_eq!(case("ssj connect --transport tcp "), "boxa boxb");
+    assert_eq!(case("ssj connect --transport udp "), "boxa boxb");
     assert!(options("ssj connect --ser"));
     // the values of options
     assert_eq!(case("ssj connect --udp-host "), "boxa boxb");
@@ -346,7 +343,7 @@ const FIXED: [(&str, &str); 4] = [
     ("--local-echo", "auto off"),
     ("--compress", "auto off"),
     ("--congestion", "auto bbr cubic"),
-    ("--transport", "auto socket stdio tcp udp"),
+    ("--transport", "auto stdio udp"),
 ];
 
 #[test]
@@ -553,10 +550,7 @@ fn positions() -> Vec<Position> {
     add("ssj connect ", hosts());
     add("ssj connect -", dashed(CONNECT));
     add("ssj connect --name ", words("work build other"));
-    add(
-        "ssj connect --transport ",
-        words("auto udp socket tcp stdio"),
-    );
+    add("ssj connect --transport ", words("auto udp stdio"));
     add("ssj connect --local-echo ", words("off auto"));
     add("ssj connect --congestion ", words("auto bbr cubic"));
     add("ssj connect --compress ", words("off auto"));
@@ -564,7 +558,7 @@ fn positions() -> Vec<Position> {
     add("ssj connect --log-file ", files());
     add("ssj connect --server-path ", files());
     add("ssj connect --server-binary ", files());
-    add("ssj connect --transport tcp ", hosts());
+    add("ssj connect --transport udp ", hosts());
     add("ssj connect me@box ", files());
     add("ssj connect me@box ls ", files());
     add("ssj connect me@box -", none());
@@ -574,7 +568,7 @@ fn positions() -> Vec<Position> {
         add(&format!("ssj {command} "), hosts());
         add(&format!("ssj {command} me@box -"), dashed(reads));
         for (name, values) in [
-            ("transport", "auto udp socket tcp stdio"),
+            ("transport", "auto udp stdio"),
             ("compress", "off auto"),
             ("udp-host", "boxa boxb box-c"),
             ("log-file", "FILES"),

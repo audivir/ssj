@@ -1602,34 +1602,13 @@ fn verbose_output_goes_to_the_log_file_and_names_the_steps() {
 }
 
 #[test]
-fn the_control_socket_through_ssh_w_carries_a_session() {
-    let ssh = transport_ssh("", "");
-    let output = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "socket"]);
-    assert_session(&output);
-}
-
-#[test]
-fn tcp_through_ssh_w_carries_a_session() {
-    let ssh = transport_ssh("", "");
-    let output = run_client_with(&ssh, &ASK, "xyz\n", &["--transport", "tcp"]);
-    assert_session(&output);
-}
-
-#[test]
 fn the_ssh_channel_alone_carries_a_session() {
     let ssh = transport_ssh("", "");
     let output = run_client_with(
         &ssh,
         &ASK,
         "xyz\n",
-        &[
-            "--transport",
-            "stdio",
-            "--server-arg",
-            "--no-udp",
-            "--server-arg",
-            "--no-tcp",
-        ],
+        &["--transport", "stdio", "--server-arg", "--no-udp"],
     );
     assert_session(&output);
 }
@@ -1646,58 +1625,17 @@ fn text_printed_before_the_stream_is_skipped() {
 }
 
 #[test]
-fn a_blocked_udp_port_falls_back_to_the_control_socket() {
-    let marker = fake_ssh("").with_file_name("forwarded");
-    let ssh = transport_ssh("", &note_forwarding(&marker));
+fn a_blocked_udp_port_falls_back_to_the_ssh_channel() {
     // nothing answers on this address (reserved for documentation)
+    let ssh = transport_ssh("", "");
     let started = Instant::now();
-    let output = run_client_with(
-        &ssh,
-        &ASK,
-        "xyz\n",
-        &["--udp-host", "192.0.2.1", "--server-arg", "--no-hold"],
-    );
+    let output = run_client_with(&ssh, &ASK, "xyz\n", &["--udp-host", "192.0.2.1"]);
     assert_session(&output);
-    let forwarded = std::fs::read_to_string(&marker).expect("ssh -W was not used");
-    assert!(forwarded.starts_with('/'), "{forwarded}");
     assert!(
         started.elapsed() < Duration::from_secs(20),
         "{:?}",
         started.elapsed()
     );
-}
-
-#[test]
-fn a_forbidden_socket_falls_back_to_tcp() {
-    let marker = fake_ssh("").with_file_name("forwarded");
-    // the host allows no forwarding of unix sockets, as `AllowStreamLocalForwarding no` does.
-    let ssh = transport_ssh(
-        "",
-        &format!(
-            "case \"$forward\" in /*) echo 'channel 0: open failed: administratively prohibited' >&2; exit 255;; esac; {}",
-            note_forwarding(&marker)
-        ),
-    );
-    let output = run_client_with(
-        &ssh,
-        &ASK,
-        "xyz\n",
-        &["--server-arg", "--no-udp", "--server-arg", "--no-hold"],
-    );
-    assert_session(&output);
-    let forwarded = std::fs::read_to_string(&marker).expect("TCP was not used");
-    assert!(forwarded.starts_with("127.0.0.1:"), "{forwarded}");
-}
-
-#[test]
-fn forbidden_forwarding_falls_back_to_the_ssh_channel() {
-    // the host allows no forwarding, as `AllowTcpForwarding no` does.
-    let ssh = transport_ssh(
-        "",
-        "if [ -n \"$forward\" ]; then echo 'channel 0: open failed: administratively prohibited' >&2; exit 255; fi",
-    );
-    let output = run_client_with(&ssh, &ASK, "xyz\n", &NO_UDP);
-    assert_session(&output);
 }
 
 /// An `extra` for [`transport_ssh`] that notes the target of every use of `-W` in a file.
@@ -1710,12 +1648,15 @@ fn note_forwarding(marker: &Path) -> String {
 
 #[test]
 fn udp_is_used_when_it_works_and_a_jump_host_leaves_it_out() {
-    for (config, forwarded) in [("", false), ("proxyjump bastion\n", true)] {
-        let marker = fake_ssh("").with_file_name("forwarded");
-        let ssh = transport_ssh(config, &note_forwarding(&marker));
-        let output = run_client_with(&ssh, &ASK, "xyz\n", &NO_HOLD);
+    for (config, order) in [("", "udp, stdio"), ("proxyjump bastion\n", "stdio")] {
+        let ssh = transport_ssh(config, "");
+        let output = run_client_with(&ssh, &ASK, "xyz\n", &["-v"]);
         assert_session(&output);
-        assert_eq!(marker.exists(), forwarded, "config {config:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("transports in order: {order}\n")),
+            "config {config:?}: {stderr}"
+        );
     }
 }
 
@@ -1748,11 +1689,11 @@ fn a_chosen_transport_that_the_server_does_not_offer_is_an_error() {
         &ssh,
         &ASK,
         "",
-        &["--transport", "tcp", "--server-arg", "--no-tcp"],
+        &["--transport", "udp", "--server-arg", "--no-udp"],
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{stderr:?}");
-    assert!(stderr.contains("no TCP port"), "{stderr:?}");
+    assert!(stderr.contains("no UDP port"), "{stderr:?}");
 }
 
 #[test]

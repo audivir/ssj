@@ -46,22 +46,21 @@ pub const CHOICE_EXIT_CODE: u8 = 67;
 /// The client stops reading the output of `ssh` after this many bytes.
 pub const MAX_OUTPUT: usize = 64 * 1024;
 
-/// How to reach a running server: its session, the ports of its two network transports (either may
-/// be off), and the fingerprint of its certificate. A server with neither port is reached only
-/// through the `ssh` channel (`ssj-server --stdio`).
+/// How to reach a running server: its session, the UDP port (it may be off), and the fingerprint
+/// of its certificate. A server without a port is reached only through the `ssh` channel
+/// (`ssj-server --stdio`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Connect {
     pub id: SessionId,
     pub udp: Option<u16>,
-    pub tcp: Option<u16>,
     pub fingerprint: [u8; 32],
     /// The server made the session for this client, which a fifth field `new` on the line says.
     /// `false` for a session that ran, and for a server that does not say.
     pub new: bool,
     /// The name of the session, when it has one (`name=NAME` on the line).
     pub name: Option<SessionName>,
-    /// The control socket of the session on the host (`socket=PATH` on the line), which the
-    /// client reaches through `ssh -W` and which carries the session without TLS.
+    /// The control socket of the session on the host (`socket=PATH` on the line). The server
+    /// bridges it to the `ssh` channel itself; older clients reached it through `ssh -W`.
     pub socket: Option<String>,
 }
 
@@ -84,19 +83,14 @@ pub enum BootstrapError {
 }
 
 /// Formats the line, including the final newline:
-/// `SSJ CONNECT <id> <udp:PORT|none> <tcp:PORT|none> <fingerprint> [new] [name=NAME]
-/// [socket=PATH]`.
+/// `SSJ CONNECT <id> <udp:PORT|none> none <fingerprint> [new] [name=NAME] [socket=PATH]`. The third
+/// field was the TCP port of earlier servers, and is `none` for compatibility.
 pub fn format_connect(connect: &Connect) -> String {
-    let port = |kind: &str, port: Option<u16>| match port {
-        Some(port) => format!("{kind}:{port}"),
+    let udp = match connect.udp {
+        Some(port) => format!("udp:{port}"),
         None => "none".to_owned(),
     };
-    let mut line = format!(
-        "{PREFIX}{} {} {} ",
-        connect.id.as_str(),
-        port("udp", connect.udp),
-        port("tcp", connect.tcp)
-    );
+    let mut line = format!("{PREFIX}{} {udp} none ", connect.id.as_str());
     line.push_str(&hex::encode(connect.fingerprint));
     if connect.new {
         line.push_str(" new");
@@ -172,10 +166,11 @@ fn parse_fields(fields: &[u8]) -> Result<Connect, BootstrapError> {
         .ok()
         .and_then(SessionId::parse)
         .ok_or(BootstrapError::Malformed)?;
+    // the port of TCP from earlier servers is read for its form and then left alone.
+    parse_transport(tcp, b"tcp:")?;
     Ok(Connect {
         id,
         udp: parse_transport(udp, b"udp:")?,
-        tcp: parse_transport(tcp, b"tcp:")?,
         fingerprint: parse_fingerprint(fingerprint)?,
         new,
         name,

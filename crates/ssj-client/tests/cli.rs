@@ -270,15 +270,14 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
     for (word, transport) in [
         ("auto", Transport::Auto),
         ("udp", Transport::Udp),
-        ("socket", Transport::Socket),
-        ("tcp", Transport::Tcp),
         ("stdio", Transport::Stdio),
     ] {
         let parsed = args(&["connect", "--transport", word, "host"]).unwrap();
         assert_eq!(parsed.transport, transport);
         assert!(parsed.explicit.transport);
     }
-    for bad in ["", "UDP", "quic", "ssh"] {
+    // the socket and TCP were transports of earlier versions.
+    for bad in ["", "UDP", "quic", "ssh", "socket", "tcp"] {
         assert!(
             args(&["connect", "--transport", bad, "host"]).is_err(),
             "{bad:?}"
@@ -288,10 +287,10 @@ fn the_transport_is_a_choice_with_a_default_and_a_file_setting() {
     assert!(args(&["connect", "--transport", "x", "host"]).is_err());
 
     // the file fills in what the command line leaves open.
-    let config = Config::from_text("transport = \"tcp\"\n").unwrap();
+    let config = Config::from_text("transport = \"stdio\"\n").unwrap();
     let mut open = args(&["connect", "host"]).unwrap();
     open.apply_config(&config);
-    assert_eq!(open.transport, Transport::Tcp);
+    assert_eq!(open.transport, Transport::Stdio);
     let mut set = args(&["connect", "--transport", "udp", "host"]).unwrap();
     set.apply_config(&config);
     assert_eq!(set.transport, Transport::Udp);

@@ -332,7 +332,7 @@ async fn run_session(args: Args, settings: Config, input: BootstrapInput) -> Exi
         conns,
         HELLO_TIMEOUT,
     )
-    .with_transports(args.udp, args.tcp)
+    .with_udp(args.udp)
     // QUIC takes no more unacknowledged output than may wait for a connected client.
     .with_send_window(settings.live_backlog as u64);
     let mut connect = match frontend.open(pin).await {

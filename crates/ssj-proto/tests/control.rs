@@ -88,7 +88,6 @@ fn replies_survive_a_round_trip() {
         Reply::Connect(Connect {
             id: SessionId::parse("abcdef012345").unwrap(),
             udp: Some(60123),
-            tcp: Some(40123),
             fingerprint: fingerprint(),
             new: false,
             name: None,
@@ -97,7 +96,6 @@ fn replies_survive_a_round_trip() {
         Reply::Connect(Connect {
             id: SessionId::parse("abcdef012345").unwrap(),
             udp: None,
-            tcp: None,
             fingerprint: fingerprint(),
             new: false,
             name: None,
@@ -179,7 +177,6 @@ fn a_reply_with_more_than_one_line_is_refused() {
     let connect = format_reply(&Reply::Connect(Connect {
         id: SessionId::parse("abcdef012345").unwrap(),
         udp: Some(1234),
-        tcp: None,
         fingerprint: fingerprint(),
         new: false,
         name: None,

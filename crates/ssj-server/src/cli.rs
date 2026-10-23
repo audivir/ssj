@@ -59,9 +59,8 @@ pub struct Args {
     pub choose: bool,
     /// Arguments of the shell. The default is `-l`.
     pub shell_args: Vec<OsString>,
-    /// Whether the UDP (QUIC) and the TCP transport are offered.
+    /// Whether UDP (QUIC) is offered.
     pub udp: bool,
-    pub tcp: bool,
     /// Whether the process that `ssh` runs ends after the connect line, and not waits there for a
     /// client that wants the stream over the same channel.
     pub no_hold: bool,
@@ -158,9 +157,6 @@ struct Options {
     /// Offer no UDP port
     #[arg(long)]
     no_udp: bool,
-    /// Offer no TCP port
-    #[arg(long)]
-    no_tcp: bool,
     /// End the process on the ssh channel after the connect line, so that no stream can use it
     #[arg(long)]
     no_hold: bool,
@@ -228,7 +224,6 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         choose: options.choose,
         shell_args: options.shell_arg,
         udp: !options.no_udp,
-        tcp: !options.no_tcp,
         no_hold: options.no_hold,
         daemon_child: options.daemon_child,
         session_id: options.session_id,

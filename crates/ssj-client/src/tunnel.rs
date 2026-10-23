@@ -1,19 +1,13 @@
 //! The transports that go through `ssh` itself: the control socket of the session and TCP with
 //! TLS, both through `ssh -W`, and the stdin and stdout of `ssj-server --stdio`.
 
-use std::io;
-use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 use std::time::Duration;
 
-use ssj_net::TlsConnector;
 use ssj_proto::SessionId;
 use ssj_proto::bootstrap::{MAX_OUTPUT, SYNC_HEADER, find_sync, sanitize};
-use ssj_proto::control::{MAX_LINE, Reply, Request, format_request, parse_reply};
-use tokio::io::ReadBuf;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
 
@@ -47,35 +41,22 @@ fn ssh_base(args: &Args) -> Command {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Udp,
-    Socket,
-    Tcp,
     Stdio,
 }
 
 /// The transports to try, in order, for the choice of the user and what is known about the path.
 ///
-/// `offered` holds what the server offers of UDP, the socket, and TCP, in that order. The `ssh`
-/// channel is always there. With a jump host in the way UDP is left out, since datagrams do not
-/// travel through it. A transport that the user chose and that is not available leaves the list
-/// empty, so that the caller can say why.
-pub fn tier_order(choice: crate::cli::Transport, jump: bool, offered: [bool; 3]) -> Vec<Kind> {
+/// `udp` says whether the server offers UDP. The `ssh` channel is always there. With a jump host
+/// in the way UDP is left out, since datagrams do not travel through it. UDP, when the user chose
+/// it and it is not available, leaves the list empty, so that the caller can say why.
+pub fn tier_order(choice: crate::cli::Transport, jump: bool, udp: bool) -> Vec<Kind> {
     use crate::cli::Transport;
-    let [udp, socket, tcp] = offered;
-    let only = |kind, offered: bool| offered.then_some(kind).into_iter().collect();
     match choice {
-        Transport::Udp => only(Kind::Udp, udp),
-        Transport::Socket => only(Kind::Socket, socket),
-        Transport::Tcp => only(Kind::Tcp, tcp),
+        Transport::Udp if udp => vec![Kind::Udp],
+        Transport::Udp => Vec::new(),
         Transport::Stdio => vec![Kind::Stdio],
-        Transport::Auto => [
-            (Kind::Udp, udp && !jump),
-            (Kind::Socket, socket),
-            (Kind::Tcp, tcp),
-            (Kind::Stdio, true),
-        ]
-        .into_iter()
-        .filter_map(|(kind, offered)| offered.then_some(kind))
-        .collect(),
+        Transport::Auto if udp && !jump => vec![Kind::Udp, Kind::Stdio],
+        Transport::Auto => vec![Kind::Stdio],
     }
 }
 
@@ -193,136 +174,6 @@ async fn explain(stderr: &Stderr, fallback: &str) -> String {
         fallback.to_owned()
     } else {
         text
-    }
-}
-
-/// Stdout and stdin of a process as one stream.
-struct Pipes<R> {
-    out: R,
-    stdin: ChildStdin,
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for Pipes<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.out).poll_read(cx, buf)
-    }
-}
-
-impl<R: Unpin> AsyncWrite for Pipes<R> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        data: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.stdin).poll_write(cx, data)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.stdin).poll_flush(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.stdin).poll_shutdown(cx)
-    }
-}
-
-/// The control socket of the session, through `ssh -W`: `ssh` already authenticates and
-/// encrypts, and only the user can open the socket, so the stream carries no TLS.
-pub fn socket_tier(args: &Args, path: &str, limit: Duration) -> Tier {
-    let (args, path) = (args.clone(), path.to_owned());
-    let dial: Dial = Box::new(move || {
-        let (args, path) = (args.clone(), path.clone());
-        Box::pin(async move { dial_socket(&args, &path, limit).await })
-    });
-    Tier::Stream {
-        name: "socket",
-        dial,
-    }
-}
-
-async fn dial_socket(args: &Args, path: &str, limit: Duration) -> Result<Stream, String> {
-    if args.destination.starts_with('-') {
-        return Err("the destination must not start with '-'".to_owned());
-    }
-    let mut ssh = ssh_base(args);
-    ssh.args(["-W", path, "--"]).arg(&args.destination);
-    let mut child = ssh
-        .spawn()
-        .map_err(|e| format!("cannot run {}: {e}", args.ssh_command[0]))?;
-    let stderr = Stderr::collect(&mut child);
-    let mut stdin = child.stdin.take().expect("piped");
-    // the session answers the request with one line, and the stream follows it.
-    let mut stdout = BufReader::new(child.stdout.take().expect("piped"));
-    let answer = timeout(limit, async {
-        stdin
-            .write_all(format_request(&Request::Stream).as_bytes())
-            .await?;
-        let mut line = Vec::new();
-        (&mut stdout)
-            .take(MAX_LINE as u64)
-            .read_until(b'\n', &mut line)
-            .await?;
-        Ok::<_, io::Error>(line)
-    })
-    .await;
-    match answer {
-        Ok(Ok(line)) if matches!(parse_reply(&line), Ok(Reply::Ok)) => Ok(Stream {
-            reader: Box::new(stdout),
-            writer: Box::new(stdin),
-            guard: Some(Box::new(child)),
-        }),
-        // forwarding that the host does not allow ends `ssh` at once.
-        Ok(_) => Err(explain(&stderr, "the session refused the stream").await),
-        Err(_) => Err("no answer".to_owned()),
-    }
-}
-
-/// TCP with TLS to the loopback port of the server, through `ssh -W`.
-pub fn tcp_tier(args: &Args, connector: TlsConnector, port: u16, limit: Duration) -> Tier {
-    let args = args.clone();
-    let dial: Dial = Box::new(move || {
-        let (args, connector) = (args.clone(), connector.clone());
-        Box::pin(async move { dial_tcp(&args, &connector, port, limit).await })
-    });
-    Tier::Stream { name: "tcp", dial }
-}
-
-async fn dial_tcp(
-    args: &Args,
-    connector: &TlsConnector,
-    port: u16,
-    limit: Duration,
-) -> Result<Stream, String> {
-    if args.destination.starts_with('-') {
-        return Err("the destination must not start with '-'".to_owned());
-    }
-    let mut ssh = ssh_base(args);
-    ssh.args(["-W", &format!("127.0.0.1:{port}"), "--"])
-        .arg(&args.destination);
-    let mut child = ssh
-        .spawn()
-        .map_err(|e| format!("cannot run {}: {e}", args.ssh_command[0]))?;
-    let stderr = Stderr::collect(&mut child);
-    let pipes = Pipes {
-        out: child.stdout.take().expect("piped"),
-        stdin: child.stdin.take().expect("piped"),
-    };
-    // the handshake fails at once when `ssh` ends because forwarding is not allowed.
-    match timeout(limit, connector.connect(ssj_net::server_name(), pipes)).await {
-        Ok(Ok(tls)) => {
-            let (reader, writer) = tokio::io::split(tls);
-            Ok(Stream {
-                reader: Box::new(reader),
-                writer: Box::new(writer),
-                guard: Some(Box::new(child)),
-            })
-        }
-        Ok(Err(err)) => Err(explain(&stderr, &err.to_string()).await),
-        Err(_) => Err("no answer".to_owned()),
     }
 }
 

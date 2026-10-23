@@ -110,11 +110,10 @@ fn start_server_full(
     let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     tcp.set_nonblocking(true).unwrap();
     let tcp_addr = tcp.local_addr().unwrap();
-    tokio::spawn(ssj_server::tcp::serve_tcp(
+    tokio::spawn(serve_tls(
         tokio::net::TcpListener::from_std(tcp).unwrap(),
-        ssj_net::tls_acceptor(&identity, client_pin),
+        ssj_net::TlsAcceptor::from(Arc::new(ssj_net::server_tls(&identity, client_pin))),
         conns.clone(),
-        Duration::from_secs(5),
     ));
     tokio::spawn(serve_observed(
         endpoint.clone(),
@@ -358,9 +357,30 @@ fn start_client_tcp(
     )
 }
 
-/// Opens TLS on TCP to `via`, as the `ssh -W` tier does.
+/// Accepts TLS on TCP and hands each stream to the session: a stand-in for a stream transport.
+async fn serve_tls(
+    listener: tokio::net::TcpListener,
+    acceptor: ssj_net::TlsAcceptor,
+    conns: mpsc::Sender<ssj_server::session::Connection>,
+) {
+    loop {
+        let Ok((tcp, _)) = listener.accept().await else {
+            continue;
+        };
+        let (acceptor, conns) = (acceptor.clone(), conns.clone());
+        tokio::spawn(async move {
+            let _ = tcp.set_nodelay(true);
+            if let Ok(tls) = acceptor.accept(tcp).await {
+                let _ = conns.send(ssj_server::stream::bridge(tls)).await;
+            }
+        });
+    }
+}
+
+/// Opens TLS on TCP to `via`, as a stream transport would.
 fn tcp_dial(server: &Server, identity: &Identity, via: SocketAddr) -> Dial {
-    let connector = ssj_net::tls_connector(identity, server.fingerprint);
+    let connector =
+        ssj_net::TlsConnector::from(Arc::new(ssj_net::client_tls(identity, server.fingerprint)));
     Box::new(move || {
         let connector = connector.clone();
         Box::pin(async move {
@@ -451,7 +471,6 @@ fn start_client_inner(
         connect: Connect {
             id: ssj_proto::SessionId::parse("abcdef012345").unwrap(),
             udp: Some(server.addr.port()),
-            tcp: Some(server.tcp_addr.port()),
             fingerprint: server.fingerprint,
             new: false,
             name: None,

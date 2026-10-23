@@ -6,11 +6,10 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use common::*;
-use ssj_net::{Identity, tls_connector};
+use ssj_net::Identity;
 use ssj_proto::bootstrap::SYNC_HEADER;
 use ssj_proto::{ClientFrame, Env, ExitStatus, Hello, ServerFrame, WindowSize, decode_server};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 fn size() -> WindowSize {
@@ -93,77 +92,14 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
     }
 }
 
-async fn connect_tcp(
-    client: &Identity,
-    connect: &ssj_proto::bootstrap::Connect,
-) -> std::io::Result<ssj_net::ClientStream<TcpStream>> {
-    let tcp = TcpStream::connect(("127.0.0.1", connect.tcp.expect("a TCP port"))).await?;
-    tls_connector(client, connect.fingerprint)
-        .connect(ssj_net::server_name(), tcp)
-        .await
-}
-
 const ASKING: &str = "read x; echo got:$x; exit 3";
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_runs_over_tls_on_tcp() {
-    let runtime = runtime_dir();
-    let client = Identity::generate();
-    let launched = launch(&runtime, &client, free_range(), ASKING);
-    assert!(launched.connect.tcp.is_some() && launched.connect.udp.is_some());
-
-    let stream = connect_tcp(&client, &launched.connect).await.unwrap();
-    let (reader, writer) = tokio::io::split(stream);
-    let (output, exit) = Wire::new(reader, writer).run_to_the_end(b"tcp\n").await;
-
-    assert!(output.contains("got:tcp"), "{output:?}");
-    assert_eq!(exit, Some(ExitStatus::Code(3)));
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tcp_refuses_a_client_with_another_certificate_and_the_right_one_still_works() {
-    let runtime = runtime_dir();
-    let client = Identity::generate();
-    let launched = launch(&runtime, &client, free_range(), ASKING);
-
-    let stranger = Identity::generate();
-    // TLS 1.3 lets the client finish before the server has checked its certificate, so the
-    // refusal shows when the client reads.
-    if let Ok(stream) = connect_tcp(&stranger, &launched.connect).await {
-        let (reader, writer) = tokio::io::split(stream);
-        let mut wire = Wire::new(reader, writer);
-        wire.send(ClientFrame::Hello(Hello::Start {
-            size: size(),
-            env: Env::default(),
-            agent: false,
-        }))
-        .await;
-        assert!(wire.next().await.is_none(), "a stranger got an answer");
-    }
-
-    let stream = connect_tcp(&client, &launched.connect).await.unwrap();
-    let (reader, writer) = tokio::io::split(stream);
-    let (_, exit) = Wire::new(reader, writer).run_to_the_end(b"x\n").await;
-    assert_eq!(exit, Some(ExitStatus::Code(3)));
-}
-
 #[test]
-fn each_transport_can_be_switched_off() {
-    for (extra, udp, tcp) in [
-        (&["--no-udp"][..], false, true),
-        (&["--no-tcp"][..], true, false),
-        (&["--no-udp", "--no-tcp"][..], false, false),
-    ] {
+fn udp_can_be_switched_off() {
+    for (extra, udp) in [(&[][..], true), (&["--no-udp"][..], false)] {
         let runtime = runtime_dir();
         let launched = launch_with(&runtime, &Identity::generate(), free_range(), "cat", extra);
-        assert_eq!(
-            (
-                launched.connect.udp.is_some(),
-                launched.connect.tcp.is_some()
-            ),
-            (udp, tcp),
-            "{extra:?}"
-        );
+        assert_eq!(launched.connect.udp.is_some(), udp, "{extra:?}");
     }
 }
 
@@ -206,9 +142,9 @@ async fn a_session_runs_over_stdin_and_stdout() {
         &Identity::generate(),
         free_range(),
         ASKING,
-        &["--no-udp", "--no-tcp"],
+        &["--no-udp"],
     );
-    assert_eq!((launched.connect.udp, launched.connect.tcp), (None, None));
+    assert_eq!(launched.connect.udp, None);
 
     let id = launched.connect.id.as_str().to_owned();
     let (mut child, mut wire) = start_stdio(&runtime, &[&id]).await;
